@@ -14,7 +14,8 @@ import {
   ExternalLink,
   X,
   Check,
-  TrendingDown
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 const Dashboard = () => {
@@ -24,6 +25,10 @@ const Dashboard = () => {
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [activeLink, setActiveLink] = useState("");
   const [copied, setCopied] = useState(false);
+
+  // Estados de Paginação
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 8; // Quantidade de itens por página
 
   const [stats, setStats] = useState({
     lucroLiquido: 0,
@@ -39,7 +44,7 @@ const Dashboard = () => {
         .from('cobrancas')
         .select(`
           id, valor, status, tipo, categoria, data_vencimento, 
-          payment_link, tentativas_envio,
+          payment_link, tentativas_envio, created_at,
           contratos (
             id, status, 
             locatarios ( nome_completo ),
@@ -47,7 +52,8 @@ const Dashboard = () => {
           )
         `)
         .eq('id_usuario', profile.id)
-        .order('data_vencimento', { ascending: true });
+        // Ordena por vencimento para mostrar o que vence primeiro ou está atrasado
+        .order('data_vencimento', { ascending: true }); 
 
       if (error) throw error;
 
@@ -76,9 +82,9 @@ const Dashboard = () => {
       ).size;
 
       // 5. Fila de Cobrança (Apenas 'receita' pendente/atrasada)
+      // REMOVIDO o .slice(0, 8) para permitir paginação completa
       const proximasCobrancas = data
-        .filter(c => ['pendente', 'atrasado'].includes(c.status) && c.tipo === 'receita')
-        .slice(0, 8);
+        .filter(c => ['pendente', 'atrasado'].includes(c.status) && c.tipo === 'receita');
 
       setStats({ lucroLiquido, receitaPendente, contratosAtivos, proximasCobrancas });
     } catch (error) {
@@ -122,6 +128,14 @@ const Dashboard = () => {
     toast.info("Link copiado!");
     setTimeout(() => setCopied(false), 2000);
   };
+
+  // --- LÓGICA DE PAGINAÇÃO ---
+  const totalPages = Math.ceil(stats.proximasCobrancas.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const currentData = stats.proximasCobrancas.slice(startIndex, startIndex + itemsPerPage);
+
+  const goToNextPage = () => setCurrentPage(prev => Math.min(prev + 1, totalPages));
+  const goToPrevPage = () => setCurrentPage(prev => Math.max(prev - 1, 1));
 
   if (loading) {
     return (
@@ -172,75 +186,102 @@ const Dashboard = () => {
         
         <div className="overflow-x-auto">
           {stats.proximasCobrancas.length > 0 ? (
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-900/50">
-                  <th className="p-4 text-slate-400 font-bold text-xs uppercase tracking-widest">Locatário / Placa</th>
-                  <th className="p-4 text-slate-400 font-bold text-xs uppercase tracking-widest">Vencimento</th>
-                  <th className="p-4 text-slate-400 font-bold text-xs uppercase tracking-widest">Valor</th>
-                  <th className="p-4 text-slate-400 font-bold text-xs uppercase tracking-widest text-center">Status</th>
-                  <th className="p-4 text-slate-400 font-bold text-xs uppercase tracking-widest text-right">Ações Rápidas</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-700/50">
-              {stats.proximasCobrancas.map((item) => (
-                <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
-                  <td className="p-4">
-                    <div className="text-white font-semibold">
-                      {item.contratos?.locatarios?.nome_completo || "Cobrança Avulsa"}
-                    </div>
-                    <div className="text-[10px] text-slate-500 font-mono uppercase">
-                      {item.contratos?.veiculos?.placa || "N/A"}
-                    </div>
+            <>
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-900/50">
+                    <th className="p-4 text-slate-400 font-bold text-xs uppercase tracking-widest">Locatário / Placa</th>
+                    <th className="p-4 text-slate-400 font-bold text-xs uppercase tracking-widest">Vencimento</th>
+                    <th className="p-4 text-slate-400 font-bold text-xs uppercase tracking-widest">Valor</th>
+                    <th className="p-4 text-slate-400 font-bold text-xs uppercase tracking-widest text-center">Status</th>
+                    <th className="p-4 text-slate-400 font-bold text-xs uppercase tracking-widest text-right">Ações Rápidas</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-700/50">
+                {currentData.map((item) => (
+                  <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
+                    <td className="p-4">
+                      <div className="text-white font-semibold">
+                        {item.contratos?.locatarios?.nome_completo || "Cobrança Avulsa"}
+                      </div>
+                      <div className="text-[10px] text-slate-500 font-mono uppercase">
+                        {item.contratos?.veiculos?.placa || "N/A"}
+                      </div>
 
-                    <div className="flex items-center gap-1 mt-2">
-                      {[...Array(8)].map((_, i) => (
-                        <div key={i} className={`h-1 w-3 rounded-full ${i < (item.tentativas_envio || 0) ? 'bg-indigo-500' : 'bg-slate-700'}`} />
-                      ))}
-                      <span className="text-[9px] text-slate-500 font-bold ml-1">{item.tentativas_envio || 0}/8</span>
-                    </div>
-                  </td>
+                      <div className="flex items-center gap-1 mt-2">
+                        {[...Array(8)].map((_, i) => (
+                          <div key={i} className={`h-1 w-3 rounded-full ${i < (item.tentativas_envio || 0) ? 'bg-indigo-500' : 'bg-slate-700'}`} />
+                        ))}
+                        <span className="text-[9px] text-slate-500 font-bold ml-1">{item.tentativas_envio || 0}/8</span>
+                      </div>
+                    </td>
 
-                  <td className="p-4">
-                    <div className="text-slate-300 font-mono text-sm">
-                      {new Date(item.data_vencimento + 'T00:00:00').toLocaleDateString('pt-BR')}
-                    </div>
-                    <ExpirationTimer dataVencimento={item.data_vencimento} status={item.status} />
-                  </td>
+                    <td className="p-4">
+                      <div className="text-slate-300 font-mono text-sm">
+                        {new Date(item.data_vencimento + 'T00:00:00').toLocaleDateString('pt-BR')}
+                      </div>
+                      <ExpirationTimer dataVencimento={item.data_vencimento} status={item.status} />
+                    </td>
 
-                  <td className="p-4">
-                    <div className="text-white font-bold">R$ {Number(item.valor).toFixed(2).replace('.', ',')}</div>
-                    <div className="text-[9px] text-indigo-400 font-bold uppercase">{item.categoria}</div>
-                  </td>
+                    <td className="p-4">
+                      <div className="text-white font-bold">R$ {Number(item.valor).toFixed(2).replace('.', ',')}</div>
+                      <div className="text-[9px] text-indigo-400 font-bold uppercase">{item.categoria}</div>
+                    </td>
 
-                  <td className="p-4 text-center">
-                    <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest ${
-                      item.status === 'atrasado' ? 'bg-red-500/10 text-red-500 border border-red-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
-                    }`}>
-                      {item.status}
-                    </span>
-                  </td>
+                    <td className="p-4 text-center">
+                      <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest ${
+                        item.status === 'atrasado' ? 'bg-red-500/10 text-red-500 border border-red-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
+                      }`}>
+                        {item.status}
+                      </span>
+                    </td>
 
-                  <td className="p-4 text-right flex items-center justify-end gap-2">
-                    {item.payment_link && (
-                      <button onClick={() => openLinkModal(item.payment_link)} className="p-2 text-indigo-400 hover:bg-indigo-400/10 rounded-lg">
-                        <ExternalLink size={18} />
+                    <td className="p-4 text-right flex items-center justify-end gap-2">
+                      {item.payment_link && (
+                        <button onClick={() => openLinkModal(item.payment_link)} className="p-2 text-indigo-400 hover:bg-indigo-400/10 rounded-lg">
+                          <ExternalLink size={18} />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleGerarCobrancaPix(item.id)}
+                        disabled={processingId === item.id}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg font-bold text-xs ${
+                          processingId === item.id ? 'bg-slate-700 text-slate-400' : 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white'
+                        }`}
+                      >
+                        {processingId === item.id ? <Loader2 size={16} className="animate-spin" /> : <><MessageCircle size={16} /> COBRAR</>}
                       </button>
-                    )}
-                    <button
-                      onClick={() => handleGerarCobrancaPix(item.id)}
-                      disabled={processingId === item.id}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-lg font-bold text-xs ${
-                        processingId === item.id ? 'bg-slate-700 text-slate-400' : 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white'
-                      }`}
+                    </td>
+                  </tr>
+                ))}
+                </tbody>
+              </table>
+
+              {/* CONTROLES DE PAGINAÇÃO */}
+              {totalPages > 1 && (
+                <div className="p-4 border-t border-slate-700 bg-slate-800/30 flex items-center justify-between">
+                  <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">
+                    Página {currentPage} de {totalPages}
+                  </span>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={goToPrevPage} 
+                      disabled={currentPage === 1}
+                      className="p-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-slate-300 transition-colors border border-slate-700"
                     >
-                      {processingId === item.id ? <Loader2 size={16} className="animate-spin" /> : <><MessageCircle size={16} /> COBRAR</>}
+                      <ChevronLeft size={16} />
                     </button>
-                  </td>
-                </tr>
-              ))}
-              </tbody>
-            </table>
+                    <button 
+                      onClick={goToNextPage} 
+                      disabled={currentPage === totalPages}
+                      className="p-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-slate-300 transition-colors border border-slate-700"
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           ) : (
             <div className="p-20 text-center">
               <div className="bg-slate-800/50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">

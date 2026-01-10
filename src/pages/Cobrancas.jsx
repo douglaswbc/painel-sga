@@ -3,7 +3,8 @@ import { supabase } from '../services/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { 
   CheckCircle, Ban, Search, Loader2, Calendar, 
-  Play, RefreshCcw, Plus, X, DollarSign, Tag, Info
+  Play, RefreshCcw, Plus, X, DollarSign, Tag, Info,
+  Trash2, ChevronLeft, ChevronRight // Novos ícones importados
 } from 'lucide-react';
 import { toast } from 'react-toastify';
 
@@ -15,6 +16,10 @@ const Cobrancas = () => {
   const [showManualModal, setShowManualModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('todos');
+
+  // Estados para Paginação
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
 
   // Estados para o Lançamento Manual
   const [locatarios, setLocatarios] = useState([]);
@@ -49,23 +54,19 @@ const Cobrancas = () => {
   const handleSaveManual = async (e) => {
     e.preventDefault();
     try {
-      // 1. Se for DESPESA do locador, apenas inserimos o registro negativo para o financeiro
       if (manualData.tipo === 'despesa') {
         const { error } = await supabase.from('cobrancas').insert([{
           id_usuario: profile.id,
           valor: manualData.valor,
           categoria: manualData.categoria,
           tipo: 'despesa',
-          status: 'pago', // Despesa paga pelo locador morre aqui
+          status: 'pago',
           data_vencimento: manualData.data_vencimento
         }]);
         if (error) throw error;
         toast.success("Despesa registrada com sucesso!");
       } 
-      
-      // 2. Se for RECEITA e o usuário quer SOMAR na fatura pendente
       else if (manualData.tipo === 'receita' && manualData.destino === 'somar_fatura') {
-        // Busca a cobrança "pendente" mais recente deste locatário
         const { data: pendente, error: pErr } = await supabase
           .from('cobrancas')
           .select('id, valor, status')
@@ -76,18 +77,15 @@ const Cobrancas = () => {
           .limit(1)
           .single();
 
-        if (pErr || !pendente) {
-          throw new Error("Não encontramos nenhuma fatura PENDENTE para este locatário para somar o valor.");
-        }
+        if (pErr || !pendente) throw new Error("Não encontramos nenhuma fatura PENDENTE para este locatário.");
 
         const novoValor = Number(pendente.valor) + Number(manualData.valor);
 
-        // Atualiza o valor e limpa o payment_link para forçar um novo PIX com valor correto
         const { error: upErr } = await supabase
           .from('cobrancas')
           .update({ 
             valor: novoValor,
-            payment_link: null, // Força regerar PIX
+            payment_link: null, 
             mercado_pago_id: null 
           })
           .eq('id', pendente.id);
@@ -95,10 +93,7 @@ const Cobrancas = () => {
         if (upErr) throw upErr;
         toast.success(`Valor somado à fatura pendente! Novo total: R$ ${novoValor.toFixed(2)}`);
       } 
-      
-      // 3. Se for RECEITA e o usuário quer cobrança SEPARADA
       else {
-        // Precisamos encontrar um contrato ativo desse locatario para vincular (opcional mas recomendado)
         const { data: contrato } = await supabase.from('contratos').select('id').eq('id_locatario', manualData.id_locatario).eq('status', 'ativo').limit(1).single();
 
         const { error } = await supabase.from('cobrancas').insert([{
@@ -121,7 +116,6 @@ const Cobrancas = () => {
     }
   };
 
-  // Funções de Automação (Mesmas anteriores)
   const handleRunAutomatedCharges = async () => {
     if (!window.confirm('Executar faturamento de hoje?')) return;
     setGenerating(true);
@@ -137,13 +131,43 @@ const Cobrancas = () => {
     if (!error) { toast.success("Baixa realizada!"); fetchData(); }
   };
 
+  // --- NOVA FUNÇÃO DE CANCELAMENTO ---
+  const handleCancelar = async (id) => {
+    if (!window.confirm("Tem certeza que deseja CANCELAR esta cobrança?")) return;
+    try {
+      const { error } = await supabase
+        .from('cobrancas')
+        .update({ status: 'cancelado' }) // Define status como cancelado
+        .eq('id', id);
+      
+      if (error) throw error;
+      toast.info("Cobrança cancelada.");
+      fetchData();
+    } catch (error) {
+      toast.error("Erro ao cancelar: " + error.message);
+    }
+  };
+
+  // Filtragem
   const filteredData = cobrancas.filter(c => {
     const search = searchTerm.toLowerCase();
     const matchesSearch = c.contratos?.locatarios?.nome_completo.toLowerCase().includes(search) ||
                          c.categoria?.toLowerCase().includes(search);
     const matchesFilter = filterStatus === 'todos' || c.status === filterStatus;
+    // Ocultar cancelados da lista padrão se desejar, ou mostrá-los. Aqui mostraremos se o filtro permitir.
     return matchesSearch && matchesFilter;
   });
+
+  // --- LÓGICA DE PAGINAÇÃO ---
+  const totalPages = Math.ceil(filteredData.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const currentData = filteredData.slice(startIndex, startIndex + itemsPerPage);
+
+  const goToNextPage = () => setCurrentPage(prev => Math.min(prev + 1, totalPages));
+  const goToPrevPage = () => setCurrentPage(prev => Math.max(prev - 1, 1));
+
+  // Resetar página ao filtrar
+  useEffect(() => { setCurrentPage(1); }, [searchTerm, filterStatus]);
 
   return (
     <div className="space-y-6">
@@ -154,6 +178,18 @@ const Cobrancas = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          {/* BARRA DE PESQUISA */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={14} />
+            <input 
+              type="text" 
+              placeholder="Buscar..." 
+              className="bg-zinc-900 border border-zinc-800 rounded-xl pl-9 pr-3 py-2 text-zinc-300 text-xs font-bold outline-none focus:border-indigo-500 w-40 md:w-auto"
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+            />
+          </div>
+
           <button 
             onClick={() => setShowManualModal(true)}
             className="bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-2 rounded-xl text-xs font-black uppercase flex items-center gap-2 border border-zinc-700 transition-all"
@@ -180,6 +216,8 @@ const Cobrancas = () => {
             <option value="todos">Todos Status</option>
             <option value="pendente">Pendentes</option>
             <option value="pago">Pagos</option>
+            <option value="atrasado">Atrasados</option>
+            <option value="cancelado">Cancelados</option>
             <option value="despesa">Despesas</option>
           </select>
         </div>
@@ -201,7 +239,8 @@ const Cobrancas = () => {
             <tbody className="divide-y divide-zinc-800/50">
               {loading ? (
                 <tr><td colSpan={6} className="py-20 text-center"><Loader2 className="animate-spin mx-auto text-indigo-500" size={32} /></td></tr>
-              ) : filteredData.map(c => (
+              ) : currentData.length > 0 ? (
+                currentData.map(c => (
                 <tr key={c.id} className="hover:bg-zinc-800/20 transition-colors">
                   <td className="p-4">
                     <div className="text-white font-bold text-sm">
@@ -226,24 +265,58 @@ const Cobrancas = () => {
                   </td>
                   <td className="p-4 text-center">
                     <span className={`px-2 py-1 rounded text-[9px] font-black uppercase border ${
-                      c.status === 'pago' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+                      c.status === 'pago' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 
+                      c.status === 'cancelado' ? 'bg-zinc-500/10 text-zinc-500 border-zinc-500/20' :
+                      'bg-amber-500/10 text-amber-500 border-amber-500/20'
                     }`}>
                       {c.status}
                     </span>
                   </td>
-                  <td className="p-4 text-right space-x-2">
+                  <td className="p-4 text-right flex items-center justify-end gap-2">
                     {c.status === 'pendente' && (
-                      <button onClick={() => handleMarcarPago(c.id)} className="p-2 text-emerald-500 hover:bg-emerald-500/10 rounded-lg transition-colors" title="Dar Baixa"><CheckCircle size={18} /></button>
+                      <>
+                        <button onClick={() => handleMarcarPago(c.id)} className="p-2 text-emerald-500 hover:bg-emerald-500/10 rounded-lg transition-colors" title="Dar Baixa"><CheckCircle size={18} /></button>
+                        <button onClick={() => handleCancelar(c.id)} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg transition-colors" title="Cancelar Cobrança"><Trash2 size={18} /></button>
+                      </>
                     )}
                   </td>
                 </tr>
-              ))}
+              ))
+             ) : (
+               <tr><td colSpan={6} className="py-10 text-center text-zinc-500 text-sm">Nenhum registro encontrado.</td></tr>
+             )}
             </tbody>
           </table>
+
+          {/* RODAPÉ COM PAGINAÇÃO */}
+          {totalPages > 1 && (
+            <div className="p-4 border-t border-zinc-800 bg-zinc-950/30 flex items-center justify-between">
+              <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">
+                Página {currentPage} de {totalPages}
+              </span>
+              <div className="flex gap-2">
+                <button 
+                  onClick={goToPrevPage} 
+                  disabled={currentPage === 1}
+                  className="p-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg text-zinc-300 transition-colors border border-zinc-700"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <button 
+                  onClick={goToNextPage} 
+                  disabled={currentPage === totalPages}
+                  className="p-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg text-zinc-300 transition-colors border border-zinc-700"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            </div>
+          )}
+
         </div>
       </div>
 
-      {/* MODAL DE LANÇAMENTO MANUAL */}
+      {/* MODAL DE LANÇAMENTO MANUAL (MANTIDO IGUAL) */}
       {showManualModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm animate-in fade-in duration-300">
           <div className="bg-zinc-900 border border-zinc-800 rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden ring-1 ring-white/10">
