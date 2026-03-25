@@ -220,7 +220,8 @@ const Locatarios = () => {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* TABELA DESKTOP (Oculta em Mobile) */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm text-left">
             <thead className="text-[10px] uppercase bg-zinc-950/50 text-zinc-500 border-b border-zinc-800 font-black tracking-widest">
               <tr>
@@ -261,6 +262,44 @@ const Locatarios = () => {
               ))}
             </tbody>
           </table>
+        </div>
+
+        {/* CARDS MOBILE (Ocultos em Desktop) */}
+        <div className="md:hidden grid grid-cols-1 divide-y divide-zinc-800">
+          {loading ? (
+            <div className="p-10 text-center"><Loader2 className="animate-spin mx-auto text-indigo-500" size={32} /></div>
+          ) : filteredTenants.map((item) => (
+            <div key={item.id} className="p-5 space-y-4">
+               <div className="flex justify-between items-start">
+                  <div>
+                    <h4 className="font-black text-white uppercase text-sm tracking-tight">{item.nome_completo}</h4>
+                    <p className="text-[10px] text-zinc-500 font-mono">{item.cpf}</p>
+                  </div>
+                  <button onClick={() => toggleStatus(item)} className={item.ativo ? 'text-emerald-500' : 'text-zinc-600'}>
+                    {item.ativo ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}
+                  </button>
+               </div>
+
+               <div className="grid grid-cols-1 gap-2 border-l-2 border-zinc-800 pl-3">
+                  <div className="flex items-center gap-2 text-zinc-400 text-xs font-bold">
+                    <Phone size={12} className="text-emerald-500" /> {item.whatsapp}
+                  </div>
+                  <div className="flex items-center gap-2 text-zinc-500 text-[10px]">
+                    <MapPin size={12} className="text-red-500" /> {item.cidade}/{item.estado}
+                  </div>
+               </div>
+
+               <div className="flex items-center justify-between pt-2">
+                  <div className="flex gap-1">
+                    <button onClick={() => handleCopyPortalLink(item.portal_token)} className="flex items-center gap-2 bg-zinc-800 text-zinc-300 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest"><Globe size={14} /> Link Portal</button>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => { setEditingTenant(item); setFormData(item); setFieldErrors({}); setShowModal(true); }} className="p-2.5 bg-indigo-500/10 text-indigo-500 rounded-xl"><Pencil size={18} /></button>
+                    <button onClick={() => deleteTenant(item.id)} className="p-2.5 bg-red-500/10 text-red-500 rounded-xl"><Trash2 size={18} /></button>
+                  </div>
+               </div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -313,12 +352,12 @@ const Locatarios = () => {
               {/* ENDEREÇO */}
               <div className="space-y-5">
                 <h4 className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em] border-l-2 border-indigo-500 pl-3">Localização</h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-5">
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">CEP</label>
                     <input required type="text" placeholder="00000-000" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 outline-none focus:border-indigo-500" value={formData.cep} onBlur={e => handleCepBlur(e.target.value)} onChange={e => handleInputChange('cep', e.target.value)} />
                   </div>
-                  <div className="md:col-span-2 space-y-2">
+                  <div className="sm:col-span-1 md:col-span-2 space-y-2">
                     <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Rua / Logradouro</label>
                     <input required type="text" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 outline-none focus:border-indigo-500" value={formData.rua} onChange={e => setFormData({...formData, rua: e.target.value})} />
                   </div>
@@ -330,7 +369,7 @@ const Locatarios = () => {
                     <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Bairro</label>
                     <input required type="text" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 outline-none focus:border-indigo-500" value={formData.bairro} onChange={e => setFormData({...formData, bairro: e.target.value})} />
                   </div>
-                  <div className="space-y-2">
+                  <div className="sm:col-span-2 md:col-span-1 space-y-2">
                     <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Cidade/UF</label>
                     <div className="flex gap-2">
                        <input required type="text" className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 outline-none focus:border-indigo-500" value={formData.cidade} onChange={e => setFormData({...formData, cidade: e.target.value})} />

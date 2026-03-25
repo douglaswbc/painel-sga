@@ -177,8 +177,8 @@ const Contratos = () => {
         </button>
       </div>
 
-      {/* TABLE */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl">
+      {/* TABLE DESKTOP (Oculta em Mobile) */}
+      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl hidden md:block">
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
             <thead className="text-xs uppercase bg-zinc-950/50 text-zinc-500 border-b border-zinc-800 font-bold tracking-widest">
@@ -218,7 +218,7 @@ const Contratos = () => {
                        </span>
                     </div>
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-6 py-4 text-center">
                     <button 
                       onClick={() => toggleContractStatus(item)}
                       className={`mx-auto px-3 py-1.5 rounded-full text-[10px] font-black uppercase flex items-center gap-2 border transition-all ${
@@ -238,6 +238,53 @@ const Contratos = () => {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* CARDS MOBILE (Ocultos em Desktop) */}
+      <div className="md:hidden space-y-4">
+        {loading ? (
+          <div className="p-10 text-center"><Loader2 className="animate-spin mx-auto text-indigo-500" size={32} /></div>
+        ) : contracts.map((item) => (
+          <div key={item.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-4 shadow-xl">
+             <div className="flex justify-between items-start">
+                <div className="space-y-1">
+                   <div className="flex items-center gap-2 text-white font-black uppercase text-sm tracking-tight">
+                      <User size={14} className="text-indigo-500" /> {item.locatarios?.nome_completo}
+                   </div>
+                   <div className="flex items-center gap-2 text-zinc-500 text-[10px] font-bold">
+                      <Car size={14} /> {item.veiculos?.modelo} • <span className="text-indigo-500 font-mono underline decoration-indigo-500/30">{item.veiculos?.placa}</span>
+                   </div>
+                </div>
+                <button 
+                  onClick={() => toggleContractStatus(item)}
+                  className={`px-3 py-1.5 rounded-full text-[8px] font-black uppercase flex items-center gap-2 border transition-all ${
+                    item.status === 'ativo' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+                  }`}
+                >
+                  {item.status === 'ativo' ? <CheckCircle2 size={10} /> : <Pause size={10} />}
+                  {item.status}
+                </button>
+             </div>
+
+             <div className="flex items-end justify-between border-y border-zinc-800/50 py-3">
+                <div className="space-y-0.5">
+                   <p className="text-[8px] text-zinc-500 font-black uppercase tracking-[0.2em]">Faturamento Semanal</p>
+                   <p className="text-emerald-400 font-black text-xl leading-none">R$ {Number(item.valor).toFixed(2).replace('.', ',')}</p>
+                </div>
+                <div className="text-right space-y-0.5">
+                   <p className="text-[8px] text-zinc-500 font-black uppercase tracking-[0.2em]">Vencimento</p>
+                   <p className="text-zinc-300 font-bold text-xs flex items-center justify-end gap-1 uppercase">
+                      <Calendar size={12} className="text-indigo-500" /> {item.recorrencia.split('@')[1] || 'N/A'}
+                   </p>
+                </div>
+             </div>
+
+             <div className="flex gap-2">
+                <button onClick={() => { setEditingContract(item); setFormData(item); setShowModal(true); }} className="flex-1 flex items-center justify-center gap-2 bg-indigo-500/10 text-indigo-500 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest"><Pencil size={14} /> Editar</button>
+                <button onClick={() => deleteContract(item.id)} className="px-4 bg-red-500/10 text-red-500 py-3 rounded-xl border border-red-500/5"><Trash2 size={16} /></button>
+             </div>
+          </div>
+        ))}
       </div>
 
       {/* MODAL */}
@@ -288,7 +335,7 @@ const Contratos = () => {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                     <div className="space-y-2">
                       <label className="text-xs font-black text-zinc-500 uppercase tracking-widest">Valor Semanal</label>
                       <div className="relative">

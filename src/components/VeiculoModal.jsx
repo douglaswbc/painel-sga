@@ -30,8 +30,12 @@ const VeiculoModal = ({ isOpen, onClose, onSuccess, veiculo = null, userId }) =>
     setLoading(true);
 
     try {
+      // Destruture para remover campos que não devem ir no payload de inserção/update
+      // Remover contratos (campo relacional)
+      const { contratos, id, ...cleanData } = formData;
+      
       const payload = { 
-        ...formData, 
+        ...cleanData, 
         id_usuario: userId,
         ano: formData.ano ? parseInt(formData.ano) : null 
       };
@@ -77,7 +81,7 @@ const VeiculoModal = ({ isOpen, onClose, onSuccess, veiculo = null, userId }) =>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-400 mb-1">Placa</label>
               <input
@@ -100,7 +104,7 @@ const VeiculoModal = ({ isOpen, onClose, onSuccess, veiculo = null, userId }) =>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-400 mb-1">Marca</label>
               <input

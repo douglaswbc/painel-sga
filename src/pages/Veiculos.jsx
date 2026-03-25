@@ -18,7 +18,7 @@ const Veiculos = () => {
       setLoading(true);
       const { data, error } = await supabase
         .from('veiculos')
-        .select('*')
+        .select('*, contratos(id, status)')
         .eq('id_usuario', profile.id)
         .order('modelo');
 
@@ -46,6 +46,13 @@ const Veiculos = () => {
     } catch (error) {
       toast.error("Erro ao excluir: Veículo pode estar vinculado a um contrato.");
     }
+  };
+
+  const getVehicleStatus = (v) => {
+    if (!v.ativo) return { label: 'Indisponível', color: 'bg-red-400/10 text-red-400 border-red-400/20' };
+    const hasActiveContract = v.contratos?.some(c => c.status === 'ativo');
+    if (hasActiveContract) return { label: 'Alugado', color: 'bg-amber-400/10 text-amber-400 border-amber-400/20' };
+    return { label: 'Disponível', color: 'bg-emerald-400/10 text-emerald-400 border-emerald-400/20' };
   };
 
   const filteredVeiculos = veiculos.filter(v => 
@@ -83,7 +90,8 @@ const Veiculos = () => {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* TABELA DESKTOP (Oculta em Mobile) */}
+        <div className="hidden md:block overflow-x-auto">
           {loading ? (
             <div className="p-20 flex justify-center"><Loader2 className="animate-spin text-accent" size={40} /></div>
           ) : (
@@ -99,7 +107,7 @@ const Veiculos = () => {
               </thead>
               <tbody className="divide-y divide-slate-700">
                 {filteredVeiculos.length > 0 ? filteredVeiculos.map(v => (
-                  <tr key={v.id} className="hover:bg-slate-800/50 transition-colors">
+                  <tr key={v.id} className="hover:bg-slate-800/50 transition-colors group">
                     <td className="p-4">
                       <div className="flex items-center gap-3">
                         <div className="p-2 bg-slate-700 rounded-lg text-slate-300">
@@ -121,11 +129,14 @@ const Veiculos = () => {
                       <div className="text-xs text-slate-500">{v.ano || '-'}</div>
                     </td>
                     <td className="p-4">
-                      <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
-                        v.ativo ? 'bg-emerald-400/10 text-emerald-400' : 'bg-red-400/10 text-red-400'
-                      }`}>
-                        {v.ativo ? 'Disponível' : 'Indisponível'}
-                      </span>
+                      {(() => {
+                        const { label, color } = getVehicleStatus(v);
+                        return (
+                          <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase border ${color}`}>
+                            {label}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="p-4 text-right space-x-2">
                       <button 
@@ -152,6 +163,62 @@ const Veiculos = () => {
               </tbody>
             </table>
           )}
+        </div>
+
+        {/* CARDS MOBILE (Ocultos em Desktop) */}
+        <div className="md:hidden grid grid-cols-1 divide-y divide-slate-800">
+           {loading ? (
+             <div className="p-10 flex justify-center"><Loader2 className="animate-spin text-accent" size={32} /></div>
+           ) : filteredVeiculos.length > 0 ? filteredVeiculos.map(v => (
+             <div key={v.id} className="p-5 space-y-4">
+                <div className="flex justify-between items-start">
+                   <div className="flex items-center gap-3">
+                      <div className="p-2 bg-slate-800 rounded-lg text-slate-400">
+                         <Car size={20} />
+                      </div>
+                      <div>
+                         <h4 className="text-white font-black uppercase text-sm">{v.modelo}</h4>
+                         <p className="text-[10px] text-slate-500 uppercase">{v.marca}</p>
+                      </div>
+                   </div>
+                   {(() => {
+                      const { label, color } = getVehicleStatus(v);
+                      return (
+                        <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase border ${color}`}>
+                          {label}
+                        </span>
+                      );
+                   })()}
+                </div>
+
+                <div className="flex items-center gap-4">
+                   <div className="bg-slate-900 text-white border-2 border-slate-700 px-3 py-1 rounded-md font-mono text-base font-black uppercase tracking-widest shadow-inner">
+                      {v.placa}
+                   </div>
+                   <div className="text-xs text-slate-400 border-l border-slate-800 pl-4 py-1">
+                      <p className="font-bold">{v.cor || '-'}</p>
+                      <p className="text-[10px] text-slate-500">Ano: {v.ano || '-'}</p>
+                   </div>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-2">
+                   <button 
+                     onClick={() => { setSelectedVeiculo(v); setIsModalOpen(true); }}
+                     className="flex-1 flex items-center justify-center gap-2 bg-amber-500/10 text-amber-500 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest"
+                   >
+                     <Edit size={14} /> Editar
+                   </button>
+                   <button 
+                     onClick={() => handleDelete(v.id)}
+                     className="px-4 bg-red-500/10 text-red-500 py-2.5 rounded-xl"
+                   >
+                     <Trash2 size={16} />
+                   </button>
+                </div>
+             </div>
+           )) : (
+             <div className="p-10 text-center text-slate-500 text-sm italic">Nenhum veículo encontrado.</div>
+           )}
         </div>
       </div>
 
