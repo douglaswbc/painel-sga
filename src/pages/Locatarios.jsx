@@ -2,12 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { 
   Plus, Pencil, Trash2, Search, MapPin, 
   Phone, Mail, ToggleLeft, ToggleRight, X, Loader2,
-  ExternalLink, UserCheck, ShieldAlert, Globe
+  ExternalLink, UserCheck, ShieldAlert, Globe, MessageSquare
 } from 'lucide-react';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-toastify';
-import { formatWhatsAppToAPI } from '../utils/formatters'; // Importando seu utilitário
+import { formatWhatsAppToAPI } from '../utils/formatters';
+import MessageSelectorModal from '../components/MessageSelectorModal';
 
 const Locatarios = () => {
   const { profile } = useAuth();
@@ -16,6 +17,8 @@ const Locatarios = () => {
   const [showModal, setShowModal] = useState(false);
   const [editingTenant, setEditingTenant] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [isMessageModalOpen, setIsMessageModalOpen] = useState(false);
+  const [selectedTenantForMessage, setSelectedTenantForMessage] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
   const [formData, setFormData] = useState({
     nome_completo: '',
@@ -254,9 +257,16 @@ const Locatarios = () => {
                     </button>
                   </td>
                   <td className="px-6 py-4 text-right flex items-center justify-end gap-2">
+                    <button 
+                      onClick={() => { setSelectedTenantForMessage(item); setIsMessageModalOpen(true); }}
+                      className="p-2 text-zinc-500 hover:text-indigo-400 hover:bg-indigo-400/10 rounded-xl transition-all" 
+                      title="Enviar Mensagem"
+                    >
+                      <MessageSquare size={18} />
+                    </button>
                     <button onClick={() => handleCopyPortalLink(item.portal_token)} className="p-2 text-zinc-500 hover:text-emerald-400 hover:bg-emerald-400/10 rounded-xl transition-all" title="Link do Portal"><ExternalLink size={18} /></button>
-                    <button onClick={() => { setEditingTenant(item); setFormData(item); setFieldErrors({}); setShowModal(true); }} className="p-2 text-zinc-500 hover:text-indigo-400 hover:bg-indigo-400/10 rounded-xl transition-all"><Pencil size={18} /></button>
-                    <button onClick={() => deleteTenant(item.id)} className="p-2 text-zinc-500 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all"><Trash2 size={18} /></button>
+                    <button onClick={() => { setEditingTenant(item); setFormData(item); setFieldErrors({}); setShowModal(true); }} className="p-2 text-zinc-500 hover:text-indigo-400 hover:bg-indigo-400/10 rounded-xl transition-all" title="Editar Locatário"><Pencil size={18} /></button>
+                    <button onClick={() => deleteTenant(item.id)} className="p-2 text-zinc-500 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all" title="Excluir"><Trash2 size={18} /></button>
                   </td>
                 </tr>
               ))}
@@ -291,7 +301,8 @@ const Locatarios = () => {
 
                <div className="flex items-center justify-between pt-2">
                   <div className="flex gap-1">
-                    <button onClick={() => handleCopyPortalLink(item.portal_token)} className="flex items-center gap-2 bg-zinc-800 text-zinc-300 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest"><Globe size={14} /> Link Portal</button>
+                    <button onClick={() => { setSelectedTenantForMessage(item); setIsMessageModalOpen(true); }} className="flex items-center gap-2 bg-indigo-600/10 text-indigo-500 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest"><MessageSquare size={14} /> Mensagem</button>
+                    <button onClick={() => handleCopyPortalLink(item.portal_token)} className="flex items-center gap-2 bg-zinc-800 text-zinc-300 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest"><Globe size={14} /> Portal</button>
                   </div>
                   <div className="flex gap-2">
                     <button onClick={() => { setEditingTenant(item); setFormData(item); setFieldErrors({}); setShowModal(true); }} className="p-2.5 bg-indigo-500/10 text-indigo-500 rounded-xl"><Pencil size={18} /></button>
@@ -388,6 +399,13 @@ const Locatarios = () => {
           </div>
         </div>
       )}
+      {/* MODAL MENSAGENS */}
+      <MessageSelectorModal 
+        isOpen={isMessageModalOpen}
+        onClose={() => setIsMessageModalOpen(false)}
+        locatario={selectedTenantForMessage}
+        usuario={profile}
+      />
     </div>
   );
 };

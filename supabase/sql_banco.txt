@@ -1,0 +1,193 @@
+-- ==========================================
+-- ESTRUTURA DO BANCO DE DADOS - PAINEL SGA
+-- ==========================================
+
+-- Tabela de Usuários (Deltalhes do Usuário logado)
+CREATE TABLE public.usuarios (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  nome_completo text,
+  whatsapp text UNIQUE,
+  email text NOT NULL UNIQUE,
+  role text NOT NULL,
+  empresa_nome text,
+  ativo boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  evolution_instance text,
+  evolution_apikey text,
+  evolution_url text,
+  access_token_mercado_pago text,
+  mp_notification_url text DEFAULT 'https://stenyo-n8n.1vjhve.easypanel.host/webhook/mercado-pago-webhook'::text,
+  CONSTRAINT usuarios_pkey PRIMARY KEY (id)
+);
+
+-- Tabela de Locatários
+CREATE TABLE public.locatarios (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  id_usuario uuid NOT NULL,
+  nome_completo text NOT NULL,
+  whatsapp text NOT NULL,
+  email text,
+  documento text,
+  ativo boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  cpf text,
+  cep text,
+  rua text,
+  numero text,
+  bairro text,
+  cidade text,
+  estado character(2),
+  portal_token uuid DEFAULT gen_random_uuid(),
+  CONSTRAINT locatarios_pkey PRIMARY KEY (id),
+  CONSTRAINT locatarios_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id) ON DELETE CASCADE
+);
+
+-- Tabela de Veículos
+CREATE TABLE public.veiculos (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  id_usuario uuid NOT NULL,
+  placa character varying NOT NULL,
+  modelo text NOT NULL,
+  marca text,
+  cor text,
+  ano integer,
+  ativo boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT veiculos_pkey PRIMARY KEY (id),
+  CONSTRAINT veiculos_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id) ON DELETE CASCADE
+);
+
+-- Tabela de Contratos
+CREATE TABLE public.contratos (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  id_locatario uuid NOT NULL,
+  id_veiculo uuid NOT NULL,
+  id_usuario uuid NOT NULL,
+  valor numeric NOT NULL,
+  recorrencia text NOT NULL, -- Armazena a regra JSON de recorrência
+  data_inicio date NOT NULL,
+  proxima_cobranca timestamp with time zone NOT NULL,
+  status text NOT NULL DEFAULT 'ativo'::text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  ocorrencias_realizadas integer DEFAULT 0,
+  CONSTRAINT contratos_pkey PRIMARY KEY (id),
+  CONSTRAINT contratos_id_locatario_fkey FOREIGN KEY (id_locatario) REFERENCES public.locatarios(id),
+  CONSTRAINT contratos_id_veiculo_fkey FOREIGN KEY (id_veiculo) REFERENCES public.veiculos(id),
+  CONSTRAINT contratos_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id)
+);
+
+-- Tabela de Cobranças (Faturas)
+CREATE TABLE public.cobrancas (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  id_contrato uuid,
+  id_usuario uuid NOT NULL,
+  valor numeric NOT NULL,
+  data_vencimento text NOT NULL,
+  data_pagamento timestamp with time zone,
+  status text NOT NULL DEFAULT 'pendente'::text,
+  tentativas_envio integer NOT NULL DEFAULT 0,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  mercado_pago_id text,
+  payment_link text,
+  categoria text DEFAULT 'aluguel'::text,
+  tipo text DEFAULT 'receita'::text,
+  ultimo_lembrete_at timestamp with time zone,
+  CONSTRAINT cobrancas_pkey PRIMARY KEY (id),
+  CONSTRAINT cobrancas_id_contrato_fkey FOREIGN KEY (id_contrato) REFERENCES public.contratos(id) ON DELETE CASCADE,
+  CONSTRAINT cobrancas_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id) ON DELETE CASCADE
+);
+
+-- Tabela de Templates de Mensagem (WhatsApp)
+CREATE TABLE public.mensagens_template (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  id_usuario uuid NOT NULL,
+  ordem integer NOT NULL,
+  titulo text NOT NULL,
+  conteudo text NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  tipo text DEFAULT 'cobranca'::text, -- 'cobranca' ou 'avulso'
+  CONSTRAINT mensagens_template_pkey PRIMARY KEY (id),
+  CONSTRAINT mensagens_template_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id) ON DELETE CASCADE
+);
+
+-- Tabela de Candidatos (Fluxo de Reserva)
+CREATE TABLE public.candidatos (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  id_usuario uuid NOT NULL,
+  nome text NOT NULL,
+  cpf text NOT NULL UNIQUE,
+  telefone text NOT NULL,
+  idade_faixa text,
+  tem_220v boolean DEFAULT false,
+  trabalha_em_app boolean DEFAULT false,
+  caucao_disponivel text,
+  score_formulario integer,
+  score_credito integer,
+  possui_processos_criminais boolean,
+  status text DEFAULT 'Aguardando Processamento'::text,
+  pagamento_id text,
+  pagamento_status text DEFAULT 'Aguardando'::text,
+  pix_qr_code text,
+  pix_copia_e_cola text,
+  reserva_expira_em timestamp with time zone,
+  reserva_confirmada_em timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  pix_url text,
+  CONSTRAINT candidatos_pkey PRIMARY KEY (id),
+  CONSTRAINT candidatos_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id) ON DELETE CASCADE
+);
+
+-- Tabela de Mensalidades (Uso Interno Administrativo)
+CREATE TABLE public.mensalidades (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  id_usuario uuid NOT NULL,
+  valor numeric NOT NULL,
+  descricao text,
+  data_vencimento date NOT NULL,
+  status text NOT NULL DEFAULT 'pendente'::text,
+  data_pagamento timestamp with time zone,
+  mercado_pago_id text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT mensalidades_pkey PRIMARY KEY (id),
+  CONSTRAINT mensalidades_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id) ON DELETE CASCADE
+);
+
+-- ==========================================
+-- FUNÇÕES E TRIGGERS
+-- ==========================================
+
+-- Sincronizar criação de usuário do Auth com a tabela Public
+CREATE OR REPLACE FUNCTION public.handle_new_user() 
+RETURNS trigger AS $$
+BEGIN
+  INSERT INTO public.usuarios (id, email, nome_completo, role)
+  VALUES (NEW.id, NEW.email, NEW.raw_user_meta_data->>'nome_completo', NEW.raw_user_meta_data->>'role');
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+
+-- Verificar se o usuário é Administrador
+CREATE OR REPLACE FUNCTION public.check_is_admin()
+RETURNS boolean AS $$
+BEGIN
+  RETURN (
+    SELECT (role = 'admin')
+    FROM public.usuarios
+    WHERE id = auth.uid()
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ==========================================
+-- ÍNDICES (Otimização)
+-- ==========================================
+CREATE INDEX IF NOT EXISTS idx_cobrancas_usuario ON public.cobrancas(id_usuario);
+CREATE INDEX IF NOT EXISTS idx_cobrancas_status ON public.cobrancas(status);
+CREATE INDEX IF NOT EXISTS idx_contratos_usuario ON public.contratos(id_usuario);
+CREATE INDEX IF NOT EXISTS idx_locatarios_usuario ON public.locatarios(id_usuario);
+CREATE INDEX IF NOT EXISTS idx_mensagens_usuario ON public.mensagens_template(id_usuario);

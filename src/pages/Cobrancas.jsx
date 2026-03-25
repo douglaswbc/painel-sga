@@ -4,9 +4,11 @@ import { useAuth } from '../contexts/AuthContext';
 import { 
   CheckCircle, Ban, Search, Loader2, Calendar, 
   Play, RefreshCcw, Plus, X, DollarSign, Tag, Info,
-  Trash2, ChevronLeft, ChevronRight, CircleDollarSign
+  Trash2, ChevronLeft, ChevronRight, CircleDollarSign,
+  MessageSquare
 } from 'lucide-react';
 import { toast } from 'react-toastify';
+import MessageSelectorModal from '../components/MessageSelectorModal';
 
 const Cobrancas = () => {
   const { profile } = useAuth();
@@ -19,6 +21,10 @@ const Cobrancas = () => {
   const [filterStatus, setFilterStatus] = useState('todos');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  
+  // Estados para Modal de Mensagem
+  const [isMessageModalOpen, setIsMessageModalOpen] = useState(false);
+  const [selectedLocatarioData, setSelectedLocatarioData] = useState(null);
 
   // Estados para Paginação
   const [currentPage, setCurrentPage] = useState(1);
@@ -443,6 +449,24 @@ const Cobrancas = () => {
                   </div>
 
                   <div className="flex items-center gap-8">
+                    <button 
+                      onClick={(e) => { 
+                        e.stopPropagation(); 
+                        // Precisamos dos dados do locatário (nome e whatsapp)
+                        // Como o group só tem o nome, vamos buscar o objeto completo do items[0] ou similar
+                        const locData = group.items[0]?.contratos?.locatarios;
+                        if (locData) {
+                          setSelectedLocatarioData(locData);
+                          setIsMessageModalOpen(true);
+                        } else {
+                          toast.warning("Dados de contato não encontrados para este faturamento avulso.");
+                        }
+                      }}
+                      className="p-2 text-zinc-500 hover:text-indigo-400 hover:bg-indigo-400/10 rounded-xl transition-all"
+                      title="Enviar Mensagem WhatsApp"
+                    >
+                      <MessageSquare size={18} />
+                    </button>
                     <div className="hidden md:block text-right">
                        <div className="text-[9px] font-black text-zinc-600 uppercase tracking-widest leading-none mb-1">PAGO</div>
                        <div className="text-xs font-bold text-zinc-400">R$ {group.totalPago.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
@@ -740,6 +764,13 @@ const Cobrancas = () => {
           </div>
         </div>
       )}
+      {/* MODAL MENSAGENS */}
+      <MessageSelectorModal 
+        isOpen={isMessageModalOpen}
+        onClose={() => setIsMessageModalOpen(false)}
+        locatario={selectedLocatarioData}
+        usuario={profile}
+      />
     </div>
   );
 };

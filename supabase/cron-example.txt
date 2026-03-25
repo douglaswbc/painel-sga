@@ -1,0 +1,50 @@
+-- === 1. CRIAR AGENDAMENTO PARA FATURAMENTO DIÁRIO ===
+-- Este cron executa todo dia à meia-noite (00:00) para processar os contratos e gerar novas faturas.
+-- Substitua 'YOUR_SERVICE_ROLE_KEY' pelo seu Service Role Key do Supabase (Settings -> API)
+-- Substitua 'USER_ID_HERE' pelo ID do usuário padrão que processa os contratos (ou passe vazio se a função tratar disto)
+
+select
+  cron.schedule(
+    'processar-faturamento-diario',  -- Nome amigável do agendamento
+    '0 0 * * *',                    -- Todo dia às 00:00 (Brasília costuma ser 21:00 do dia anterior em UTC se não ajustado)
+    $$
+    select
+      net.http_post(
+        url:='https://ykvmzelwpodjmvoujumf.supabase.co/functions/v1/gerar-cobrancas-diarias',
+        headers:='{"Content-Type": "application/json", "Authorization": "Bearer YOUR_SERVICE_ROLE_KEY"}'::jsonb,
+        body:='{"userId": "45b00546-ad4e-4481-9a2d-d2dffe2871e3"}'::jsonb
+      ) as request_id;
+    $$
+  );
+
+
+-- === 2. CRIAR AGENDAMENTO PARA ENVIAR LEMBRETES DE COBRANÇA ===
+-- Este cron executa a cada 30 minutos para checar se há alguma cobrança na régua que precisa ser disparada.
+-- A função já tem trava interna de 15 minutos, então pode rodar com segurança.
+
+select
+  cron.schedule(
+    'enviar-lembretes-whatsapp',    -- Nome amigável do agendamento
+    '*/30 * * * *',                -- A cada 30 minutos
+    $$
+    select
+      net.http_post(
+        url:='https://ykvmzelwpodjmvoujumf.supabase.co/functions/v1/enviar-lembretes-cobranca',
+        headers:='{"Content-Type": "application/json", "Authorization": "Bearer YOUR_SERVICE_ROLE_KEY"}'::jsonb,
+        body:='{}'::jsonb
+      ) as request_id;
+    $$
+  );
+
+
+-- === COMANDOS ÚTEIS PARA GERENCIAMENTO ===
+
+-- Listar todos os crons ativos:
+-- select * from cron.job;
+
+-- Ver logs de execução (para ver se deu erro 400, 500, etc):
+-- select * from cron.job_run_details order by start_time desc limit 10;
+
+-- Para remover um cron se precisar ajustar:
+-- select cron.unschedule('processar-faturamento-diario');
+-- select cron.unschedule('enviar-lembretes-whatsapp');

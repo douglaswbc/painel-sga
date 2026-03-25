@@ -1,16 +1,84 @@
-# React + Vite
+# SGA - Sistema de Gestão de Aluguel 🚀📱
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Um sistema completo e moderno para gestão de frotas, contratos de aluguel e cobrança automatizada via WhatsApp. Desenvolvido para oferecer controle financeiro total e comunicação ágil com locatários.
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 🛠️ Tecnologias Utilizadas
 
-## React Compiler
+- **Frontend**: [React 19](https://react.dev/) + [Vite](https://vitejs.dev/)
+- **Estilização**: Tailwind CSS (Design Premium / Glassmorphism)
+- **Backend / DB**: [Supabase](https://supabase.com/) (PostgreSQL, Edge Functions, Auth, Storage)
+- **Mensagens**: [Evolution API](https://evolution-api.com/) (WhatsApp Business API)
+- **Pagamentos**: [Mercado Pago](https://www.mercadopago.com.br/) (PIX Automático)
+- **Ícones**: [Lucide React](https://lucide.dev/)
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+---
 
-## Expanding the ESLint configuration
+## ✨ Principais Funcionalidades
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+### 📋 Gestão de Cadastros
+- **Locatários**: Cadastro completo com integração ViaCEP e validação de documentos.
+- **Veículos**: Controle de frota com status de atividade.
+- **Contratos**: Configuração de cobrança com recorrência semanal/diária ajustável.
+
+### 💰 Financeiro & Cobrança
+- **Faturamento Diário**: Processamento automático de contratos via Cron Jobs.
+- **PIX Automático**: Geração de QR Code e Copia-e-Cola integrado ao Mercado Pago.
+- **Fluxo de Caixa**: Visão agrupada por locatário com status de pagamento em tempo real.
+
+### 💬 Comunicação Inteligente
+- **Régua de Cobrança**: Disparo automático de lembretes baseados no tempo de expiração do PIX.
+- **Templates Avulsos**: Envio manual de modelos pré-definidos (Boas-vindas, Manutenção, etc) em um clique.
+- **Portal do Locatário**: Link exclusivo para o cliente acompanhar faturas e realizar pagamentos.
+
+---
+
+## 🚀 Como Executar o Projeto
+
+### Pré-requisitos
+- Node.js (v18+)
+- Conta no Supabase
+- Instância da Evolution API
+
+### Passo a Passo
+1. **Clonar o repositório**
+   ```bash
+   git clone [link-do-repositorio]
+   cd painel-sga
+   ```
+
+2. **Instalar dependências**
+   ```bash
+   npm install
+   ```
+
+3. **Configurar Variáveis de Ambiente**
+   Crie um arquivo `.env` na raiz do projeto com as seguintes chaves:
+   ```env
+   VITE_SUPABASE_URL=seu_url_do_supabase
+   VITE_SUPABASE_ANON_KEY=sua_chave_anon
+   ```
+
+4. **Banco de Dados & Crons**
+   - Execute o script contido em `supabase/sql_banco.txt` no SQL Editor do Supabase.
+   - Configure os agendamentos automáticos seguindo as orientações em `supabase/cron-example.txt`.
+
+5. **Rodar em Desenvolvimento**
+   ```bash
+   npm run dev
+   ```
+
+---
+
+## 📁 Estrutura de Pastas Úteis
+
+- `/src/pages`: Telas principais do sistema (Locatários, Cobranças, Mensagens).
+- `/src/components`: Componentes reutilizáveis (Modais, Seletores).
+- `/supabase/functions`: Lógica de backend (Faturamento, WhatsApp, Webhooks).
+- `/src/services/supabase.js`: Configuração do cliente Supabase.
+
+---
+
+## 📄 Licença
+Este projeto foi desenvolvido para uso exclusivo pela **Emove Entregas**. Todos os direitos reservados.
