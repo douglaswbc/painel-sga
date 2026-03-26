@@ -6,7 +6,7 @@
 select
   cron.schedule(
     'processar-faturamento-diario',  -- Nome amigável do agendamento
-    '0 0 * * *',                    -- Todo dia às 00:00 (Brasília costuma ser 21:00 do dia anterior em UTC se não ajustado)
+    '0 * * * *',                    -- Hora em Hora
     $$
     select
       net.http_post(
