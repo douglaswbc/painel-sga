@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   X, Search, MessageSquare, Send, Loader2, 
-  CheckCircle2, AlertCircle, Info
+  CheckCircle2, AlertCircle, Info,
+  Image, Video, FileText, Paperclip
 } from 'lucide-react';
 import { supabase } from '../services/supabase';
 import { toast } from 'react-toastify';
@@ -50,18 +51,30 @@ const MessageSelectorModal = ({ isOpen, onClose, locatario, usuario }) => {
     try {
       setSending(true);
       const finalMessage = getPreviewMessage(selectedTemplate.conteudo);
+      const isMedia = !!selectedTemplate.media_url;
+      const endpoint = isMedia ? 'sendMedia' : 'sendText';
+      
+      const payload = isMedia ? {
+        number: locatario.whatsapp.replace(/\D/g, ''),
+        mediatype: selectedTemplate.media_type,
+        mimetype: selectedTemplate.media_mimetype,
+        caption: finalMessage,
+        media: selectedTemplate.media_url,
+        fileName: selectedTemplate.media_filename,
+        delay: 1200
+      } : {
+        number: locatario.whatsapp.replace(/\D/g, ''),
+        text: finalMessage,
+        delay: 1200
+      };
 
-      const response = await fetch(`${usuario.evolution_url}/message/sendText/${usuario.evolution_instance}`, {
+      const response = await fetch(`${usuario.evolution_url}/message/${endpoint}/${usuario.evolution_instance}`, {
         method: 'POST',
         headers: {
           'apikey': usuario.evolution_apikey,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          number: locatario.whatsapp.replace(/\D/g, ''),
-          text: finalMessage,
-          delay: 1200
-        })
+        body: JSON.stringify(payload)
       });
 
       if (!response.ok) throw new Error("Erro no servidor de mensagens");
@@ -142,11 +155,37 @@ const MessageSelectorModal = ({ isOpen, onClose, locatario, usuario }) => {
                         : 'bg-zinc-950/50 border-zinc-800 hover:border-zinc-700'
                     }`}
                   >
-                    <div className="flex items-center justify-between">
-                      <span className={`text-[11px] font-black uppercase tracking-tight ${selectedTemplate?.id === template.id ? 'text-white' : 'text-zinc-300'}`}>
-                        {template.titulo}
-                      </span>
-                      {selectedTemplate?.id === template.id && <CheckCircle2 size={16} className="text-white" />}
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center shrink-0 border ${selectedTemplate?.id === template.id ? 'bg-white/10 border-white/20' : 'bg-zinc-900 border-zinc-800'}`}>
+                        {template.media_url ? (
+                          template.media_type === 'image' ? (
+                            <img src={template.media_url} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="text-indigo-400">
+                              {template.media_type === 'video' && <Video size={16} />}
+                              {template.media_type === 'document' && <FileText size={16} />}
+                            </div>
+                          )
+                        ) : (
+                          <MessageSquare size={16} className="text-zinc-700" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <span className={`text-[11px] font-black uppercase tracking-tight truncate ${selectedTemplate?.id === template.id ? 'text-white' : 'text-zinc-300'}`}>
+                            {template.titulo}
+                          </span>
+                          {selectedTemplate?.id === template.id && <CheckCircle2 size={16} className="text-white" />}
+                        </div>
+                        {template.media_url && (
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <Paperclip size={10} className="text-indigo-500/70" />
+                            <span className={`text-[8px] font-bold uppercase truncate ${selectedTemplate?.id === template.id ? 'text-indigo-200/60' : 'text-zinc-600'}`}>
+                              {template.media_filename}
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                     {selectedTemplate?.id === template.id && (
                        <div className="mt-3 p-3 bg-black/20 rounded-xl border border-white/5 animate-in fade-in slide-in-from-top-1 duration-200">

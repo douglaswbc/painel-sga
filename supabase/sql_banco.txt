@@ -106,6 +106,10 @@ CREATE TABLE public.mensagens_template (
   conteudo text NOT NULL,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   tipo text DEFAULT 'cobranca'::text, -- 'cobranca' ou 'avulso'
+  media_url text,
+  media_type text,
+  media_mimetype text,
+  media_filename text,
   CONSTRAINT mensagens_template_pkey PRIMARY KEY (id),
   CONSTRAINT mensagens_template_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id) ON DELETE CASCADE
 );
@@ -191,3 +195,26 @@ CREATE INDEX IF NOT EXISTS idx_cobrancas_status ON public.cobrancas(status);
 CREATE INDEX IF NOT EXISTS idx_contratos_usuario ON public.contratos(id_usuario);
 CREATE INDEX IF NOT EXISTS idx_locatarios_usuario ON public.locatarios(id_usuario);
 CREATE INDEX IF NOT EXISTS idx_mensagens_usuario ON public.mensagens_template(id_usuario);
+
+-- ==========================================
+-- STORAGE E POLÍTICAS (Anexos de Mensagem)
+-- ==========================================
+
+-- 1. Bucket 'mensagens-midia' no Supabase Storage. Marcar como PUBLIC no Dashboard.
+
+-- 2. Políticas de RLS para o Bucket 'mensagens-midia' na tabela storage.objects:
+
+-- Permitir upload para usuários autenticados
+CREATE POLICY "Permitir upload total" ON storage.objects
+FOR INSERT TO authenticated 
+WITH CHECK (bucket_id = 'mensagens-midia');
+
+-- Permitir consulta pública (WhatsApp precisa acessar o link para baixar a mídia)
+CREATE POLICY "Permitir consulta total" ON storage.objects
+FOR SELECT TO public 
+USING (bucket_id = 'mensagens-midia');
+
+-- Permitir exclusão para usuário autenticado (Dono do arquivo)
+CREATE POLICY "Permitir exclusão total" ON storage.objects
+FOR DELETE TO authenticated 
+USING (bucket_id = 'mensagens-midia');

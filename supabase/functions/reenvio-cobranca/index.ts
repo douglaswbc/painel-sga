@@ -102,14 +102,40 @@ serve(async (req) => {
             }).eq('id', cobrancaId);
         }
 
+        // 🔎 Busca template para reenvio (baseado na tentativa atual ou a primeira)
+        const ordemParaFetch = Math.max(1, cobranca.tentativas_envio || 1);
+        const { data: template } = await supabaseAdmin
+            .from('mensagens_template')
+            .select('media_url, media_type, media_mimetype, media_filename')
+            .eq('id_usuario', usuario.id)
+            .eq('tipo', 'cobranca')
+            .eq('ordem', ordemParaFetch)
+            .maybeSingle();
+
         // --- ENVIO WHATSAPP ---
         const dataVencimento = new Date(cobranca.data_vencimento).toLocaleDateString('pt-BR');
         const mensagem = `Olá, ${locatario.nome_completo.split(' ')[0]}! 🚗\n\nLembramos que sua cobrança de R$ ${Number(cobranca.valor).toFixed(2).replace('.', ',')} (Vencimento: ${dataVencimento}) está disponível.\n\nLink para pagamento PIX:\n${linkDePagamento}`;
 
-        await fetch(`${usuario.evolution_url}/message/sendText/${usuario.evolution_instance}`, {
+        const isMedia = !!template?.media_url;
+        const endpoint = isMedia ? 'sendMedia' : 'sendText';
+        const payload = isMedia ? {
+            number: locatario.whatsapp,
+            mediatype: template.media_type,
+            mimetype: template.media_mimetype,
+            caption: mensagem,
+            media: template.media_url,
+            fileName: template.media_filename,
+            delay: 1200
+        } : {
+            number: locatario.whatsapp,
+            text: mensagem,
+            delay: 1200
+        };
+
+        await fetch(`${usuario.evolution_url}/message/${endpoint}/${usuario.evolution_instance}`, {
             method: 'POST',
             headers: { 'apikey': usuario.evolution_apikey, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ number: locatario.whatsapp, text: mensagem })
+            body: JSON.stringify(payload)
         });
 
         return new Response(JSON.stringify({ success: true, message: "Cobrança enviada com sucesso!" }), {

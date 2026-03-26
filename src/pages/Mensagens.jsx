@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { 
   Save, Loader2, MessageSquareQuote, Info, 
   Plus, Trash2, LayoutGrid, Megaphone, 
-  ChevronUp, ChevronDown, AlertCircle
+  ChevronUp, ChevronDown, AlertCircle, Paperclip, X, FileUp, Image, FileText, Video
 } from 'lucide-react';
 import { toast } from 'react-toastify';
 
@@ -117,6 +117,78 @@ const Mensagens = () => {
     }
   };
 
+  const handleUploadMedia = async (template, file) => {
+    if (!file) return;
+
+    try {
+      setSaving(true);
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${profile.id}/${crypto.randomUUID()}.${fileExt}`;
+      const filePath = `${fileName}`;
+
+      const { error: uploadError, data } = await supabase.storage
+        .from('mensagens-midia')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      // Limpeza de mídia antiga se existir
+      if (template.media_url) {
+        const oldPath = template.media_url.split('/mensagens-midia/').pop();
+        if (oldPath) {
+          await supabase.storage.from('mensagens-midia').remove([oldPath]);
+        }
+      }
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('mensagens-midia')
+        .getPublicUrl(filePath);
+
+      // Determinar mediatype
+      let mediatype = 'document';
+      if (file.type.startsWith('image/')) mediatype = 'image';
+      else if (file.type.startsWith('video/')) mediatype = 'video';
+
+      const updated = [...templates];
+      const idx = templates.findIndex(t => t === template);
+      updated[idx] = {
+        ...updated[idx],
+        media_url: publicUrl,
+        media_type: mediatype,
+        media_mimetype: file.type,
+        media_filename: file.name
+      };
+      setTemplates(updated);
+      toast.success("Mídia anexada com sucesso!");
+    } catch (error) {
+      toast.error("Erro no upload: " + error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemoveMedia = (template) => {
+    const updated = [...templates];
+    const idx = templates.findIndex(t => t === template);
+    updated[idx] = {
+      ...updated[idx],
+      media_url: null,
+      media_type: null,
+      media_mimetype: null,
+      media_filename: null
+    };
+
+    // Limpeza no Storage
+    if (template.media_url) {
+      const path = template.media_url.split('/mensagens-midia/').pop();
+      if (path) {
+        supabase.storage.from('mensagens-midia').remove([path]);
+      }
+    }
+
+    setTemplates(updated);
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -126,7 +198,11 @@ const Mensagens = () => {
           ordem: t.ordem || 0,
           titulo: t.titulo || '',
           conteudo: t.conteudo || '',
-          tipo: t.tipo || 'cobranca'
+          tipo: t.tipo || 'cobranca',
+          media_url: t.media_url || null,
+          media_type: t.media_type || null,
+          media_mimetype: t.media_mimetype || null,
+          media_filename: t.media_filename || null
         };
         
         // Se já tem ID, usa o existente. Se não tem, gera um novo UUID no frontend
@@ -299,19 +375,63 @@ const Mensagens = () => {
                     }}
                   />
                   
-                  {/* Dica de Variáveis */}
-                  <div className="mt-3 flex items-center gap-3">
-                     <span className="text-[9px] font-black text-zinc-600 uppercase">Tags úteis:</span>
-                     <div className="flex gap-2">
-                        {['{valor}', '{vencimento}', '{nome}'].map(tag => (
-                          <span key={tag} className="px-2 py-0.5 bg-zinc-950 border border-zinc-800 rounded-md text-[9px] font-mono text-indigo-400/70">{tag}</span>
-                        ))}
-                     </div>
+                  </div>
+
+                  {/* Campo de Anexo */}
+                  <div className="mt-4 pt-4 border-t border-zinc-800">
+                    {!template.media_url ? (
+                      <label className="flex items-center gap-2 w-fit px-4 py-2 bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 rounded-xl cursor-pointer transition-all group/upload">
+                        <Paperclip size={14} className="text-zinc-500 group-hover/upload:text-indigo-400" />
+                        <span className="text-[10px] font-black text-zinc-500 uppercase tracking-tight group-hover/upload:text-zinc-300">Anexar Mídia (Img, Vídeo ou Doc)</span>
+                        <input 
+                          type="file" 
+                          className="hidden" 
+                          accept="image/*,video/*,.pdf,.doc,.docx"
+                          onChange={(e) => handleUploadMedia(template, e.target.files[0])}
+                        />
+                      </label>
+                    ) : (
+                      <div className="flex items-center justify-between p-3 bg-zinc-950 border border-indigo-500/20 rounded-2xl">
+                         <div className="flex items-center gap-3">
+                            <div className="w-12 h-12 bg-indigo-500/10 rounded-xl text-indigo-500 overflow-hidden flex items-center justify-center shrink-0 border border-white/5">
+                               {template.media_type === 'image' ? (
+                                 <img src={template.media_url} alt="Preview" className="w-full h-full object-cover" />
+                               ) : (
+                                 <>
+                                   {template.media_type === 'video' && <Video size={20} />}
+                                   {template.media_type === 'document' && <FileText size={20} />}
+                                 </>
+                               )}
+                            </div>
+                            <div className="flex flex-col min-w-0">
+                               <span className="text-[10px] font-black text-white truncate max-w-[150px] uppercase tracking-tight">{template.media_filename}</span>
+                               <span className="text-[9px] text-zinc-600 font-bold uppercase">{template.media_type} • {template.media_mimetype}</span>
+                            </div>
+                         </div>
+                         <div className="flex items-center gap-2">
+                            <a 
+                              href={template.media_url} 
+                              target="_blank" 
+                              rel="noreferrer"
+                              className="p-2 hover:bg-zinc-800 text-zinc-500 hover:text-white rounded-lg transition-all"
+                              title="Ver arquivo"
+                            >
+                               <FileUp size={14} />
+                            </a>
+                            <button 
+                              onClick={() => handleRemoveMedia(template)}
+                              className="p-2 hover:bg-red-500/10 text-zinc-600 hover:text-red-500 rounded-lg transition-all"
+                              title="Remover anexo"
+                            >
+                               <X size={14} />
+                            </button>
+                         </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
-            </div>
-          ))
+            ))
         )}
       </div>
 

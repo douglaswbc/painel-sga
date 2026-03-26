@@ -153,7 +153,7 @@ serve(async (req) => {
                 // 🔎 Busca template da vez
                 const { data: template } = await supabase
                     .from('mensagens_template')
-                    .select('conteudo')
+                    .select('conteudo, media_url, media_type, media_mimetype, media_filename')
                     .eq('id_usuario', usuario.id)
                     .eq('ordem', proximaTentativa)
                     .single()
@@ -172,12 +172,28 @@ serve(async (req) => {
                 }
 
                 // 📤 Envio Evolution API
+                const isMedia = !!template.media_url;
+                const endpoint = isMedia ? 'sendMedia' : 'sendText';
+                const payload = isMedia ? {
+                    number: locatario.whatsapp,
+                    mediatype: template.media_type,
+                    mimetype: template.media_mimetype,
+                    caption: mensagemFinal,
+                    media: template.media_url,
+                    fileName: template.media_filename,
+                    delay: 1200
+                } : {
+                    number: locatario.whatsapp,
+                    text: mensagemFinal,
+                    delay: 1200
+                };
+
                 const evoResponse = await fetch(
-                    `${usuario.evolution_url}/message/sendText/${usuario.evolution_instance}`,
+                    `${usuario.evolution_url}/message/${endpoint}/${usuario.evolution_instance}`,
                     {
                         method: 'POST',
                         headers: { 'apikey': usuario.evolution_apikey, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ number: locatario.whatsapp, text: mensagemFinal, delay: 1200 })
+                        body: JSON.stringify(payload)
                     }
                 )
 
