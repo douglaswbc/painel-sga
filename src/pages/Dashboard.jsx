@@ -93,9 +93,11 @@ const Dashboard = () => {
       const totalCobrançasCount = data.filter(c => c.tipo === 'receita').length;
       const adimplencia = totalCobrançasCount > 0 ? (cobrançasPagasCount / totalCobrançasCount) * 100 : 100;
 
-      // 6. Fila de Cobrança (Apenas 'receita' pendente/atrasada)
+      // 6. Fila de Cobrança (Apenas 'receita' pendente/atrasada) — mais recentes primeiro
       const proximasCobrancas = data
-        .filter(c => ['pendente', 'atrasado'].includes(c.status) && c.tipo === 'receita');
+        .filter(c => ['pendente', 'atrasado'].includes(c.status) && c.tipo === 'receita')
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
 
       setStats({ 
         lucroLiquido, 
