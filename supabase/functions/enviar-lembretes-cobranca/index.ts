@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const corsHeaders = {
@@ -6,7 +5,7 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders })
     }
@@ -19,8 +18,9 @@ serve(async (req) => {
     try {
         console.log("=== INÍCIO RÉGUA DINÂMICA DE COBRANÇA ===")
 
-        // 🔎 Ajuste fuso horário Brasil
         const agora = new Date()
+
+        // Data de hoje no fuso de Brasília (yyyy-mm-dd)
         const brasiliaTime = new Intl.DateTimeFormat('pt-BR', {
             timeZone: 'America/Sao_Paulo',
             year: 'numeric',
@@ -31,7 +31,11 @@ serve(async (req) => {
         const [dia, mes, ano] = brasiliaTime.split('/')
         const hoje = `${ano}-${mes}-${dia}`
 
-        // 🔎 Busca cobranças pendentes do dia (incluindo created_at e ultimo_lembrete_at)
+        // Busca cobranças pendentes do dia.
+        // Fix 1 (Trava de horário): `.lte('created_at', agora)` garante que só
+        // processamos cobranças cujo created_at já passou — como o faturamento agora
+        // cria a cobrança exatamente no horário do contrato, isso impede qualquer
+        // lembrete ser enviado antes do horário definido.
         const { data: cobrancas, error: fetchError } = await supabase
             .from('cobrancas')
             .select(`
@@ -46,6 +50,7 @@ serve(async (req) => {
                 status,
                 contratos!inner (
                     id_locatario,
+                    status,
                     recorrencia,
                     locatarios (
                         nome_completo,
@@ -62,79 +67,65 @@ serve(async (req) => {
             `)
             .eq('status', 'pendente')
             .eq('data_vencimento', hoje)
+            .lte('created_at', agora.toISOString())  // Fix 1: só cobra após o horário do contrato
+            .eq('contratos.status', 'ativo')          // Ignora cobranças de contratos inativos/encerrados
 
         if (fetchError) throw fetchError
 
         if (!cobrancas || cobrancas.length === 0) {
-            console.log("Nenhuma cobrança encontrada.")
+            console.log("Nenhuma cobrança elegível para envio agora.")
             return new Response(
                 JSON.stringify({ message: 'Sem cobranças para processar agora.' }),
                 { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
             )
         }
 
-        const results = []
+        const results: { id: string; status: string; tentativa?: number; msg?: string }[] = []
 
-        // 🔁 Processamento
         for (const cobranca of cobrancas) {
             try {
                 const locatario = cobranca.contratos.locatarios
                 const usuario = cobranca.usuarios
                 const proximaTentativa = (cobranca.tentativas_envio || 0) + 1
-                const primeiroNome = locatario.nome_completo.split(' ')[0]
+                const primeiroNome = locatario.nome_completo?.split(' ')[0] ?? 'Locatário'
 
-                console.log(`Analisando cobrança ${cobranca.id} (Envio: ${proximaTentativa})`)
+                console.log(`Analisando cobrança ${cobranca.id} (Tentativa: ${proximaTentativa})`)
 
-                // --- 🧠 LÓGICA DE ESPAÇAMENTO DINÂMICO ---
-                // 1. Pega total de templates deste usuário
-                const { count: totalTemplates } = await supabase
+                // Fix 1 (camada extra): Nunca processar cobrança criada no futuro
+                if (new Date(cobranca.created_at) > agora) {
+                    console.log(`Cobrança ${cobranca.id} ainda não chegou seu horário.`)
+                    continue
+                }
+
+                // 1. Pega total de templates deste locador
+                const { count: totalTemplates, error: countError } = await supabase
                     .from('mensagens_template')
                     .select('*', { count: 'exact', head: true })
-                    .eq('id_usuario', usuario.id);
+                    .eq('id_usuario', usuario.id)
 
-                if (!totalTemplates) {
-                    console.log(`Locador ${usuario.id} não possui templates cadastrados.`);
-                    continue;
+                if (countError || totalTemplates === null || totalTemplates === 0) {
+                    console.log(`Locador ${usuario.id} não possui templates cadastrados.`)
+                    continue
                 }
 
-                // 2. Descobre tempo de expiração no contrato (JSON recorrencia)
-                let horasExpiracao = 4; // Default caso não ache
-                try {
-                    const config = JSON.parse(cobranca.contratos.recorrencia);
-                    horasExpiracao = Number(config.expiracao) || 4;
-                } catch (e) { /* Legado */ }
-
-                // 3. Calcula o intervalo ideal para este cliente
-                const intervaloMs = (horasExpiracao * 60 * 60 * 1000) / totalTemplates;
-                const tempoDesdeCriacao = agora.getTime() - new Date(cobranca.created_at).getTime();
-
-                // 4. Quantos envios "já deveriam" ter ocorrido?
-                const metaEnvios = Math.floor(tempoDesdeCriacao / intervaloMs);
-
-                // --- 🛡️ TRAVAS DE SEGURANÇA ---
-                // a) Já é hora do próximo lembrete?
-                if (metaEnvios < proximaTentativa) {
-                    console.log(`Aguardando próximo intervalo para ${cobranca.id}.`);
-                    continue;
-                }
-
-                // b) Já enviou todas as mensagens da régua?
+                // Trava a) Já enviou todos os lembretes da régua?
                 if (proximaTentativa > totalTemplates) {
-                    console.log(`Fim da régua para ${cobranca.id}.`);
-                    continue;
+                    console.log(`Fim da régua para ${cobranca.id} — todos os ${totalTemplates} templates já enviados.`)
+                    continue
                 }
 
-                // c) Proteção Anti-Cron: Não enviar 2 vezes em menos de 15 min
+                // Trava b) Anti-Cron: não enviar 2x em menos de 15 min (protege contra runs sobrepostos)
                 const tempoUltimoEnvio = cobranca.ultimo_lembrete_at
-                    ? (agora.getTime() - new Date(cobranca.ultimo_lembrete_at).getTime())
-                    : Infinity;
+                    ? agora.getTime() - new Date(cobranca.ultimo_lembrete_at).getTime()
+                    : Infinity
 
-                if (tempoUltimoEnvio < (15 * 60 * 1000)) {
-                    console.log(`Segurança: Ignorando reenvio rápido para ${cobranca.id}.`);
-                    continue;
+                if (tempoUltimoEnvio < 15 * 60 * 1000) {
+                    console.log(`Segurança: ignorando reenvio rápido para ${cobranca.id} (${Math.round(tempoUltimoEnvio / 1000)}s desde último envio).`)
+                    continue
                 }
 
-                // 🔎 Verificação no Mercado Pago antes de incomodar o cliente
+
+                // Verificação no Mercado Pago antes de incomodar o cliente
                 const mpResponse = await fetch(
                     `https://api.mercadopago.com/v1/payments/${cobranca.mercado_pago_id}`,
                     { headers: { 'Authorization': `Bearer ${usuario.access_token_mercado_pago}` } }
@@ -143,14 +134,17 @@ serve(async (req) => {
                 if (mpResponse.ok) {
                     const mpData = await mpResponse.json()
                     if (mpData.status === 'approved') {
-                        console.log(`Cobrança ${cobranca.id} paga no MP.`)
-                        await supabase.from('cobrancas').update({ status: 'pago', data_pagamento: agora.toISOString() }).eq('id', cobranca.id)
+                        console.log(`Cobrança ${cobranca.id} já paga no MP — marcando como pago.`)
+                        await supabase
+                            .from('cobrancas')
+                            .update({ status: 'pago', data_pagamento: agora.toISOString() })
+                            .eq('id', cobranca.id)
                         results.push({ id: cobranca.id, status: 'skipped_paid' })
                         continue
                     }
                 }
 
-                // 🔎 Busca template da vez
+                // Busca template da vez (por ordem)
                 const { data: template } = await supabase
                     .from('mensagens_template')
                     .select('conteudo, media_url, media_type, media_mimetype, media_filename')
@@ -159,11 +153,11 @@ serve(async (req) => {
                     .single()
 
                 if (!template) {
-                    console.log(`Fim da régua para ${locatario.nome_completo}`)
+                    console.log(`Template nº${proximaTentativa} não encontrado para locador ${usuario.id} — fim da régua.`)
                     continue
                 }
 
-                // ✉️ Montagem da mensagem
+                // Montagem da mensagem
                 let mensagemFinal = `Olá, ${primeiroNome}! 🚗\n\n${template.conteudo}`
 
                 if (cobranca.payment_link) {
@@ -171,9 +165,9 @@ serve(async (req) => {
                     mensagemFinal += `\n*LINK PIX:* ${cobranca.payment_link}`
                 }
 
-                // 📤 Envio Evolution API
-                const isMedia = !!template.media_url;
-                const endpoint = isMedia ? 'sendMedia' : 'sendText';
+                // Envio via Evolution API
+                const isMedia = !!template.media_url
+                const endpoint = isMedia ? 'sendMedia' : 'sendText'
                 const payload = isMedia ? {
                     number: locatario.whatsapp,
                     mediatype: template.media_type,
@@ -181,38 +175,49 @@ serve(async (req) => {
                     caption: mensagemFinal,
                     media: template.media_url,
                     fileName: template.media_filename,
-                    delay: 1200
+                    delay: 1200,
                 } : {
                     number: locatario.whatsapp,
                     text: mensagemFinal,
-                    delay: 1200
-                };
+                    delay: 1200,
+                }
 
                 const evoResponse = await fetch(
                     `${usuario.evolution_url}/message/${endpoint}/${usuario.evolution_instance}`,
                     {
                         method: 'POST',
                         headers: { 'apikey': usuario.evolution_apikey, 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
+                        body: JSON.stringify(payload),
                     }
                 )
 
-                if (!evoResponse.ok) throw new Error("Falha no envio Evolution")
+                // Fix 5: incluir status HTTP no erro do Evolution
+                if (!evoResponse.ok) {
+                    const evoBody = await evoResponse.text().catch(() => '')
+                    throw new Error(`Falha no envio Evolution [${evoResponse.status}]: ${evoBody}`)
+                }
 
-                // 🔄 Atualiza tentativa e marca horário do envio
-                await supabase
+                // Fix 3: capturar erro do update de tentativas
+                const { error: updateError } = await supabase
                     .from('cobrancas')
                     .update({
                         tentativas_envio: proximaTentativa,
-                        ultimo_lembrete_at: agora.toISOString()
+                        ultimo_lembrete_at: agora.toISOString(),
                     })
                     .eq('id', cobranca.id)
 
+                if (updateError) {
+                    console.error(`Erro ao atualizar tentativas da cobrança ${cobranca.id}: ${updateError.message}`)
+                    // Não lança — o envio já ocorreu; log é suficiente
+                }
+
+                console.log(`Cobrança ${cobranca.id}: lembrete ${proximaTentativa}/${totalTemplates} enviado para ${locatario.whatsapp}.`)
                 results.push({ id: cobranca.id, status: 'sent', tentativa: proximaTentativa })
 
             } catch (innerError) {
-                console.error(`Erro na cobrança ${cobranca.id}:`, innerError.message)
-                results.push({ id: cobranca.id, status: 'error' })
+                const msg = innerError instanceof Error ? innerError.message : String(innerError)
+                console.error(`Erro na cobrança ${cobranca.id}:`, msg)
+                results.push({ id: cobranca.id, status: 'error', msg })
             }
         }
 
