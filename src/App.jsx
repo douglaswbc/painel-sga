@@ -15,6 +15,7 @@ import Mensagens from './pages/Mensagens';
 import Triagem from './pages/Triagem';
 import Configuracoes from './pages/Configuracoes';
 import Admin from './pages/Admin';
+import Acessos from './pages/Acessos';
 
 
 // Componente temporário para teste
@@ -39,6 +40,7 @@ function App() {
               <Route path="/mensagens" element={<Mensagens />} />
               <Route path="/triagem" element={<Triagem />} />
               <Route path="/configuracoes" element={<Configuracoes />} />
+              <Route path="/acessos" element={<Acessos />} />
               <Route path="/admin" element={<Admin />} />
             </Route>
 

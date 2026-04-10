@@ -73,7 +73,7 @@ CREATE TABLE public.contratos (
   CONSTRAINT contratos_pkey PRIMARY KEY (id),
   CONSTRAINT contratos_id_locatario_fkey FOREIGN KEY (id_locatario) REFERENCES public.locatarios(id),
   CONSTRAINT contratos_id_veiculo_fkey FOREIGN KEY (id_veiculo) REFERENCES public.veiculos(id),
-  CONSTRAINT contratos_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id)
+  CONSTRAINT contratos_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id) ON DELETE CASCADE
 );
 
 -- Tabela de Cobranças (Faturas)
@@ -240,3 +240,80 @@ USING (bucket_id = 'mensagens-midia');
 CREATE POLICY "Permitir exclusão total" ON storage.objects
 FOR DELETE TO authenticated 
 USING (bucket_id = 'mensagens-midia');
+
+-- ==========================================
+-- ESTRUTURA PARA SISTEMA DE FECHADURAS
+-- ==========================================
+
+-- Tabela de Fechaduras
+CREATE TABLE public.fechaduras (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  id_usuario uuid NOT NULL, -- Dono da fechadura (Locador)
+  identificador text NOT NULL, -- ex: 'porta-01'
+  nome text NOT NULL, -- ex: 'Entrada Principal'
+  status text NOT NULL DEFAULT 'ativo'::text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT fechaduras_pkey PRIMARY KEY (id),
+  CONSTRAINT fechaduras_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id) ON DELETE CASCADE,
+  CONSTRAINT fechaduras_identificador_usuario_unique UNIQUE (id_usuario, identificador)
+);
+
+-- Tabela de Verificações Pendentes (OTP)
+-- Centraliza o estado da conversa do WhatsApp
+CREATE TABLE public.fechadura_verificacoes (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  whatsapp text NOT NULL,
+  id_fechadura uuid NOT NULL,
+  codigo_otp text NOT NULL,
+  tentativas integer DEFAULT 0,
+  verificado boolean DEFAULT false,
+  expires_at timestamp with time zone NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT fechadura_verificacoes_pkey PRIMARY KEY (id),
+  CONSTRAINT fechadura_verificacoes_id_fechadura_fkey FOREIGN KEY (id_fechadura) REFERENCES public.fechaduras(id) ON DELETE CASCADE
+);
+
+-- Tabela de Comandos para o Hardware (ESP32)
+CREATE TABLE public.fechadura_comandos (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  id_fechadura uuid NOT NULL,
+  token_acesso text NOT NULL,
+  status text NOT NULL DEFAULT 'pendente'::text, -- 'pendente', 'sucesso', 'falha'
+  expires_at timestamp with time zone NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  executed_at timestamp with time zone,
+  CONSTRAINT fechadura_comandos_pkey PRIMARY KEY (id),
+  CONSTRAINT fechadura_comandos_id_fechadura_fkey FOREIGN KEY (id_fechadura) REFERENCES public.fechaduras(id) ON DELETE CASCADE
+);
+
+-- Tabela de Logs de Acesso (Auditoria)
+CREATE TABLE public.fechadura_logs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  id_usuario uuid NOT NULL, -- Locador
+  id_locatario uuid, -- Quem abriu (se identificado)
+  id_fechadura uuid NOT NULL,
+  whatsapp text,
+  evento text NOT NULL, -- 'solicitado', 'otp_enviado', 'otp_validado', 'aberto', 'expirado', 'negado'
+  detalhes text,
+  timestamp timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT fechadura_logs_pkey PRIMARY KEY (id),
+  CONSTRAINT fechadura_logs_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id) ON DELETE CASCADE,
+  CONSTRAINT fechadura_logs_id_locatario_fkey FOREIGN KEY (id_locatario) REFERENCES public.locatarios(id) ON DELETE SET NULL,
+  CONSTRAINT fechadura_logs_id_fechadura_fkey FOREIGN KEY (id_fechadura) REFERENCES public.fechaduras(id) ON DELETE CASCADE
+);
+
+-- Habilitar RLS
+ALTER TABLE public.fechaduras ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.fechadura_verificacoes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.fechadura_comandos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.fechadura_logs ENABLE ROW LEVEL SECURITY;
+
+-- Políticas Simples (Dono da conta vê seus dados)
+CREATE POLICY "Locador vê suas fechaduras" ON public.fechaduras FOR ALL TO authenticated USING (id_usuario = auth.uid());
+CREATE POLICY "Locador vê seus logs" ON public.fechadura_logs FOR SELECT TO authenticated USING (id_usuario = auth.uid());
+CREATE POLICY "Locador vê seus comandos" ON public.fechadura_comandos FOR SELECT TO authenticated USING (EXISTS (SELECT 1 FROM public.fechaduras WHERE id = fechadura_comandos.id_fechadura AND id_usuario = auth.uid()));
+
+-- Índices
+CREATE INDEX idx_fechaduras_usuario ON public.fechaduras(id_usuario);
+CREATE INDEX idx_fechadura_comandos_pendentes ON public.fechadura_comandos(id_fechadura) WHERE status = 'pendente';
+CREATE INDEX idx_fechadura_logs_data ON public.fechadura_logs(timestamp DESC);

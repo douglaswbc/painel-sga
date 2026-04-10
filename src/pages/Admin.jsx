@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { 
   ShieldAlert, Users, Plus, Edit, 
   Search, Loader2, Key, UserCheck, 
-  UserX, Mail
+  UserX, Mail, Trash2
 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import UserModal from '../components/UserModal';
@@ -50,6 +50,27 @@ const Admin = () => {
       fetchUsers();
     } catch (error) {
       toast.error("Erro ao atualizar status");
+    }
+  };
+
+  const deleteUser = async (id, nome) => {
+    if (!window.confirm(`⚠️ ATENÇÃO: Deseja realmente excluir o usuário "${nome}"? \n\nEsta ação é IRREVERSÍVEL e apagará todos os contratos, locatários, veículos, cobranças e instâncias vinculadas a este locador.`)) return;
+
+    try {
+      setLoading(true);
+      const { data, error } = await supabase.functions.invoke('delete-user', {
+        body: { userId: id }
+      });
+
+      if (error) throw error;
+      
+      toast.success("Usuário e todos os dados vinculados foram removidos!");
+      fetchUsers();
+    } catch (error) {
+      console.error("Erro ao deletar:", error);
+      toast.error(error.message || "Erro ao processar exclusão");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -154,6 +175,14 @@ const Admin = () => {
                         title="Editar Perfil"
                       >
                         <Edit size={18} />
+                      </button>
+
+                      <button 
+                        onClick={() => deleteUser(u.id, u.nome_completo)}
+                        className="p-2 text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
+                        title="Excluir Usuário"
+                      >
+                        <Trash2 size={18} />
                       </button>
                     </td>
                   </tr>

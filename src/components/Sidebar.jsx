@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { 
   LayoutDashboard, Users, Car, FileText, 
   DollarSign, MessageSquareText, ClipboardCheck, 
-  Settings, ShieldAlert, LogOut
+  Settings, ShieldAlert, LogOut, ShieldCheck
 } from 'lucide-react';
 
 const Sidebar = ({ isOpen, toggleSidebar }) => {
@@ -19,6 +19,7 @@ const Sidebar = ({ isOpen, toggleSidebar }) => {
     { path: '/mensagens', label: 'Mensagens', icon: MessageSquareText },
     { path: '/triagem', label: 'Triagem', icon: ClipboardCheck },
     { path: '/configuracoes', label: 'Configurações', icon: Settings },
+    { path: '/acessos', label: 'Controle de Acessos', icon: ShieldCheck },
   ];
 
   return (
