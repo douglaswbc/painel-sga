@@ -4,9 +4,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { 
   Save, Loader2, MessageSquareQuote, Info, 
   Plus, Trash2, LayoutGrid, Megaphone, 
-  ChevronUp, ChevronDown, AlertCircle, Paperclip, X, FileUp, Image, FileText, Video
+  AlertCircle, Paperclip, X, FileUp, Image, FileText, Video, CalendarClock, ChevronRight, ArrowLeft
 } from 'lucide-react';
 import { toast } from 'react-toastify';
+import AgendamentoModal from '../components/AgendamentoModal';
 
 const Mensagens = () => {
   const { profile } = useAuth();
@@ -14,18 +15,32 @@ const Mensagens = () => {
   const [saving, setSaving] = useState(false);
   const [templates, setTemplates] = useState([]);
   const [activeTab, setActiveTab] = useState('cobranca'); // 'cobranca' ou 'avulso'
+  
+  // Controle de Master-Detail
+  const [selectedTemplateId, setSelectedTemplateId] = useState(null);
+  const [isMobileListOpen, setIsMobileListOpen] = useState(true);
+  
+  const [isAgendamentoModalOpen, setIsAgendamentoModalOpen] = useState(false);
 
   const fetchTemplates = async () => {
     try {
       setLoading(true);
       const { data, error } = await supabase
         .from('mensagens_template')
-        .select('*')
+        .select(`
+          *,
+          agendamentos_mensagens (id, ativo)
+        `)
         .eq('id_usuario', profile.id)
         .order('ordem', { ascending: true });
 
       if (error) throw error;
       setTemplates(data || []);
+      
+      const activeData = (data || []).filter(t => (t.tipo || 'cobranca') === activeTab);
+      if (activeData.length > 0 && !selectedTemplateId) {
+        setSelectedTemplateId(activeData[0].id);
+      }
     } catch (error) {
       toast.error("Erro ao carregar modelos de mensagem");
     } finally {
@@ -37,30 +52,48 @@ const Mensagens = () => {
     if (profile?.id) fetchTemplates();
   }, [profile]);
 
-  // Filtra templates pelo tipo da aba ativa
   const filteredTemplates = templates.filter(t => (t.tipo || 'cobranca') === activeTab);
+  
+  useEffect(() => {
+    if (filteredTemplates.length > 0) {
+      const exists = filteredTemplates.find(t => t.id === selectedTemplateId);
+      if (!exists) {
+        setSelectedTemplateId(filteredTemplates[0].id);
+      }
+    } else {
+      setSelectedTemplateId(null);
+    }
+  }, [activeTab, templates.length]);
+
+  const selectedTemplate = filteredTemplates.find(t => t.id === selectedTemplateId) || null;
 
   const handleAddMessage = () => {
     const nextOrdem = activeTab === 'cobranca' 
       ? Math.max(0, ...templates.filter(t => t.tipo === 'cobranca').map(t => t.ordem)) + 1
       : templates.length + 1;
 
+    const newId = crypto.randomUUID();
+
     const newMessage = {
+      id: newId,
       id_usuario: profile.id,
       tipo: activeTab,
       ordem: nextOrdem,
       titulo: activeTab === 'cobranca' ? `${nextOrdem}º Lembrete` : 'Novo Modelo Avulso',
       conteudo: '',
-      isNew: true // Marcador local para sabermos que ainda não está no banco
+      isNew: true 
     };
 
     setTemplates([...templates, newMessage]);
+    setSelectedTemplateId(newId);
+    setIsMobileListOpen(false);
   };
 
   const handleDeleteMessage = async (templateToDelete) => {
-    if (!templateToDelete.id && templateToDelete.isNew) {
-      // Remove do estado local se for novo
-      setTemplates(templates.filter(t => t !== templateToDelete));
+    if (!templateToDelete) return;
+    
+    if (templateToDelete.isNew) {
+      setTemplates(templates.filter(t => t.id !== templateToDelete.id));
       return;
     }
 
@@ -68,7 +101,6 @@ const Mensagens = () => {
 
     try {
       setSaving(true);
-      // Delete do banco
       const { error } = await supabase
         .from('mensagens_template')
         .delete()
@@ -76,7 +108,6 @@ const Mensagens = () => {
 
       if (error) throw error;
 
-      // Reordenar as mensagens subsequentes se for do tipo cobranca
       if (activeTab === 'cobranca') {
         const remaining = templates
           .filter(t => t.tipo === 'cobranca' && t.id !== templateToDelete.id)
@@ -88,7 +119,6 @@ const Mensagens = () => {
           titulo: `${idx + 1}º Lembrete`
         }));
 
-        // Atualiza o banco com as novas ordens
         if (reordered.length > 0) {
           const { error: updateError } = await supabase
             .from('mensagens_template')
@@ -100,7 +130,7 @@ const Mensagens = () => {
                 tipo: 'cobranca', 
                 conteudo: t.conteudo 
               };
-              if (t.id) clean.id = t.id;
+              if (t.id && !t.isNew) clean.id = t.id;
               return clean;
             }));
           
@@ -108,7 +138,8 @@ const Mensagens = () => {
         }
       }
 
-      toast.success("Modelo removido e régua reordenada!");
+      toast.success("Modelo removido com sucesso!");
+      setIsMobileListOpen(true);
       fetchTemplates();
     } catch (error) {
       toast.error("Erro ao excluir: " + error.message);
@@ -132,7 +163,6 @@ const Mensagens = () => {
 
       if (uploadError) throw uploadError;
 
-      // Limpeza de mídia antiga se existir
       if (template.media_url) {
         const oldPath = template.media_url.split('/mensagens-midia/').pop();
         if (oldPath) {
@@ -144,13 +174,12 @@ const Mensagens = () => {
         .from('mensagens-midia')
         .getPublicUrl(filePath);
 
-      // Determinar mediatype
       let mediatype = 'document';
       if (file.type.startsWith('image/')) mediatype = 'image';
       else if (file.type.startsWith('video/')) mediatype = 'video';
 
       const updated = [...templates];
-      const idx = templates.findIndex(t => t === template);
+      const idx = templates.findIndex(t => t.id === template.id);
       updated[idx] = {
         ...updated[idx],
         media_url: publicUrl,
@@ -169,7 +198,7 @@ const Mensagens = () => {
 
   const handleRemoveMedia = (template) => {
     const updated = [...templates];
-    const idx = templates.findIndex(t => t === template);
+    const idx = templates.findIndex(t => t.id === template.id);
     updated[idx] = {
       ...updated[idx],
       media_url: null,
@@ -178,7 +207,6 @@ const Mensagens = () => {
       media_filename: null
     };
 
-    // Limpeza no Storage
     if (template.media_url) {
       const path = template.media_url.split('/mensagens-midia/').pop();
       if (path) {
@@ -187,6 +215,15 @@ const Mensagens = () => {
     }
 
     setTemplates(updated);
+  };
+
+  const updateTemplateContent = (id, field, value) => {
+    const updated = [...templates];
+    const idx = templates.findIndex(t => t.id === id);
+    if (idx !== -1) {
+      updated[idx][field] = value;
+      setTemplates(updated);
+    }
   };
 
   const handleSave = async () => {
@@ -205,12 +242,10 @@ const Mensagens = () => {
           media_filename: t.media_filename || null
         };
         
-        // Se já tem ID, usa o existente. Se não tem, gera um novo UUID no frontend
-        // Isso resolve o problema de arrays heterogêneos no upsert do PostgREST
-        if (t.id && typeof t.id === 'string' && t.id.length > 0) {
+        if (t.id && !t.isNew) {
           clean.id = t.id;
-        } else {
-          clean.id = crypto.randomUUID();
+        } else if (t.isNew) {
+           clean.id = t.id; 
         }
         
         return clean;
@@ -230,7 +265,7 @@ const Mensagens = () => {
     }
   };
 
-  if (loading) {
+  if (loading && templates.length === 0) {
     return (
       <div className="flex h-64 items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
@@ -239,9 +274,9 @@ const Mensagens = () => {
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6 pb-12">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="max-w-6xl mx-auto space-y-6 pb-12 flex flex-col h-[calc(100vh-80px)]">
+      {/* Header Fixo no Topo */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
         <div>
           <h1 className="text-2xl font-black text-white flex items-center gap-3">
             <div className="p-2 bg-indigo-500/20 rounded-xl">
@@ -255,25 +290,18 @@ const Mensagens = () => {
         </div>
         <div className="flex items-center gap-3">
             <button
-              onClick={handleAddMessage}
-              className="bg-zinc-900 hover:bg-zinc-800 text-white px-5 py-2.5 rounded-2xl font-black text-[11px] uppercase tracking-widest flex items-center gap-2 transition-all border border-zinc-800 shadow-xl"
-            >
-              <Plus size={16} className="text-indigo-500" />
-              Adicionar
-            </button>
-            <button
               onClick={handleSave}
               disabled={saving}
               className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2.5 rounded-2xl font-black text-[11px] uppercase tracking-widest flex items-center gap-2 transition-all shadow-lg shadow-indigo-600/20 disabled:opacity-50"
             >
               {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-              Salvar
+              Salvar Banco Central
             </button>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex p-1 bg-zinc-950/50 border border-zinc-900 rounded-2xl w-fit">
+      <div className="flex p-1 bg-zinc-950/50 border border-zinc-900 rounded-2xl w-fit shrink-0">
         <button
           onClick={() => setActiveTab('cobranca')}
           className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
@@ -294,158 +322,207 @@ const Mensagens = () => {
         </button>
       </div>
 
-      {/* Info Alert */}
-      {activeTab === 'cobranca' && (
-        <div className="bg-indigo-500/5 border border-indigo-500/10 p-4 rounded-2xl flex items-start gap-4">
-          <div className="p-2 bg-indigo-500/10 rounded-xl">
-            <Info className="text-indigo-500 shrink-0" size={18} />
-          </div>
-          <div>
-            <p className="text-[11px] font-bold text-indigo-200/80 leading-relaxed uppercase tracking-tight">
-               Sistema de Régua Dinâmica
-            </p>
-            <p className="text-[10px] text-indigo-300/60 mt-0.5 leading-relaxed">
-               As mensagens acima serão enviadas automaticamente seguindo a ordem (1º, 2º...). 
-               O intervalo entre elas é calculado dividindo a validade do PIX pelo total de mensagens cadastradas aqui.
-            </p>
-          </div>
+      {/* Main Área Dividida (Master/Detail) */}
+      <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-[500px]">
+        
+        {/* Esquerda: Navegação (Master) */}
+        <div className={`w-full lg:w-[320px] shrink-0 bg-zinc-900/40 border border-zinc-800/50 rounded-3xl p-4 flex-col gap-4 shadow-xl ${isMobileListOpen ? 'flex' : 'hidden lg:flex'}`}>
+           <button
+             onClick={handleAddMessage}
+             className="w-full bg-zinc-950 hover:bg-zinc-900 text-white border border-zinc-800 hover:border-indigo-500/50 px-5 py-4 rounded-2xl font-black text-[11px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all shadow-lg shrink-0"
+           >
+             <Plus size={16} className="text-indigo-500" />
+             Novo Template
+           </button>
+
+           <div className="flex-1 overflow-y-auto space-y-2 pr-2 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
+             {filteredTemplates.length === 0 ? (
+               <div className="text-center p-6 mt-10">
+                 <AlertCircle size={32} className="text-zinc-700 mx-auto mb-3" />
+                 <p className="text-zinc-600 text-[10px] uppercase font-bold tracking-widest">Nada para listar</p>
+               </div>
+             ) : (
+               filteredTemplates.map(t => {
+                 const isActive = selectedTemplateId === t.id;
+                 const recvCount = t.agendamentos_mensagens?.filter(a => a.ativo).length || 0;
+                 return (
+                   <button
+                     key={t.id}
+                     onClick={() => { setSelectedTemplateId(t.id); setIsMobileListOpen(false); }}
+                     className={`w-full text-left p-4 rounded-2xl border transition-all flex items-center justify-between group ${
+                       isActive 
+                        ? 'bg-indigo-600/10 border-indigo-500/30' 
+                        : 'bg-zinc-950 border-zinc-900 hover:border-zinc-700'
+                     }`}
+                   >
+                     <div className="min-w-0 pr-2">
+                        <p className={`text-xs font-black truncate uppercase tracking-tight ${isActive ? 'text-indigo-400' : 'text-zinc-300 group-hover:text-white'}`}>
+                          {activeTab === 'cobranca' ? <span className="mr-1 text-[10px] opacity-50">#{t.ordem}</span> : null}
+                          {t.titulo || 'Sem Título'}
+                        </p>
+                        
+                        <div className="flex items-center gap-2 mt-1.5">
+                          {t.isNew && <span className="text-[8px] bg-emerald-500/20 text-emerald-500 px-1.5 py-0.5 rounded uppercase font-black tracking-widest">Novo</span>}
+                          {t.media_url && <Paperclip size={10} className="text-zinc-500" />}
+                          {recvCount > 0 && <span className="text-[9px] text-emerald-500 font-bold flex items-center gap-1"><CalendarClock size={10}/> {recvCount}</span>}
+                        </div>
+                     </div>
+                     <ChevronRight size={16} className={`${isActive ? 'text-indigo-500' : 'text-zinc-700 opacity-0 group-hover:opacity-100'} shrink-0 transition-opacity`} />
+                   </button>
+                 );
+               })
+             )}
+           </div>
         </div>
-      )}
 
-      {/* Listagem */}
-      <div className="grid gap-6">
-        {filteredTemplates.length === 0 ? (
-          <div className="bg-zinc-950/50 border-2 border-dashed border-zinc-900 rounded-3xl p-12 text-center">
-             <div className="w-16 h-16 bg-zinc-900 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                <AlertCircle className="text-zinc-700" size={32} />
+        {/* Direita: Editor (Detail) */}
+        <div className={`flex-1 bg-zinc-900/40 border border-zinc-800/50 rounded-3xl p-6 md:p-8 flex-col shadow-xl min-h-0 overflow-y-auto ${!isMobileListOpen ? 'flex' : 'hidden lg:flex'}`}>
+          {!selectedTemplate ? (
+             <div className="flex-1 flex flex-col items-center justify-center opacity-50">
+               <MessageSquareQuote size={48} className="text-zinc-700 mb-4" />
+               <p className="text-zinc-500 font-black text-xs uppercase tracking-widest text-center">Selecione ou crie um modelo<br/>no menu lateral</p>
              </div>
-             <p className="text-zinc-500 font-black text-xs uppercase tracking-widest">Nenhuma mensagem cadastrada</p>
-             <button onClick={handleAddMessage} className="mt-4 text-indigo-500 text-[10px] font-black uppercase tracking-tighter hover:underline">
-               Clique para criar a primeira
-             </button>
-          </div>
-        ) : (
-          filteredTemplates.map((template, index) => (
-            <div key={template.id || index} className="group bg-zinc-900/40 border border-zinc-800/50 hover:border-indigo-500/30 rounded-3xl p-6 transition-all hover:bg-zinc-900/60 shadow-xl overflow-hidden relative">
-              
-              {/* Ordem Badge p/ Cobrança */}
-              {activeTab === 'cobranca' && (
-                <div className="absolute top-0 right-0 w-16 h-16 pointer-events-none">
-                  <div className="absolute top-[-30px] right-[-30px] w-20 h-20 bg-indigo-500/10 rotate-45" />
-                  <span className="absolute top-2 right-4 text-[24px] font-black text-white/5">{template.ordem}</span>
-                </div>
-              )}
+          ) : (
+             <div className="flex flex-col gap-6 h-full">
+               
+               {/* Mobile Back Button */}
+               <button 
+                 onClick={() => setIsMobileListOpen(true)}
+                 className="lg:hidden w-fit flex items-center gap-2 text-zinc-500 hover:text-white mb-2 -mt-2 font-black text-[10px] uppercase tracking-widest transition-colors"
+               >
+                 <ArrowLeft size={14} /> Voltar para a lista
+               </button>
 
-              <div className="flex flex-col gap-5">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1 mr-4">
-                    <input 
-                      className="w-full bg-transparent border-none outline-none text-white font-black text-sm uppercase tracking-tight placeholder:text-zinc-700"
-                      value={template.titulo}
-                      placeholder="Título da Mensagem..."
-                      onChange={(e) => {
-                        const updated = [...templates];
-                        const idx = templates.findIndex(t => t === template);
-                        updated[idx].titulo = e.target.value;
-                        setTemplates(updated);
-                      }}
-                    />
-                  </div>
-                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+               <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 shrink-0">
+                 <div className="flex-1">
+                   <input 
+                     className="w-full bg-transparent border-none outline-none text-white font-black text-xl lg:text-3xl uppercase tracking-tight placeholder:text-zinc-700"
+                     value={selectedTemplate.titulo}
+                     placeholder="Título da Mensagem..."
+                     onChange={(e) => updateTemplateContent(selectedTemplate.id, 'titulo', e.target.value)}
+                   />
+                   <div className="text-[10px] uppercase font-black tracking-widest text-zinc-500 mt-2">
+                     Editando Formato de {activeTab === 'cobranca' ? 'Régua Automática' : 'Mensagem Avulsa'}
+                   </div>
+                 </div>
+
+                 <div className="flex items-center gap-2 shrink-0">
+                    {activeTab === 'avulso' && !selectedTemplate.isNew && (
+                      <button 
+                         onClick={() => setIsAgendamentoModalOpen(true)}
+                         className={`px-4 py-2 rounded-xl transition-all font-black text-[10px] uppercase tracking-widest flex items-center gap-2 ${
+                            selectedTemplate.agendamentos_mensagens?.filter(a => a.ativo).length > 0 
+                            ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20 shadow-lg shadow-emerald-500/5' 
+                            : 'bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20'
+                         }`}
+                         title="Gerenciar Agendamentos"
+                      >
+                         <CalendarClock size={16} /> 
+                         <span className="hidden sm:inline">
+                           {selectedTemplate.agendamentos_mensagens?.filter(a => a.ativo).length > 0 
+                              ? `${selectedTemplate.agendamentos_mensagens.filter(a => a.ativo).length} Agendamentos` 
+                              : 'Agendar Envio'}
+                         </span>
+                      </button>
+                    )}
                     <button 
-                      onClick={() => handleDeleteMessage(template)}
-                      className="p-2 hover:bg-red-500/10 text-zinc-600 hover:text-red-500 rounded-xl transition-all"
-                      title="Excluir Modelo"
+                      onClick={() => handleDeleteMessage(selectedTemplate)}
+                      className="p-2 sm:p-3 bg-red-500/5 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 text-zinc-500 hover:text-red-500 rounded-xl transition-all"
+                      title="Excluir Modelo Inteiro"
                     >
                       <Trash2 size={16} />
                     </button>
-                  </div>
-                </div>
+                 </div>
+               </div>
 
-                <div className="relative">
-                  <textarea
-                    className="w-full bg-zinc-950/50 border border-zinc-800 rounded-2xl p-5 text-zinc-300 text-xs font-medium focus:border-indigo-500/50 outline-none min-h-[140px] transition-all scrollbar-hide"
-                    placeholder="Sua mensagem começa aqui..."
-                    value={template.conteudo}
-                    onChange={(e) => {
-                      const updated = [...templates];
-                      const idx = templates.findIndex(t => t === template);
-                      updated[idx].conteudo = e.target.value;
-                      setTemplates(updated);
-                    }}
-                  />
-                  
-                  </div>
+               <div className="flex-1 flex flex-col min-h-[250px]">
+                 <div className="bg-zinc-950 border border-zinc-800 rounded-t-2xl p-3 flex items-center justify-between shrink-0">
+                    <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-2">Corpo da Mensagem no WhatsApp</span>
+                 </div>
+                 <textarea
+                   className="w-full flex-1 bg-zinc-950/50 border-x border-b border-zinc-800 rounded-b-2xl p-5 text-zinc-300 text-sm md:text-base leading-relaxed font-medium focus:border-indigo-500/50 outline-none transition-all scrollbar-thin resize-none"
+                   placeholder="Olá {nome}. Sua mensagem começa aqui..."
+                   value={selectedTemplate.conteudo}
+                   onChange={(e) => updateTemplateContent(selectedTemplate.id, 'conteudo', e.target.value)}
+                 />
+                 <div className="px-2 py-2 text-[10px] text-zinc-500 uppercase font-black tracking-widest mt-1 shrink-0">
+                    Dica: use {'{nome}'} ou {'{pix}'} para incluir dados do locatário.
+                 </div>
+               </div>
 
-                  {/* Campo de Anexo */}
-                  <div className="mt-4 pt-4 border-t border-zinc-800">
-                    {!template.media_url ? (
-                      <label className="flex items-center gap-2 w-fit px-4 py-2 bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 rounded-xl cursor-pointer transition-all group/upload">
-                        <Paperclip size={14} className="text-zinc-500 group-hover/upload:text-indigo-400" />
-                        <span className="text-[10px] font-black text-zinc-500 uppercase tracking-tight group-hover/upload:text-zinc-300">Anexar Mídia (Img, Vídeo ou Doc)</span>
-                        <input 
-                          type="file" 
-                          className="hidden" 
-                          accept="image/*,video/*,.pdf,.doc,.docx"
-                          onChange={(e) => handleUploadMedia(template, e.target.files[0])}
-                        />
-                      </label>
-                    ) : (
-                      <div className="flex items-center justify-between p-3 bg-zinc-950 border border-indigo-500/20 rounded-2xl">
-                         <div className="flex items-center gap-3">
-                            <div className="w-12 h-12 bg-indigo-500/10 rounded-xl text-indigo-500 overflow-hidden flex items-center justify-center shrink-0 border border-white/5">
-                               {template.media_type === 'image' ? (
-                                 <img src={template.media_url} alt="Preview" className="w-full h-full object-cover" />
-                               ) : (
-                                 <>
-                                   {template.media_type === 'video' && <Video size={20} />}
-                                   {template.media_type === 'document' && <FileText size={20} />}
-                                 </>
-                               )}
-                            </div>
-                            <div className="flex flex-col min-w-0">
-                               <span className="text-[10px] font-black text-white truncate max-w-[150px] uppercase tracking-tight">{template.media_filename}</span>
-                               <span className="text-[9px] text-zinc-600 font-bold uppercase">{template.media_type} • {template.media_mimetype}</span>
-                            </div>
-                         </div>
-                         <div className="flex items-center gap-2">
-                            <a 
-                              href={template.media_url} 
-                              target="_blank" 
-                              rel="noreferrer"
-                              className="p-2 hover:bg-zinc-800 text-zinc-500 hover:text-white rounded-lg transition-all"
-                              title="Ver arquivo"
-                            >
-                               <FileUp size={14} />
-                            </a>
-                            <button 
-                              onClick={() => handleRemoveMedia(template)}
-                              className="p-2 hover:bg-red-500/10 text-zinc-600 hover:text-red-500 rounded-lg transition-all"
-                              title="Remover anexo"
-                            >
-                               <X size={14} />
-                            </button>
-                         </div>
+               <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
+                 <div className="flex items-center gap-3">
+                   <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-500 shrink-0">
+                      <Paperclip size={18} />
+                   </div>
+                   <div>
+                     <p className="text-xs font-black text-white uppercase tracking-tight">Anexo de Mídia</p>
+                     <p className="text-[10px] text-zinc-500 uppercase tracking-widest mt-0.5">Imagem, PDF ou Vídeo</p>
+                   </div>
+                 </div>
+
+                 {!selectedTemplate.media_url ? (
+                   <label className="flex items-center justify-center gap-2 px-4 py-3 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 rounded-xl cursor-pointer transition-all border border-indigo-500/20 w-full sm:w-auto">
+                     <FileUp size={14} />
+                     <span className="text-[10px] font-black uppercase tracking-tight">Selecionar Arquivo</span>
+                     <input 
+                       type="file" 
+                       className="hidden" 
+                       accept="image/*,video/*,.pdf,.doc,.docx"
+                       onChange={(e) => handleUploadMedia(selectedTemplate, e.target.files[0])}
+                     />
+                   </label>
+                 ) : (
+                   <div className="flex items-center gap-4 bg-zinc-900 border border-zinc-800 rounded-xl p-2 pr-4 w-full sm:w-auto overflow-hidden">
+                      <div className="w-12 h-12 bg-zinc-950 rounded-lg overflow-hidden border border-zinc-800 flex items-center justify-center shrink-0">
+                         {selectedTemplate.media_type === 'image' ? (
+                           <img src={selectedTemplate.media_url} alt="Preview" className="w-full h-full object-cover" />
+                         ) : (
+                           <>
+                             {selectedTemplate.media_type === 'video' && <Video size={18} className="text-zinc-500" />}
+                             {selectedTemplate.media_type === 'document' && <FileText size={18} className="text-zinc-500" />}
+                           </>
+                         )}
                       </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))
-        )}
+                      <div className="flex flex-col min-w-0 pr-2">
+                        <span className="text-[10px] font-black text-zinc-200 uppercase truncate w-full sm:max-w-[120px]">{selectedTemplate.media_filename}</span>
+                        <span className="text-[9px] text-emerald-500 font-bold uppercase mt-0.5 whitespace-nowrap">Anexado com Sucesso</span>
+                      </div>
+                      
+                      <div className="flex items-center gap-1 border-l border-zinc-800 pl-3 shrink-0">
+                        <a 
+                          href={selectedTemplate.media_url} 
+                          target="_blank" 
+                          rel="noreferrer"
+                          className="p-2 hover:bg-zinc-800 text-indigo-400 rounded-lg transition-all"
+                          title="Visualizar Anexo"
+                        >
+                           <FileUp size={16} />
+                        </a>
+                        <button 
+                          onClick={() => handleRemoveMedia(selectedTemplate)}
+                          className="p-2 hover:bg-red-500/10 text-red-500 rounded-lg transition-all"
+                          title="Remover"
+                        >
+                           <X size={16} />
+                        </button>
+                      </div>
+                   </div>
+                 )}
+               </div>
+
+             </div>
+          )}
+        </div>
       </div>
 
-      {/* Floating Save Button Mobile? */}
-      {templates.some(t => t.isNew) && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-4">
-           <button
-             onClick={handleSave}
-             className="bg-indigo-600 text-white px-8 py-4 rounded-full font-black text-xs uppercase tracking-widest shadow-2xl flex items-center gap-3 hover:scale-105 active:scale-95 transition-all"
-           >
-             <Save size={18} />
-             Salvar Alterações Pendentes
-           </button>
-        </div>
+      {isAgendamentoModalOpen && selectedTemplate && (
+        <AgendamentoModal 
+           isOpen={isAgendamentoModalOpen} 
+           onClose={() => setIsAgendamentoModalOpen(false)} 
+           template={selectedTemplate} 
+           usuario={profile} 
+        />
       )}
     </div>
   );

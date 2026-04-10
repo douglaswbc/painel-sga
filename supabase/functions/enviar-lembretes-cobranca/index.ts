@@ -102,6 +102,7 @@ Deno.serve(async (req) => {
                     .from('mensagens_template')
                     .select('*', { count: 'exact', head: true })
                     .eq('id_usuario', usuario.id)
+                    .eq('tipo', 'cobranca')
 
                 if (countError || totalTemplates === null || totalTemplates === 0) {
                     console.log(`Locador ${usuario.id} não possui templates cadastrados.`)
@@ -149,6 +150,7 @@ Deno.serve(async (req) => {
                     .from('mensagens_template')
                     .select('conteudo, media_url, media_type, media_mimetype, media_filename')
                     .eq('id_usuario', usuario.id)
+                    .eq('tipo', 'cobranca')
                     .eq('ordem', proximaTentativa)
                     .single()
 

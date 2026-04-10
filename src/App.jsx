@@ -15,7 +15,7 @@ import Mensagens from './pages/Mensagens';
 import Triagem from './pages/Triagem';
 import Configuracoes from './pages/Configuracoes';
 import Admin from './pages/Admin';
-import PortalLocatario from './pages/PortalLocatario';
+
 
 // Componente temporário para teste
 const Placeholder = ({ title }) => <h1 className="text-2xl text-white font-bold">{title}</h1>;
@@ -27,7 +27,7 @@ function App() {
         <div className="min-h-screen bg-[#121829]">
           <Routes>
             <Route path="/login" element={<Login />} />
-            <Route path="/portal/:token" element={<PortalLocatario />} />
+
             
             {/* Rotas Protegidas pelo DashboardLayout */}
             <Route element={<DashboardLayout />}>

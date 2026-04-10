@@ -35,7 +35,7 @@ const Locatarios = () => {
     ativo: true
   });
 
-  const portalBaseUrl = `${window.location.origin}/portal`;
+
 
   useEffect(() => {
     if (profile?.id) fetchTenants();
@@ -179,11 +179,7 @@ const Locatarios = () => {
     if (!error) fetchTenants();
   };
 
-  const handleCopyPortalLink = (token) => {
-    if (!token) return toast.error("Token não gerado.");
-    navigator.clipboard.writeText(`${portalBaseUrl}/${token}`);
-    toast.success("Link do Portal copiado!");
-  };
+
 
   const filteredTenants = tenants.filter(t => 
     t.nome_completo.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -198,7 +194,7 @@ const Locatarios = () => {
           <h2 className="text-2xl font-bold text-white flex items-center gap-2">
             <UserCheck className="text-indigo-500" /> Locatários
           </h2>
-          <p className="text-sm text-zinc-500 font-medium">Gestão de clientes e acesso ao Portal do Locatário.</p>
+          <p className="text-sm text-zinc-500 font-medium">Gestão de clientes e cadastros.</p>
         </div>
         <button 
           onClick={() => { setEditingTenant(null); setFormData({ documento: 'CPF', ativo: true, nome_completo: '', whatsapp: '', email: '', cpf: '', cep: '', rua: '', numero: '', bairro: '', cidade: '', estado: '' }); setFieldErrors({}); setShowModal(true); }}
@@ -264,7 +260,7 @@ const Locatarios = () => {
                     >
                       <MessageSquare size={18} />
                     </button>
-                    <button onClick={() => handleCopyPortalLink(item.portal_token)} className="p-2 text-zinc-500 hover:text-emerald-400 hover:bg-emerald-400/10 rounded-xl transition-all" title="Link do Portal"><ExternalLink size={18} /></button>
+
                     <button onClick={() => { setEditingTenant(item); setFormData(item); setFieldErrors({}); setShowModal(true); }} className="p-2 text-zinc-500 hover:text-indigo-400 hover:bg-indigo-400/10 rounded-xl transition-all" title="Editar Locatário"><Pencil size={18} /></button>
                     <button onClick={() => deleteTenant(item.id)} className="p-2 text-zinc-500 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all" title="Excluir"><Trash2 size={18} /></button>
                   </td>
@@ -302,7 +298,7 @@ const Locatarios = () => {
                <div className="flex items-center justify-between pt-2">
                   <div className="flex gap-1">
                     <button onClick={() => { setSelectedTenantForMessage(item); setIsMessageModalOpen(true); }} className="flex items-center gap-2 bg-indigo-600/10 text-indigo-500 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest"><MessageSquare size={14} /> Mensagem</button>
-                    <button onClick={() => handleCopyPortalLink(item.portal_token)} className="flex items-center gap-2 bg-zinc-800 text-zinc-300 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest"><Globe size={14} /> Portal</button>
+
                   </div>
                   <div className="flex gap-2">
                     <button onClick={() => { setEditingTenant(item); setFormData(item); setFieldErrors({}); setShowModal(true); }} className="p-2.5 bg-indigo-500/10 text-indigo-500 rounded-xl"><Pencil size={18} /></button>

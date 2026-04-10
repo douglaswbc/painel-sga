@@ -114,6 +114,25 @@ CREATE TABLE public.mensagens_template (
   CONSTRAINT mensagens_template_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id) ON DELETE CASCADE
 );
 
+-- Tabela de Agendamento Mensagens Avulsas
+CREATE TABLE public.agendamentos_mensagens (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  id_template uuid NOT NULL,
+  id_locatario uuid NOT NULL,
+  id_usuario uuid NOT NULL,
+  frequencia text NOT NULL CHECK (frequencia IN ('diario', 'semanal', 'quinzenal', 'mensal', 'personalizado')),
+  frequencia_dias integer,
+  proximo_envio date NOT NULL,
+  horario_envio time without time zone NOT NULL DEFAULT '09:00:00',
+  ativo boolean DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT agendamentos_mensagens_pkey PRIMARY KEY (id),
+  CONSTRAINT agendamentos_mensagens_template_fkey FOREIGN KEY (id_template) REFERENCES public.mensagens_template(id) ON DELETE CASCADE,
+  CONSTRAINT agendamentos_mensagens_locatario_fkey FOREIGN KEY (id_locatario) REFERENCES public.locatarios(id) ON DELETE CASCADE,
+  CONSTRAINT agendamentos_mensagens_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id) ON DELETE CASCADE
+);
+
 -- Tabela de Candidatos (Fluxo de Reserva)
 CREATE TABLE public.candidatos (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -195,6 +214,9 @@ CREATE INDEX IF NOT EXISTS idx_cobrancas_status ON public.cobrancas(status);
 CREATE INDEX IF NOT EXISTS idx_contratos_usuario ON public.contratos(id_usuario);
 CREATE INDEX IF NOT EXISTS idx_locatarios_usuario ON public.locatarios(id_usuario);
 CREATE INDEX IF NOT EXISTS idx_mensagens_usuario ON public.mensagens_template(id_usuario);
+CREATE INDEX IF NOT EXISTS idx_agendamentos_template ON public.agendamentos_mensagens(id_template);
+CREATE INDEX IF NOT EXISTS idx_agendamentos_usuario ON public.agendamentos_mensagens(id_usuario);
+CREATE INDEX IF NOT EXISTS idx_agendamentos_proximo ON public.agendamentos_mensagens(proximo_envio, horario_envio);
 
 -- ==========================================
 -- STORAGE E POLÍTICAS (Anexos de Mensagem)
