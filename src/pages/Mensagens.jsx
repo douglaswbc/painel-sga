@@ -227,44 +227,67 @@ const Mensagens = () => {
     }
   };
 
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      const templatesToSave = templates.map(t => {
-        const clean = {
-          id_usuario: profile.id,
-          ordem: t.ordem || 0,
-          titulo: t.titulo || '',
-          conteudo: t.conteudo || '',
-          tipo: t.tipo || 'cobranca',
-          media_url: t.media_url || null,
-          media_type: t.media_type || null,
-          media_mimetype: t.media_mimetype || null,
-          media_filename: t.media_filename || null
-        };
-        
-        if (t.id && !t.isNew) {
-          clean.id = t.id;
-        } else if (t.isNew) {
-           clean.id = t.id; 
-        }
-        
-        return clean;
-      });
+const handleSave = async () => {
+  setSaving(true);
 
-      const { error } = await supabase
-        .from('mensagens_template')
-        .upsert(templatesToSave);
+  try {
+    // 🔥 AGRUPAR POR TIPO
+    const tipos = ['cobranca', 'avulso'];
 
-      if (error) throw error;
-      toast.success("Alterações salvas com sucesso!");
-      fetchTemplates();
-    } catch (error) {
-      toast.error("Erro ao salvar: " + error.message);
-    } finally {
-      setSaving(false);
-    }
-  };
+    let finalTemplates = [];
+
+    tipos.forEach(tipo => {
+      const grupo = templates
+        .filter(t => (t.tipo || 'cobranca') === tipo)
+        .sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+
+      // 🔥 REORDENAR GARANTINDO ORDEM ÚNICA
+      const normalizados = grupo.map((t, index) => ({
+        ...t,
+        ordem: index + 1
+      }));
+
+      finalTemplates = [...finalTemplates, ...normalizados];
+    });
+
+    // 🔥 MONTAR PAYLOAD LIMPO
+    const templatesToSave = finalTemplates.map(t => {
+      const clean = {
+        id_usuario: profile.id,
+        ordem: t.ordem,
+        titulo: t.titulo || '',
+        conteudo: t.conteudo || '',
+        tipo: t.tipo || 'cobranca',
+        media_url: t.media_url || null,
+        media_type: t.media_type || null,
+        media_mimetype: t.media_mimetype || null,
+        media_filename: t.media_filename || null
+      };
+
+      if (t.id && !t.isNew) {
+        clean.id = t.id;
+      } else {
+        clean.id = t.id;
+      }
+
+      return clean;
+    });
+
+    const { error } = await supabase
+      .from('mensagens_template')
+      .upsert(templatesToSave);
+
+    if (error) throw error;
+
+    toast.success("Alterações salvas com sucesso!");
+    fetchTemplates();
+
+  } catch (error) {
+    toast.error("Erro ao salvar: " + error.message);
+  } finally {
+    setSaving(false);
+  }
+};
 
   if (loading && templates.length === 0) {
     return (
