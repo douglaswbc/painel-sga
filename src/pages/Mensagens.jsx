@@ -68,25 +68,31 @@ const Mensagens = () => {
   const selectedTemplate = filteredTemplates.find(t => t.id === selectedTemplateId) || null;
 
   const handleAddMessage = () => {
-    const nextOrdem = activeTab === 'cobranca' 
-      ? Math.max(0, ...templates.filter(t => t.tipo === 'cobranca').map(t => t.ordem)) + 1
-      : templates.length + 1;
+  const templatesDoTipo = templates.filter(t => (t.tipo || 'cobranca') === activeTab);
 
-    const newId = crypto.randomUUID();
+  const nextOrdem = Math.max(
+    0,
+    ...templatesDoTipo.map(t => t.ordem || 0)
+  ) + 1;
 
-    const newMessage = {
-      id: newId,
-      id_usuario: profile.id,
-      tipo: activeTab,
-      ordem: nextOrdem,
-      titulo: activeTab === 'cobranca' ? `${nextOrdem}º Lembrete` : 'Novo Modelo Avulso',
-      conteudo: '',
-      isNew: true 
-    };
+  const newId = crypto.randomUUID();
 
-    setTemplates([...templates, newMessage]);
-    setSelectedTemplateId(newId);
-    setIsMobileListOpen(false);
+  const newMessage = {
+    id: newId,
+    id_usuario: profile.id,
+    tipo: activeTab,
+    ordem: nextOrdem,
+    titulo:
+      activeTab === 'cobranca'
+        ? `${nextOrdem}º Lembrete`
+        : `Modelo ${nextOrdem}`,
+    conteudo: '',
+    isNew: true
+  };
+
+  setTemplates([...templates, newMessage]);
+  setSelectedTemplateId(newId);
+  setIsMobileListOpen(false);
   };
 
   const handleDeleteMessage = async (templateToDelete) => {
@@ -109,35 +115,30 @@ const Mensagens = () => {
       if (error) throw error;
 
       if (activeTab === 'cobranca') {
-        const remaining = templates
-          .filter(t => t.tipo === 'cobranca' && t.id !== templateToDelete.id)
-          .sort((a, b) => a.ordem - b.ordem);
+      const remaining = templates
+        .filter(t => t.tipo === 'cobranca' && t.id !== templateToDelete.id)
+        .sort((a, b) => a.ordem - b.ordem);
 
-        const reordered = remaining.map((t, idx) => ({
-          ...t,
-          ordem: idx + 1,
-          titulo: `${idx + 1}º Lembrete`
-        }));
+      const reordered = remaining.map((t, idx) => ({
+        ...t,
+        ordem: idx + 1,
+        titulo: `${idx + 1}º Lembrete`
+      }));
 
-        if (reordered.length > 0) {
-          const { error: updateError } = await supabase
-            .from('mensagens_template')
-            .upsert(reordered.map(t => {
-              const clean = { 
-                id_usuario: profile.id, 
-                ordem: t.ordem, 
-                titulo: t.titulo, 
-                tipo: 'cobranca', 
-                conteudo: t.conteudo 
-              };
-              if (t.id && !t.isNew) clean.id = t.id;
-              return clean;
-            }));
-          
-          if (updateError) throw updateError;
-        }
+      for (const item of reordered) {
+        if (!item.id) continue;
+
+        const { error } = await supabase
+          .from('mensagens_template')
+          .update({
+            ordem: item.ordem,
+            titulo: item.titulo
+          })
+          .eq('id', item.id);
+
+        if (error) throw error;
       }
-
+    }
       toast.success("Modelo removido com sucesso!");
       setIsMobileListOpen(true);
       fetchTemplates();
