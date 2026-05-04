@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
                     nome_completo,
                     whatsapp
                 ),
-                contratos!inner (
+                contratos!fk_agendamento_contrato!inner (
                     id,
                     status
                 ),
@@ -86,8 +86,13 @@ Deno.serve(async (req) => {
                 const contratos = ag.contratos
 
                 // 🔒 segurança extra (caso algo passe no filtro)
-                if (!contratos || contratos.length === 0) {
-                    console.log(`[IGNORADO] Sem contrato ativo: ${locatario.nome_completo}`)
+                if (!contratos) {
+                    console.log(`[IGNORADO] Sem contrato: ${locatario.nome_completo}`)
+                    continue
+                }
+
+                if (contratos.status !== 'ativo') {
+                    console.log(`[IGNORADO] Contrato inativo: ${locatario.nome_completo}`)
                     continue
                 }
 
