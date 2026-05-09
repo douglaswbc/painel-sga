@@ -55,14 +55,14 @@ Deno.serve(async (req) => {
                     locatarios (
                         nome_completo,
                         whatsapp
+                    ),
+                    usuarios (
+                        id,
+                        access_token_mercado_pago,
+                        evolution_url,
+                        evolution_instance,
+                        evolution_apikey
                     )
-                ),
-                usuarios!inner (
-                    id,
-                    access_token_mercado_pago,
-                    evolution_url,
-                    evolution_instance,
-                    evolution_apikey
                 )
             `)
             .eq('status', 'pendente')
@@ -84,10 +84,24 @@ Deno.serve(async (req) => {
 
         for (const cobranca of cobrancas) {
             try {
-                const locatario = cobranca.contratos.locatarios
-                const usuario = cobranca.usuarios
+                // Ajuste defensivo: garante que pegamos objetos mesmo se o Supabase retornar arrays
+                const contrato = Array.isArray(cobranca.contratos) ? cobranca.contratos[0] : cobranca.contratos
+                if (!contrato) {
+                    console.error(`Contrato não encontrado para cobrança ${cobranca.id}`)
+                    continue
+                }
+
+                const locatario = Array.isArray(contrato.locatarios) ? contrato.locatarios[0] : contrato.locatarios
+                const usuario = Array.isArray(contrato.usuarios) ? contrato.usuarios[0] : contrato.usuarios
+
+                if (!locatario || !usuario) {
+                    console.error(`Dados incompletos (locatário/usuário) para cobrança ${cobranca.id}`)
+                    continue
+                }
+
                 const proximaTentativa = (cobranca.tentativas_envio || 0) + 1
                 const primeiroNome = locatario.nome_completo?.split(' ')[0] ?? 'Locatário'
+                const whatsappLimpo = locatario.whatsapp.replace(/\D/g, '')
 
                 console.log(`Analisando cobrança ${cobranca.id} (Tentativa: ${proximaTentativa})`)
 
@@ -171,7 +185,7 @@ Deno.serve(async (req) => {
                 const isMedia = !!template.media_url
                 const endpoint = isMedia ? 'sendMedia' : 'sendText'
                 const payload = isMedia ? {
-                    number: locatario.whatsapp,
+                    number: whatsappLimpo,
                     mediatype: template.media_type,
                     mimetype: template.media_mimetype,
                     caption: mensagemFinal,
@@ -179,7 +193,7 @@ Deno.serve(async (req) => {
                     fileName: template.media_filename,
                     delay: 1200,
                 } : {
-                    number: locatario.whatsapp,
+                    number: whatsappLimpo,
                     text: mensagemFinal,
                     delay: 1200,
                 }
@@ -213,7 +227,7 @@ Deno.serve(async (req) => {
                     // Não lança — o envio já ocorreu; log é suficiente
                 }
 
-                console.log(`Cobrança ${cobranca.id}: lembrete ${proximaTentativa}/${totalTemplates} enviado para ${locatario.whatsapp}.`)
+                console.log(`Cobrança ${cobranca.id}: lembrete ${proximaTentativa}/${totalTemplates} enviado para ${whatsappLimpo}.`)
                 results.push({ id: cobranca.id, status: 'sent', tentativa: proximaTentativa })
 
             } catch (innerError) {
