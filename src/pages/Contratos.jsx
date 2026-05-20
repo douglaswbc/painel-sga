@@ -216,8 +216,26 @@ const Contratos = () => {
       // Cálculo do Timestamp ISO para proxima_cobranca (Brasília)
       // Se for configuração complexa, usamos o horário definido nela
       const horario = formData.horario_faturamento || '20:00';
-      const dataLocal = `${formData.data_inicio}T${horario}:00`;
-      const proximaCobrancaISO = new Date(dataLocal).toISOString();
+      
+      let dataCalculada = new Date(`${formData.data_inicio}T${horario}:00`);
+      
+      // Se for semanal, garante que a primeira cobrança seja em um dos dias selecionados
+      if (showCustomRecurrence && formData.recorrencia_config.frequencia === 'weekly') {
+        const dayMapIndex = { dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6, sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+        const selectedDayIndices = formData.recorrencia_config.dias.map(d => dayMapIndex[d.toLowerCase()]);
+        
+        // Procura o primeiro dia válido a partir da data_inicio
+        let encontrou = false;
+        for (let i = 0; i < 7; i++) {
+          if (selectedDayIndices.includes(dataCalculada.getDay())) {
+            encontrou = true;
+            break;
+          }
+          dataCalculada.setDate(dataCalculada.getDate() + 1);
+        }
+      }
+
+      const proximaCobrancaISO = dataCalculada.toISOString();
 
       // Se for configuração complexa, empacotamos TUDO no JSON da recorrência
       // para evitar erro de colunas inexistentes no banco (como expiracao_horas)
@@ -259,19 +277,7 @@ const Contratos = () => {
           .single();
 
         if (contratoError) throw contratoError;
-        
-        const { error: cobrancaError } = await supabase
-          .from('cobrancas')
-          .insert([{
-             id_contrato: novoContrato.id,
-             id_usuario: profile.id,
-             valor: novoContrato.valor,
-             data_vencimento: formData.data_inicio,
-             status: 'pendente'
-          }]);
-        
-        if (cobrancaError) throw cobrancaError;
-        toast.success('Contrato e primeira cobrança gerados!');
+        toast.success('Contrato gerado com sucesso!');
       }
 
       setShowModal(false);
