@@ -58,6 +58,7 @@ Deno.serve(async (req) => {
                     ),
                     usuarios (
                         id,
+                        nome_completo,
                         access_token_mercado_pago,
                         evolution_url,
                         evolution_instance,
@@ -83,6 +84,8 @@ Deno.serve(async (req) => {
         const results: { id: string; status: string; tentativa?: number; msg?: string }[] = []
 
         for (const cobranca of cobrancas) {
+            let locatarioNome = "Desconhecido"
+            let locadorNome = "Desconhecido"
             try {
                 // Ajuste defensivo: garante que pegamos objetos mesmo se o Supabase retornar arrays
                 const contrato = Array.isArray(cobranca.contratos) ? cobranca.contratos[0] : cobranca.contratos
@@ -99,11 +102,14 @@ Deno.serve(async (req) => {
                     continue
                 }
 
+                locatarioNome = locatario.nome_completo
+                locadorNome = usuario.nome_completo || usuario.id
+
                 const proximaTentativa = (cobranca.tentativas_envio || 0) + 1
                 const primeiroNome = locatario.nome_completo?.split(' ')[0] ?? 'Locatário'
                 const whatsappLimpo = locatario.whatsapp.replace(/\D/g, '')
 
-                console.log(`Analisando cobrança ${cobranca.id} (Tentativa: ${proximaTentativa})`)
+                console.log(`Analisando cobrança ${cobranca.id} | Locador: ${locadorNome} | Locatário: ${locatarioNome} | Tentativa: ${proximaTentativa}`)
 
                 // Fix 1 (camada extra): Nunca processar cobrança criada no futuro
                 if (new Date(cobranca.created_at) > agora) {
@@ -119,13 +125,13 @@ Deno.serve(async (req) => {
                     .eq('tipo', 'cobranca')
 
                 if (countError || totalTemplates === null || totalTemplates === 0) {
-                    console.log(`Locador ${usuario.id} não possui templates cadastrados.`)
+                    console.log(`Locador ${locadorNome} (${usuario.id}) não possui templates cadastrados.`)
                     continue
                 }
 
                 // Trava a) Já enviou todos os lembretes da régua?
                 if (proximaTentativa > totalTemplates) {
-                    console.log(`Fim da régua para ${cobranca.id} — todos os ${totalTemplates} templates já enviados.`)
+                    console.log(`Fim da régua para ${cobranca.id} (${locatarioNome}) — todos os ${totalTemplates} templates já enviados.`)
                     continue
                 }
 
@@ -135,7 +141,7 @@ Deno.serve(async (req) => {
                     : Infinity
 
                 if (tempoUltimoEnvio < 15 * 60 * 1000) {
-                    console.log(`Segurança: ignorando reenvio rápido para ${cobranca.id} (${Math.round(tempoUltimoEnvio / 1000)}s desde último envio).`)
+                    console.log(`Segurança: ignorando reenvio rápido para ${cobranca.id} (${locatarioNome}) (${Math.round(tempoUltimoEnvio / 1000)}s desde último envio).`)
                     continue
                 }
 
@@ -149,7 +155,7 @@ Deno.serve(async (req) => {
                 if (mpResponse.ok) {
                     const mpData = await mpResponse.json()
                     if (mpData.status === 'approved') {
-                        console.log(`Cobrança ${cobranca.id} já paga no MP — marcando como pago.`)
+                        console.log(`Cobrança ${cobranca.id} (${locatarioNome}) já paga no MP — marcando como pago.`)
                         await supabase
                             .from('cobrancas')
                             .update({ status: 'pago', data_pagamento: agora.toISOString() })
@@ -169,7 +175,7 @@ Deno.serve(async (req) => {
                     .single()
 
                 if (!template) {
-                    console.log(`Template nº${proximaTentativa} não encontrado para locador ${usuario.id} — fim da régua.`)
+                    console.log(`Template nº${proximaTentativa} não encontrado para locador ${locadorNome} — fim da régua.`)
                     continue
                 }
 
@@ -223,16 +229,16 @@ Deno.serve(async (req) => {
                     .eq('id', cobranca.id)
 
                 if (updateError) {
-                    console.error(`Erro ao atualizar tentativas da cobrança ${cobranca.id}: ${updateError.message}`)
+                    console.error(`Erro ao atualizar tentativas da cobrança ${cobranca.id} (${locatarioNome}): ${updateError.message}`)
                     // Não lança — o envio já ocorreu; log é suficiente
                 }
 
-                console.log(`Cobrança ${cobranca.id}: lembrete ${proximaTentativa}/${totalTemplates} enviado para ${whatsappLimpo}.`)
+                console.log(`Cobrança ${cobranca.id}: lembrete ${proximaTentativa}/${totalTemplates} enviado para ${locatarioNome} (${whatsappLimpo}).`)
                 results.push({ id: cobranca.id, status: 'sent', tentativa: proximaTentativa })
 
             } catch (innerError) {
                 const msg = innerError instanceof Error ? innerError.message : String(innerError)
-                console.error(`Erro na cobrança ${cobranca.id}:`, msg)
+                console.error(`Erro na cobrança ${cobranca.id} | Locador: ${locadorNome} | Locatário: ${locatarioNome}:`, msg)
                 results.push({ id: cobranca.id, status: 'error', msg })
             }
         }
