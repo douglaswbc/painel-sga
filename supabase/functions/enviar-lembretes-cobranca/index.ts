@@ -233,7 +233,7 @@ Deno.serve(async (req) => {
                     // Não lança — o envio já ocorreu; log é suficiente
                 }
 
-                console.log(`Cobrança ${cobranca.id}: lembrete ${proximaTentativa}/${totalTemplates} enviado para ${locatarioNome} (${whatsappLimpo}).`)
+                console.log(`Cobrança ${cobranca.id} | Locador: ${locadorNome} | Lembrete ${proximaTentativa}/${totalTemplates} enviado para ${locatarioNome} (${whatsappLimpo}).`)
                 results.push({ id: cobranca.id, status: 'sent', tentativa: proximaTentativa })
 
             } catch (innerError) {
