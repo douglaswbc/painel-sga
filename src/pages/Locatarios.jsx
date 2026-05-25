@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { 
   Plus, Pencil, Trash2, Search, MapPin, 
   Phone, Mail, ToggleLeft, ToggleRight, X, Loader2,
-  ExternalLink, UserCheck, ShieldAlert, Globe, MessageSquare
+  ExternalLink, UserCheck, ShieldAlert, Globe, MessageSquare, CalendarClock
 } from 'lucide-react';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-toastify';
 import { formatWhatsAppToAPI } from '../utils/formatters';
 import MessageSelectorModal from '../components/MessageSelectorModal';
+import AgendamentoModal from '../components/AgendamentoModal';
 
 const Locatarios = () => {
   const { profile } = useAuth();
@@ -19,6 +20,8 @@ const Locatarios = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isMessageModalOpen, setIsMessageModalOpen] = useState(false);
   const [selectedTenantForMessage, setSelectedTenantForMessage] = useState(null);
+  const [isAgendamentoModalOpen, setIsAgendamentoModalOpen] = useState(false);
+  const [selectedTenantForAgendamento, setSelectedTenantForAgendamento] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
   const [formData, setFormData] = useState({
     nome_completo: '',
@@ -256,9 +259,17 @@ const Locatarios = () => {
                     <button 
                       onClick={() => { setSelectedTenantForMessage(item); setIsMessageModalOpen(true); }}
                       className="p-2 text-zinc-500 hover:text-indigo-400 hover:bg-indigo-400/10 rounded-xl transition-all" 
-                      title="Enviar Mensagem"
+                      title="Enviar WhatsApp Agora"
                     >
                       <MessageSquare size={18} />
+                    </button>
+
+                    <button 
+                      onClick={() => { setSelectedTenantForAgendamento(item); setIsAgendamentoModalOpen(true); }}
+                      className="p-2 text-zinc-500 hover:text-emerald-400 hover:bg-emerald-400/10 rounded-xl transition-all" 
+                      title="Agendamentos Recorrentes"
+                    >
+                      <CalendarClock size={18} />
                     </button>
 
                     <button onClick={() => { setEditingTenant(item); setFormData(item); setFieldErrors({}); setShowModal(true); }} className="p-2 text-zinc-500 hover:text-indigo-400 hover:bg-indigo-400/10 rounded-xl transition-all" title="Editar Locatário"><Pencil size={18} /></button>
@@ -402,6 +413,16 @@ const Locatarios = () => {
         locatario={selectedTenantForMessage}
         usuario={profile}
       />
+      
+      {isAgendamentoModalOpen && (
+        <AgendamentoModal 
+           isOpen={isAgendamentoModalOpen} 
+           onClose={() => setIsAgendamentoModalOpen(false)} 
+           locatario={selectedTenantForAgendamento}
+           usuario={profile} 
+           mode="locatario"
+        />
+      )}
     </div>
   );
 };

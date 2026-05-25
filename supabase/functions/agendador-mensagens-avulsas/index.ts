@@ -73,10 +73,32 @@ Deno.serve(async (req) => {
             )
         }
 
-        const results = []
+        // 🛡️ ESTRATÉGIA ANTI-SPAM: 
+        // Em vez de dar um sleep longo (30s+) que causaria Timeout na função,
+        // enviamos apenas 1 mensagem por locatário por execução.
+        // Se houver mais de uma, o próximo ciclo do CRON (ex: cada 1 min) pegará a próxima.
+        const uniqueAgendamentos = []
+        const locatariosVistos = new Set()
 
         for (const ag of agendamentos) {
+            const locId = ag.locatarios.id
+            if (!locatariosVistos.has(locId)) {
+                uniqueAgendamentos.push(ag)
+                locatariosVistos.add(locId)
+            } else {
+                console.log(`[PULADO] Já existe uma mensagem para ${ag.locatarios.nome_completo} nesta rodada.`)
+            }
+        }
+
+        const results = []
+        const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+        for (const ag of uniqueAgendamentos) {
             try {
+                // Pequeno delay humanizado entre locatários diferentes (2 a 5 segundos)
+                const delayMs = Math.floor(Math.random() * (5000 - 2000 + 1) + 2000)
+                await sleep(delayMs)
+                
                 if (ag.proximo_envio === hoje && ag.horario_envio && ag.horario_envio > horaAtual) {
                     console.log(`[AGUARDANDO] Agendamento ${ag.id} para ${ag.horario_envio}`)
                     continue
