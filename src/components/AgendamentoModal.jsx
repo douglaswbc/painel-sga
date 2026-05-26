@@ -9,7 +9,6 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLocatario, setSelectedLocatario] = useState(initialLocatario || null);
   const [selectedTemplates, setSelectedTemplates] = useState([]);
-  const [contratosMap, setContratosMap] = useState({});
   
   const [frequencia, setFrequencia] = useState('semanal');
   const [frequenciaDias, setFrequenciaDias] = useState('');
@@ -56,22 +55,6 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
         if (tmplError) throw tmplError;
         setTemplates(tmplData || []);
       }
-
-      // 🔥 Buscar contratos ativos
-      const { data: contratosData, error: contratosError } = await supabase
-        .from('contratos')
-        .select('id, id_locatario')
-        .eq('id_usuario', usuario.id)
-        .eq('status', 'ativo');
-
-      if (contratosError) throw contratosError;
-
-      // 🔥 Mapear por locatário
-      const map = {};
-      (contratosData || []).forEach(c => {
-        map[c.id_locatario] = c;
-      });
-      setContratosMap(map);
 
       // Carregar Agendamentos Atuais
       let query = supabase
@@ -130,30 +113,21 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
 
       if (mode === 'template') {
         const targets = selecionarTodos ? locatarios : [selectedLocatario];
-        payloads = targets.map(t => {
-          const contrato = contratosMap[t.id];
-          if (!contrato) return null;
-          return {
-            id_usuario: usuario.id,
-            id_template: template.id,
-            id_locatario: t.id,
-            id_contrato: contrato.id,
-            frequencia,
-            frequencia_dias: freqNum,
-            proximo_envio: proximoEnvio,
-            horario_envio: horario + ':00',
-            ativo: true
-          };
-        }).filter(Boolean);
+        payloads = targets.map(t => ({
+          id_usuario: usuario.id,
+          id_template: template.id,
+          id_locatario: t.id,
+          frequencia,
+          frequencia_dias: freqNum,
+          proximo_envio: proximoEnvio,
+          horario_envio: horario + ':00',
+          ativo: true
+        }));
       } else {
-        const contrato = contratosMap[selectedLocatario.id];
-        if (!contrato) throw new Error("Este locatário não possui contrato ativo.");
-        
         payloads = selectedTemplates.map(tmpl => ({
           id_usuario: usuario.id,
           id_template: tmpl.id,
           id_locatario: selectedLocatario.id,
-          id_contrato: contrato.id,
           frequencia,
           frequencia_dias: freqNum,
           proximo_envio: proximoEnvio,
@@ -162,7 +136,7 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
         }));
       }
       
-      if (payloads.length === 0) return toast.error('Nenhum agendamento pôde ser criado (verifique contratos).');
+      if (payloads.length === 0) return toast.error('Nenhum agendamento pôde ser criado.');
 
       const { error } = await supabase.from('agendamentos_mensagens').insert(payloads);
       if (error) throw error;

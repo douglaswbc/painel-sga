@@ -48,10 +48,6 @@ Deno.serve(async (req) => {
                     nome_completo,
                     whatsapp
                 ),
-                contratos!fk_agendamento_contrato!inner (
-                    id,
-                    status
-                ),
                 usuarios!inner (
                     id,
                     evolution_url,
@@ -60,7 +56,6 @@ Deno.serve(async (req) => {
                 )
             `)
             .eq('ativo', true)
-            .eq('contratos.status', 'ativo') // ✅ filtro correto
             .lte('proximo_envio', hoje)
 
         if (fetchError) throw fetchError
@@ -105,18 +100,6 @@ Deno.serve(async (req) => {
                 }
 
                 const locatario = ag.locatarios
-                const contratos = ag.contratos
-
-                // 🔒 segurança extra (caso algo passe no filtro)
-                if (!contratos) {
-                    console.log(`[IGNORADO] Sem contrato: ${locatario.nome_completo}`)
-                    continue
-                }
-
-                if (contratos.status !== 'ativo') {
-                    console.log(`[IGNORADO] Contrato inativo: ${locatario.nome_completo}`)
-                    continue
-                }
 
                 const usuario = ag.usuarios
                 const template = ag.mensagens_template
