@@ -55,16 +55,13 @@ const Mensagens = () => {
   const fetchLocatarios = async () => {
     try {
       setLoading(true);
-      // 🔥 Buscar apenas locatários com contrato ativo
       const { data, error } = await supabase
         .from('locatarios')
         .select(`
           *,
-          contratos!inner (id, status),
           agendamentos_mensagens (id, ativo)
         `)
         .eq('id_usuario', profile.id)
-        .eq('contratos.status', 'ativo')
         .order('nome_completo');
 
       if (error) throw error;
@@ -415,7 +412,7 @@ const handleSave = async () => {
               </div>
               <div className="flex items-center gap-2 text-[10px] font-black text-zinc-500 uppercase tracking-widest bg-zinc-950/50 px-4 py-2 rounded-xl border border-zinc-800">
                 <Info size={14} className="text-indigo-500" />
-                Exibindo apenas locatários com contrato ativo
+                Gerencie as mensagens agendadas para seus locatários
               </div>
             </div>
 
@@ -449,7 +446,7 @@ const handleSave = async () => {
               {locatarios.length === 0 && (
                 <div className="col-span-full py-20 text-center">
                    <AlertCircle size={48} className="text-zinc-800 mx-auto mb-4" />
-                   <p className="text-zinc-600 font-black text-xs uppercase tracking-widest">Nenhum locatário com contrato ativo encontrado</p>
+                   <p className="text-zinc-600 font-black text-xs uppercase tracking-widest">Nenhum locatário encontrado</p>
                 </div>
               )}
             </div>
