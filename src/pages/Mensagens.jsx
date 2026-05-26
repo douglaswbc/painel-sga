@@ -419,6 +419,7 @@ const handleSave = async () => {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto pr-2 scrollbar-thin">
               {locatarios
                 .filter(l => l.nome_completo.toLowerCase().includes(locatarioSearch.toLowerCase()))
+                .filter(l => (l.agendamentos_mensagens?.length || 0) > 0)
                 .map(loc => {
                   const activeCount = loc.agendamentos_mensagens?.filter(a => a.ativo).length || 0;
                   return (
@@ -443,10 +444,10 @@ const handleSave = async () => {
                     </div>
                   );
                 })}
-              {locatarios.length === 0 && (
+              {locatarios.filter(l => (l.agendamentos_mensagens?.length || 0) > 0).length === 0 && (
                 <div className="col-span-full py-20 text-center">
                    <AlertCircle size={48} className="text-zinc-800 mx-auto mb-4" />
-                   <p className="text-zinc-600 font-black text-xs uppercase tracking-widest">Nenhum locatário encontrado</p>
+                   <p className="text-zinc-600 font-black text-xs uppercase tracking-widest">Nenhum agendamento ativo encontrado</p>
                 </div>
               )}
             </div>
