@@ -6,6 +6,7 @@ import 'react-toastify/dist/ReactToastify.css';
 import { AuthProvider } from './contexts/AuthContext';
 import DashboardLayout from './components/DashboardLayout';
 import Login from './pages/Login';
+import Landing from './pages/Landing';
 import Dashboard from './pages/Dashboard';
 import Locatarios from './pages/Locatarios';
 import Veiculos from './pages/Veiculos';
@@ -44,7 +45,7 @@ function App() {
               <Route path="/admin" element={<Admin />} />
             </Route>
 
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/" element={<Landing />} />
           </Routes>
           
           <ToastContainer theme="dark" position="top-right" autoClose={3000} />
