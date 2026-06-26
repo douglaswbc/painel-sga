@@ -5,8 +5,8 @@ import {
   Database, RefreshCw, QrCode, ExternalLink,
   ChevronRight, ArrowUpRight, Lock
 } from 'lucide-react';
-import { supabase } from '../services/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { fechadurasService } from '../services/fechaduras';
 import { toast } from 'react-toastify';
 import FechaduraModal from '../components/FechaduraModal';
 
@@ -29,13 +29,7 @@ const Acessos = () => {
   const fetchLocks = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('fechaduras')
-        .select('*')
-        .eq('id_usuario', profile.id)
-        .order('created_at', { ascending: false });
-      
-      if (error) throw error;
+      const data = await fechadurasService.list(profile.id);
       setLocks(data || []);
     } catch (err) {
       toast.error('Erro ao buscar fechaduras');
@@ -46,18 +40,7 @@ const Acessos = () => {
 
   const fetchLogs = async () => {
     try {
-      const { data, error } = await supabase
-        .from('fechadura_logs')
-        .select(`
-          *,
-          locatarios (nome_completo),
-          fechaduras (nome)
-        `)
-        .eq('id_usuario', profile.id)
-        .order('timestamp', { ascending: false })
-        .limit(50);
-      
-      if (error) throw error;
+      const data = await fechadurasService.listLogs(profile.id);
       setLogs(data || []);
     } catch (err) {
       console.error('Erro ao buscar logs:', err);
@@ -67,8 +50,7 @@ const Acessos = () => {
   const deleteLock = async (id) => {
     if (!window.confirm('Excluir esta fechadura? Todos os logs relacionados serão perdidos.')) return;
     try {
-      const { error } = await supabase.from('fechaduras').delete().eq('id', id);
-      if (error) throw error;
+      await fechadurasService.remove(id);
       toast.success('Fechadura removida');
       fetchLocks();
     } catch (err) {

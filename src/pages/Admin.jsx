@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { supabase } from '../services/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { usuariosService } from '../services/usuarios';
 import { 
   ShieldAlert, Users, Plus, Edit, 
   Search, Loader2, Key, UserCheck, 
@@ -20,12 +20,7 @@ const Admin = () => {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('usuarios')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
+      const data = await usuariosService.list();
       setUsers(data || []);
     } catch (error) {
       toast.error("Erro ao carregar usuários");
@@ -35,17 +30,12 @@ const Admin = () => {
   };
 
   useEffect(() => {
-    // Proteção de rota interna: apenas super_admin
     if (profile?.role === 'admin') fetchUsers();
   }, [profile]);
 
   const toggleUserStatus = async (id, currentStatus) => {
     try {
-      const { error } = await supabase
-        .from('usuarios')
-        .update({ ativo: !currentStatus })
-        .eq('id', id);
-      if (error) throw error;
+      await usuariosService.toggleStatus(id, currentStatus);
       toast.success("Status atualizado!");
       fetchUsers();
     } catch (error) {
@@ -58,12 +48,7 @@ const Admin = () => {
 
     try {
       setLoading(true);
-      const { data, error } = await supabase.functions.invoke('delete-user', {
-        body: { userId: id }
-      });
-
-      if (error) throw error;
-      
+      await usuariosService.deleteUser(id);
       toast.success("Usuário e todos os dados vinculados foram removidos!");
       fetchUsers();
     } catch (error) {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../services/supabase'; // Ajustado para o caminho do seu projeto
 import { useAuth } from '../contexts/AuthContext';
+import { candidatosService } from '../services/candidatos';
 import { toast } from 'react-toastify';
 import { 
   Trophy, Star, Phone, CheckCircle, 
@@ -24,13 +24,7 @@ const Triagem = () => {
   const fetchCandidatos = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('candidatos')
-        .select('*')
-        .eq('id_usuario', profile.id)
-        .order('score_formulario', { ascending: false });
-      
-      if (error) throw error;
+      const data = await candidatosService.list(profile.id);
       setCandidatos(data || []);
     } catch (err) {
       toast.error('Erro ao buscar fila de triagem');
@@ -41,16 +35,10 @@ const Triagem = () => {
 
   const handleAction = async (id, newStatus) => {
     try {
-      const { error } = await supabase
-        .from('candidatos')
-        .update({ 
-          status: newStatus,
-          // Se for confirmação de reserva, define a data
-          reserva_confirmada_em: newStatus === 'Reserva Confirmada' ? new Date().toISOString() : null 
-        })
-        .eq('id', id);
-      
-      if (error) throw error;
+      await candidatosService.update(id, {
+        status: newStatus,
+        reserva_confirmada_em: newStatus === 'Reserva Confirmada' ? new Date().toISOString() : null,
+      });
       toast.success(`Candidato: ${newStatus}`);
       fetchCandidatos();
     } catch (err) {
@@ -61,12 +49,7 @@ const Triagem = () => {
   const handleReservarVaga = async (candidatoId) => {
     setProcessingId(candidatoId);
     try {
-      const { data, error } = await supabase.functions.invoke('create-reservation-pix', {
-        body: { candidatoId },
-      });
-
-      if (error) throw error;
-
+      const data = await candidatosService.createReservationPix(candidatoId);
       setPixData(data);
       setIsPixModalOpen(true);
       fetchCandidatos();

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { supabase } from '../services/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { usuariosService } from '../services/usuarios';
 import { toast } from 'react-toastify';
 import { 
   Settings, User, Key, Link, 
@@ -76,12 +76,7 @@ const Configuracoes = () => {
     e.preventDefault();
     setSaving(true);
     try {
-      const { error } = await supabase
-        .from('usuarios')
-        .update(formData)
-        .eq('id', user.id);
-
-      if (error) throw error;
+      await usuariosService.update(user.id, formData);
       toast.success("Configurações salvas!");
     } catch (error) {
       toast.error("Erro ao salvar: " + error.message);
@@ -129,10 +124,7 @@ const Configuracoes = () => {
   const handleResetPassword = async () => {
     if (!window.confirm("Enviar e-mail de recuperação de senha?")) return;
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(user.email, {
-        redirectTo: `${window.location.origin}/login`
-      });
-      if (error) throw error;
+      await usuariosService.resetPassword(user.email, `${window.location.origin}/login`);
       toast.success("E-mail enviado!");
     } catch (error) {
       toast.error("Erro: " + error.message);

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { supabase } from '../services/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { mensagensService } from '../services/mensagens';
+import { locatariosService } from '../services/locatarios';
 import { 
   Save, Loader2, MessageSquareQuote, Info, 
   Plus, Trash2, LayoutGrid, Megaphone, 
@@ -29,16 +30,7 @@ const Mensagens = () => {
   const fetchTemplates = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('mensagens_template')
-        .select(`
-          *,
-          agendamentos_mensagens (id, ativo)
-        `)
-        .eq('id_usuario', profile.id)
-        .order('ordem', { ascending: true });
-
-      if (error) throw error;
+      const data = await mensagensService.listTemplates(profile.id);
       setTemplates(data || []);
       
       const activeData = (data || []).filter(t => (t.tipo || 'cobranca') === activeTab);
@@ -55,16 +47,7 @@ const Mensagens = () => {
   const fetchLocatarios = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('locatarios')
-        .select(`
-          *,
-          agendamentos_mensagens (id, ativo)
-        `)
-        .eq('id_usuario', profile.id)
-        .order('nome_completo');
-
-      if (error) throw error;
+      const data = await locatariosService.listWithAgendamentos(profile.id);
       setLocatarios(data || []);
     } catch (error) {
       toast.error("Erro ao carregar locatários");
@@ -146,38 +129,24 @@ const Mensagens = () => {
 
     try {
       setSaving(true);
-      const { error } = await supabase
-        .from('mensagens_template')
-        .delete()
-        .eq('id', templateToDelete.id);
-
-      if (error) throw error;
+      await mensagensService.removeTemplate(templateToDelete.id);
 
       if (activeTab === 'cobranca') {
-      const remaining = templates
-        .filter(t => t.tipo === 'cobranca' && t.id !== templateToDelete.id)
-        .sort((a, b) => a.ordem - b.ordem);
+        const remaining = templates
+          .filter(t => t.tipo === 'cobranca' && t.id !== templateToDelete.id)
+          .sort((a, b) => a.ordem - b.ordem);
 
-      const reordered = remaining.map((t, idx) => ({
-        ...t,
-        ordem: idx + 1,
-        titulo: `${idx + 1}º Lembrete`
-      }));
+        const reordered = remaining.map((t, idx) => ({
+          ...t,
+          ordem: idx + 1,
+          titulo: `${idx + 1}º Lembrete`
+        }));
 
-      for (const item of reordered) {
-        if (!item.id) continue;
-
-        const { error } = await supabase
-          .from('mensagens_template')
-          .update({
-            ordem: item.ordem,
-            titulo: item.titulo
-          })
-          .eq('id', item.id);
-
-        if (error) throw error;
+        for (const item of reordered) {
+          if (!item.id) continue;
+          await mensagensService.updateTemplate(item.id, { ordem: item.ordem, titulo: item.titulo });
+        }
       }
-    }
       toast.success("Modelo removido com sucesso!");
       setIsMobileListOpen(true);
       fetchTemplates();
@@ -195,24 +164,17 @@ const Mensagens = () => {
       setSaving(true);
       const fileExt = file.name.split('.').pop();
       const fileName = `${profile.id}/${crypto.randomUUID()}.${fileExt}`;
-      const filePath = `${fileName}`;
 
-      const { error: uploadError, data } = await supabase.storage
-        .from('mensagens-midia')
-        .upload(filePath, file);
-
-      if (uploadError) throw uploadError;
+      await mensagensService.uploadMedia(fileName, file);
 
       if (template.media_url) {
         const oldPath = template.media_url.split('/mensagens-midia/').pop();
         if (oldPath) {
-          await supabase.storage.from('mensagens-midia').remove([oldPath]);
+          await mensagensService.removeMedia(oldPath);
         }
       }
 
-      const { data: { publicUrl } } = supabase.storage
-        .from('mensagens-midia')
-        .getPublicUrl(filePath);
+      const publicUrl = mensagensService.getMediaPublicUrl(fileName);
 
       let mediatype = 'document';
       if (file.type.startsWith('image/')) mediatype = 'image';
@@ -250,7 +212,7 @@ const Mensagens = () => {
     if (template.media_url) {
       const path = template.media_url.split('/mensagens-midia/').pop();
       if (path) {
-        supabase.storage.from('mensagens-midia').remove([path]);
+        mensagensService.removeMedia(path);
       }
     }
 
@@ -312,11 +274,7 @@ const handleSave = async () => {
       return clean;
     });
 
-    const { error } = await supabase
-      .from('mensagens_template')
-      .upsert(templatesToSave);
-
-    if (error) throw error;
+    await mensagensService.upsertTemplates(templatesToSave);
 
     toast.success("Alterações salvas com sucesso!");
     fetchTemplates();
