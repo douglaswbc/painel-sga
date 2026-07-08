@@ -87,4 +87,12 @@ export const cobrancasService = {
     if (error) throw error;
     return data;
   },
+
+  cobrarContrato: async (contratoId) => {
+    const { data, error } = await supabase.functions.invoke('cobrar-contrato', {
+      body: { contratoId },
+    });
+    if (error) throw error;
+    return data;
+  },
 };

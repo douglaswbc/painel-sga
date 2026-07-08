@@ -172,10 +172,7 @@ Deno.serve(async (req) => {
 
                 // --- MERCADO PAGO PAYLOAD ---
                 const locatarioNome = contrato.locatarios.nome_completo?.split(' ').slice(0, 2).join(' ') ?? 'Locatário'
-                const docLimpo = (contrato.locatarios.cpf || '').replace(/\D/g, '')
-                const tipoDoc = docLimpo.length > 11 ? 'CNPJ' : 'CPF'
 
-                // Expiração dinâmica do PIX (em horas)
                 const expirationDate = new Date()
                 expirationDate.setHours(expirationDate.getHours() + (config.expiracao || 4))
 
@@ -185,7 +182,6 @@ Deno.serve(async (req) => {
                     notification_url: NOTIFICATION_URL,
                     payer: {
                         email: contrato.locatarios.email,
-                        identification: { type: tipoDoc, number: docLimpo },
                     },
                     payment_method_id: 'pix',
                     transaction_amount: Number(contrato.valor),

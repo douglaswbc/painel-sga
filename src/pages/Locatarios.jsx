@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Plus, Pencil, Trash2, Search, MapPin,
   Phone, Mail, ToggleLeft, ToggleRight, X,
@@ -7,7 +7,6 @@ import {
 import { toast } from 'react-toastify';
 import { useAuth } from '../contexts/AuthContext';
 import { useTenants } from '../hooks/useTenants';
-import { formatWhatsAppToAPI } from '../utils/formatters';
 import { Button } from '../components/ui/Button';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Modal, ModalBody, ModalFooter } from '../components/ui/Modal';
@@ -18,19 +17,27 @@ import { SectionHeader } from '../components/ui/SectionHeader';
 import MessageSelectorModal from '../components/MessageSelectorModal';
 import AgendamentoModal from '../components/AgendamentoModal';
 
-const maskWhatsApp = (value) => {
-  let v = value.replace(/\D/g, '').slice(0, 13);
-  if (v.length <= 12) {
-    return v.replace(/^(\d{2})(\d{2})(\d{4})(\d{0,4})$/, '+$1 ($2) $3-$4').replace(/-$/, '');
-  }
-  return v.replace(/^(\d{2})(\d{2})(\d{5})(\d{0,4})$/, '+$1 ($2) $3-$4').replace(/-$/, '');
-};
-
 const maskCPF = (v) => v.replace(/\D/g, '').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d{1,2})/, '$1-$2').replace(/(-\d{2})\d+?$/, '$1');
 
 const maskCNPJ = (v) => v.replace(/\D/g, '').replace(/^(\d{2})(\d)/, '$1.$2').replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3').replace(/\.(\d{3})(\d)/, '.$1/$2').replace(/(\d{4})(\d)/, '$1-$2').replace(/(-\d{2})\d+?$/, '$1');
 
 const maskCEP = (v) => v.replace(/\D/g, '').replace(/(\d{5})(\d)/, '$1-$2').replace(/(-\d{3})\d+?$/, '$1');
+
+const validarCPF = (cpf) => {
+  const c = cpf.replace(/\D/g, '');
+  if (c.length !== 11) return false;
+  if (/^(\d)\1{10}$/.test(c)) return false;
+  let soma = 0;
+  for (let i = 0; i < 9; i++) soma += parseInt(c[i]) * (10 - i);
+  let digito1 = (soma * 10) % 11;
+  if (digito1 === 10) digito1 = 0;
+  if (digito1 !== parseInt(c[9])) return false;
+  soma = 0;
+  for (let i = 0; i < 10; i++) soma += parseInt(c[i]) * (11 - i);
+  let digito2 = (soma * 10) % 11;
+  if (digito2 === 10) digito2 = 0;
+  return digito2 === parseInt(c[10]);
+};
 
 const emptyForm = { nome_completo: '', whatsapp: '', email: '', documento: 'CPF', cpf: '', cep: '', rua: '', numero: '', bairro: '', cidade: '', estado: '', ativo: true };
 
@@ -49,6 +56,8 @@ const Locatarios = () => {
   const [isAgendamentoModalOpen, setIsAgendamentoModalOpen] = useState(false);
   const [selectedTenantForAgendamento, setSelectedTenantForAgendamento] = useState(null);
 
+  const cepFetching = useRef(false);
+
   const filteredTenants = useMemo(() =>
     tenants.filter(t =>
       t.nome_completo.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -56,36 +65,66 @@ const Locatarios = () => {
     ), [tenants, searchTerm]
   );
 
+  useEffect(() => {
+    const cleanCep = formData.cep.replace(/\D/g, '');
+    if (cleanCep.length !== 8 || cepFetching.current) return;
+    cepFetching.current = true;
+    fetch(`https://viacep.com.br/ws/${cleanCep}/json/`)
+      .then(res => res.json())
+      .then(data => {
+        if (!data.erro) {
+          setFormData(prev => ({ ...prev, rua: data.logradouro, bairro: data.bairro, cidade: data.localidade, estado: data.uf }));
+          setFieldErrors(prev => ({ ...prev, cep: null }));
+        } else {
+          setFieldErrors(prev => ({ ...prev, cep: 'CEP nao encontrado.' }));
+        }
+      })
+      .catch(() => {
+        setFieldErrors(prev => ({ ...prev, cep: 'Erro ao consultar CEP.' }));
+      })
+      .finally(() => { cepFetching.current = false; });
+  }, [formData.cep]);
+
   const handleInputChange = (field, value) => {
     let masked = value;
-    if (field === 'whatsapp') masked = maskWhatsApp(value);
-    if (field === 'cpf') masked = formData.documento === 'CPF' ? maskCPF(value) : maskCNPJ(value);
+    if (field === 'whatsapp') masked = value.replace(/\D/g, '');
+    if (field === 'cpf') {
+      masked = formData.documento === 'CPF' ? maskCPF(value) : maskCNPJ(value);
+    }
     if (field === 'cep') masked = maskCEP(value);
     setFormData(prev => ({ ...prev, [field]: masked }));
-    if (fieldErrors[field]) setFieldErrors(prev => ({ ...prev, [field]: null }));
-  };
 
-  const handleCepBlur = async (cepValue) => {
-    const cleanCep = cepValue.replace(/\D/g, '');
-    if (cleanCep.length !== 8) return;
-    try {
-      const res = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
-      const data = await res.json();
-      if (!data.erro) {
-        setFormData(prev => ({ ...prev, rua: data.logradouro, bairro: data.bairro, cidade: data.localidade, estado: data.uf }));
+    if (field === 'cpf' && formData.documento === 'CPF') {
+      const cleanCpf = masked.replace(/\D/g, '');
+      if (cleanCpf.length === 11) {
+        setFieldErrors(prev => ({ ...prev, cpf: validarCPF(masked) ? null : 'CPF invalido.' }));
+      } else if (cleanCpf.length < 11) {
+        setFieldErrors(prev => ({ ...prev, cpf: null }));
       }
-    } catch { /* ignore */ }
-  };
-
-  const handleWhatsAppBlur = () => {
-    if (!formData.whatsapp) return;
-    const formatted = formatWhatsAppToAPI(formData.whatsapp);
-    setFormData(prev => ({ ...prev, whatsapp: maskWhatsApp(formatted) }));
+    } else if (fieldErrors[field]) {
+      setFieldErrors(prev => ({ ...prev, [field]: null }));
+    }
   };
 
   const handleSave = async (e) => {
     e.preventDefault();
     setFieldErrors({});
+
+    const errors = {};
+    if (!formData.nome_completo.trim()) errors.nome_completo = 'Nome e obrigatorio.';
+    const wppDigits = formData.whatsapp.replace(/\D/g, '');
+    if (wppDigits.length < 10) errors.whatsapp = 'WhatsApp invalido. Minimo 10 digitos.';
+    if (formData.documento === 'CPF' && !validarCPF(formData.cpf)) {
+      errors.cpf = 'CPF invalido.';
+    }
+    const cleanCep = formData.cep.replace(/\D/g, '');
+    if (cleanCep.length === 8 && !formData.rua.trim() && !formData.bairro.trim()) {
+      errors.cep = 'CEP nao encontrado. Verifique o numero.';
+    }
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      return;
+    }
 
     const dataToSave = {
       ...formData,
@@ -245,7 +284,7 @@ const Locatarios = () => {
                   <Input label="Nome Completo" required value={formData.nome_completo}
                     onChange={e => setFormData({ ...formData, nome_completo: e.target.value })} />
                 </div>
-                <Input label="WhatsApp" required placeholder="(00) 00000-0000" onBlur={handleWhatsAppBlur}
+                <Input label="WhatsApp" required placeholder="5511999999999"
                   value={formData.whatsapp} onChange={e => handleInputChange('whatsapp', e.target.value)}
                   error={fieldErrors.whatsapp} />
                 <Input label="E-mail" type="email" placeholder="cliente@exemplo.com"
@@ -265,7 +304,7 @@ const Locatarios = () => {
               <SectionHeader>Localização</SectionHeader>
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-5">
                 <Input label="CEP" placeholder="00000-000" value={formData.cep}
-                  onBlur={e => handleCepBlur(e.target.value)} onChange={e => handleInputChange('cep', e.target.value)} />
+                  onChange={e => handleInputChange('cep', e.target.value)} error={fieldErrors.cep} />
                 <div className="sm:col-span-1 md:col-span-2">
                   <Input label="Rua / Logradouro" required value={formData.rua}
                     onChange={e => setFormData({ ...formData, rua: e.target.value })} />

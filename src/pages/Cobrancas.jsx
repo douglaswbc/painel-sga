@@ -10,6 +10,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useBilling } from '../hooks/useBilling';
 import { cobrancasService } from '../services/cobrancas';
 import { contratosService } from '../services/contratos';
+import { locatariosService } from '../services/locatarios';
 import { Button } from '../components/ui/Button';
 import { KpiCard } from '../components/ui/KpiCard';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -57,8 +58,42 @@ const Cobrancas = () => {
   const [pendingBill, setPendingBill] = useState(null);
   const [checkingBill, setCheckingBill] = useState(false);
 
-  const handleMarcarPago = async (id) => {
-    try { await markAsPaid(id); } catch { toast.error('Erro ao dar baixa'); }
+  const [showCobrarModal, setShowCobrarModal] = useState(false);
+  const [contratosAtivos, setContratosAtivos] = useState([]);
+  const [selectedContrato, setSelectedContrato] = useState(null);
+  const [cobrandoContrato, setCobrandoContrato] = useState(false);
+
+  const [showBaixaModal, setShowBaixaModal] = useState(false);
+  const [baixaTarget, setBaixaTarget] = useState(null);
+  const [baixaLoading, setBaixaLoading] = useState(false);
+
+  const handleMarcarPago = (cobranca) => {
+    setBaixaTarget(cobranca);
+    setShowBaixaModal(true);
+  };
+
+  const handleConfirmarBaixa = async (notificar) => {
+    if (!baixaTarget) return;
+    setBaixaLoading(true);
+    try {
+      await markAsPaid(baixaTarget.id);
+      setShowBaixaModal(false);
+      if (notificar) {
+        const locatarioId = baixaTarget.contratos?.id_locatario;
+        if (locatarioId) {
+          const locData = await locatariosService.getById(locatarioId);
+          setSelectedLocatarioData(locData);
+          setIsMessageModalOpen(true);
+        } else {
+          toast.warning('Locatario nao encontrado para notificacao.');
+        }
+      }
+      setBaixaTarget(null);
+    } catch (err) {
+      toast.error('Erro ao dar baixa');
+    } finally {
+      setBaixaLoading(false);
+    }
   };
 
   const handleCancelar = async (id) => {
@@ -74,6 +109,37 @@ const Cobrancas = () => {
       toast.success("Faturamento processado!");
     } catch (error) { toast.error(error.message); }
     finally { setGenerating(false); }
+  };
+
+  const handleOpenCobrar = async () => {
+    setShowCobrarModal(true);
+    setSelectedContrato(null);
+    try {
+      const all = await contratosService.list(profile.id);
+      setContratosAtivos(all.filter(c => c.status === 'ativo'));
+    } catch { toast.error('Erro ao carregar contratos'); }
+  };
+
+  const handleCobrarContrato = async () => {
+    if (!selectedContrato) return;
+    setCobrandoContrato(true);
+    try {
+      const result = await cobrancasService.cobrarContrato(selectedContrato.id);
+      if (result.status === 'skipped_duplicate') {
+        toast.warning(result.msg || 'Ja existe cobranca para este periodo.');
+      } else if (result.status === 'error') {
+        toast.error(result.msg);
+      } else {
+        toast.success('Cobranca gerada com sucesso!');
+      }
+      setShowCobrarModal(false);
+      setSelectedContrato(null);
+      fetch();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setCobrandoContrato(false);
+    }
   };
 
   const handleSaveManual = async (e) => {
@@ -215,6 +281,7 @@ const Cobrancas = () => {
 
         <Button variant="secondary" icon={RefreshCcw} size="sm" onClick={handleExportCSV}>Exportar</Button>
         <Button variant="secondary" icon={Plus} size="sm" onClick={() => setShowManualModal(true)}>Lançamento</Button>
+        <Button variant="secondary" icon={CircleDollarSign} size="sm" onClick={handleOpenCobrar}>Cobrar</Button>
         <Button icon={RefreshCcw} size="sm" onClick={() => setShowConfirmBillingModal(true)} disabled={generating}>
           {generating ? 'Processando...' : 'Faturamento Diário'}
         </Button>
@@ -314,7 +381,7 @@ const Cobrancas = () => {
                                 <div className="flex items-center justify-end gap-1 opacity-20 group-hover/item:opacity-100 transition-opacity">
                                   {c.status === 'pendente' && (
                                     <>
-                                      <button onClick={() => handleMarcarPago(c.id)} className="p-1.5 text-emerald-500 hover:bg-emerald-500/10 rounded-lg" title="Dar Baixa"><CheckCircle size={14} /></button>
+                                      <button onClick={() => handleMarcarPago(c)} className="p-1.5 text-emerald-500 hover:bg-emerald-500/10 rounded-lg" title="Dar Baixa"><CheckCircle size={14} /></button>
                                       <button onClick={() => handleCancelar(c.id)} className="p-1.5 text-red-500 hover:bg-red-500/10 rounded-lg" title="Cancelar"><Trash2 size={14} /></button>
                                     </>
                                   )}
@@ -443,6 +510,29 @@ const Cobrancas = () => {
         </form>
       </Modal>
 
+      <Modal isOpen={showBaixaModal} onClose={() => { if (!baixaLoading) { setShowBaixaModal(false); setBaixaTarget(null); } }} title="Confirmar Baixa" size="max-w-sm">
+        <div className="p-4 space-y-4">
+          <p className="text-zinc-300 text-sm leading-relaxed">
+            Deseja apenas dar baixa nesta cobranca ou tambem notificar o locatario?
+          </p>
+          {baixaTarget && (
+            <div className="p-3 bg-zinc-950 border border-zinc-800 rounded-xl">
+              <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Cobranca</p>
+              <p className="text-white font-bold text-sm">{baixaTarget.contratos?.locatarios?.nome_completo || 'Avulso'}</p>
+              <p className="text-emerald-400 font-black">R$ {Number(baixaTarget.valor).toFixed(2).replace('.', ',')}</p>
+            </div>
+          )}
+          <div className="flex flex-col gap-3 pt-2">
+            <Button onClick={() => handleConfirmarBaixa(false)} disabled={baixaLoading} variant="secondary" className="w-full">
+              {baixaLoading ? 'Processando...' : 'Apenas Dar Baixa'}
+            </Button>
+            <Button onClick={() => handleConfirmarBaixa(true)} disabled={baixaLoading} className="w-full">
+              {baixaLoading ? 'Processando...' : 'Dar Baixa e Notificar'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
       <Modal isOpen={showConfirmBillingModal} onClose={() => setShowConfirmBillingModal(false)} title="Iniciar Faturamento Diário?" size="max-w-md">
         <div className="p-8 text-center space-y-6">
           <div className="mx-auto w-20 h-20 bg-indigo-500/10 rounded-full flex items-center justify-center text-indigo-500 animate-pulse">
@@ -456,6 +546,68 @@ const Cobrancas = () => {
             <Button variant="ghost" onClick={() => setShowConfirmBillingModal(false)} className="w-full">Cancelar</Button>
           </div>
         </div>
+      </Modal>
+
+      <Modal isOpen={showCobrarModal} onClose={() => { setShowCobrarModal(false); setSelectedContrato(null); }} title="Cobrar Contrato" size="max-w-lg">
+        <div className="space-y-5">
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Contrato Ativo</label>
+            <select
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-4 text-white text-sm outline-none focus:border-indigo-500"
+              value={selectedContrato?.id || ''}
+              onChange={e => {
+                const found = contratosAtivos.find(c => c.id === e.target.value);
+                setSelectedContrato(found || null);
+              }}
+            >
+              <option value="">Selecione o contrato...</option>
+              {contratosAtivos.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.locatarios?.nome_completo} — {c.veiculos?.placa} (R$ {Number(c.valor).toFixed(2)})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {selectedContrato && (
+            <div className="p-5 bg-zinc-950 border border-zinc-800 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Locatario</p>
+                  <p className="text-white font-bold">{selectedContrato.locatarios?.nome_completo}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Veiculo</p>
+                  <p className="text-indigo-400 font-mono font-bold">{selectedContrato.veiculos?.placa} — {selectedContrato.veiculos?.modelo}</p>
+                </div>
+              </div>
+              <div className="flex items-center justify-between border-t border-zinc-800/50 pt-3">
+                <div>
+                  <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Valor</p>
+                  <p className="text-emerald-400 font-black text-lg">R$ {Number(selectedContrato.valor).toFixed(2).replace('.', ',')}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Proximo Vencimento</p>
+                  <p className="text-amber-400 font-bold text-sm">{new Date(selectedContrato.proxima_cobranca).toLocaleDateString('pt-BR')}</p>
+                </div>
+              </div>
+              <div className="text-right border-t border-zinc-800/50 pt-3">
+                <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Status</p>
+                <StatusBadge status={selectedContrato.status}>{selectedContrato.status}</StatusBadge>
+              </div>
+            </div>
+          )}
+
+          {contratosAtivos.length === 0 && (
+            <p className="text-zinc-500 text-sm text-center py-4 italic">Nenhum contrato ativo encontrado.</p>
+          )}
+        </div>
+        <ModalFooter>
+          <Button variant="ghost" onClick={() => { setShowCobrarModal(false); setSelectedContrato(null); }}>Cancelar</Button>
+          <Button onClick={handleCobrarContrato} disabled={!selectedContrato || cobrandoContrato}>
+            {cobrandoContrato ? 'Gerando...' : 'Confirmar Cobranca'}
+          </Button>
+        </ModalFooter>
       </Modal>
 
       <MessageSelectorModal

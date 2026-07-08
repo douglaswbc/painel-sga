@@ -42,9 +42,9 @@ export function useContracts(userId) {
     await fetch();
   };
 
-  const toggleStatus = async (id, currentStatus) => {
-    const newStatus = currentStatus === 'ativo' ? 'pausado' : 'ativo';
-    await contratosService.toggleStatus(id, newStatus);
+  const toggleStatus = async (item) => {
+    const newStatus = item.status === 'ativo' ? 'pausado' : 'ativo';
+    await contratosService.toggleStatus(item.id, newStatus);
     toast.success(`Contrato ${newStatus === 'ativo' ? 'ativado' : 'pausado'}`);
     await fetch();
   };
