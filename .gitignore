@@ -16,6 +16,9 @@ dist-ssr/
 .env.production.local
 .env*.local
 
+#MCP's
+opencode.json
+
 # Supabase e Local Development
 .supabase/
 # Se você usa Edge Functions localmente, evite subir chaves de teste
