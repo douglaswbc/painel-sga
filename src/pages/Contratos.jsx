@@ -34,7 +34,7 @@ const defaultForm = {
 
 const Contratos = () => {
   const { profile } = useAuth();
-  const { contracts, locatarios, veiculos, loading, fetch, save: saveContract, toggleStatus, remove } = useContracts(profile?.id);
+  const { contracts, locatarios, veiculos, loading, fetch: fetchContratos, save: saveContract, toggleStatus, remove } = useContracts(profile?.id);
   const [showModal, setShowModal] = useState(false);
   const [editingContract, setEditingContract] = useState(null);
   const [formData, setFormData] = useState(defaultForm);

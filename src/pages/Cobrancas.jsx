@@ -33,7 +33,7 @@ const SummaryTile = ({ label, value, color, desc, isTotal = false }) => (
 
 const Cobrancas = () => {
   const { profile } = useAuth();
-  const { cobrancas, locatarios, loading, fetch, markAsPaid, cancel, runDailyBilling } = useBilling(profile?.id);
+  const { cobrancas, locatarios, loading, fetch: fetchCobrancas, markAsPaid, cancel, runDailyBilling } = useBilling(profile?.id);
   const [generating, setGenerating] = useState(false);
   const [showConfirmBillingModal, setShowConfirmBillingModal] = useState(false);
   const [showManualModal, setShowManualModal] = useState(false);
@@ -134,7 +134,7 @@ const Cobrancas = () => {
       }
       setShowCobrarModal(false);
       setSelectedContrato(null);
-      fetch();
+      fetchCobrancas();
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -178,7 +178,7 @@ const Cobrancas = () => {
         toast.success("Nova cobrança avulsa gerada!");
       }
       setShowManualModal(false);
-      fetch();
+      fetchCobrancas();
     } catch (err) { toast.error(err.message); }
   };
 
