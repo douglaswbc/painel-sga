@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { usuariosService } from '../services/usuarios';
 import { supabase } from '../services/supabase';
@@ -20,6 +20,7 @@ const Configuracoes = () => {
   const [displayStatus, setDisplayStatus] = useState('');
   const [newInstanceName, setNewInstanceName] = useState('');
   const [copiedField, setCopiedField] = useState(null);
+  const warmUpSentRef = useRef(false);
 
   const [formData, setFormData] = useState({
     nome_completo: '',
@@ -66,6 +67,7 @@ const Configuracoes = () => {
 
       if (error) throw error;
 
+      const prevState = connectionState;
       const state = data?.state || 'disconnected';
       setConnectionState(state);
       setDisplayStatus(data?.displayStatus || '');
@@ -73,13 +75,25 @@ const Configuracoes = () => {
       if (state === 'connected') {
         setQrCode(prev => ({ ...prev, visible: false }));
         if (showToast) toast.success("WhatsApp conectado!");
+
+        if (prevState !== 'connected' && !warmUpSentRef.current && data?.numberJid) {
+          warmUpSentRef.current = true;
+          const ownNumber = data.numberJid.split('@')[0];
+          supabase.functions.invoke('ryze-proxy', {
+            body: {
+              action: 'sendText',
+              instanceName: formData.ryze_instance,
+              payload: { number: ownNumber, message: '\uD83D\uDD12 *Sessão ativada com sucesso!*', delay: 3 }
+            }
+          }).catch(() => {});
+        }
       }
       return state;
     } catch (error) {
       setConnectionState('erro');
       console.error("Erro na RyzeAPI:", error);
     }
-  }, [formData]);
+  }, [formData, connectionState]);
 
   useEffect(() => {
     let interval;
