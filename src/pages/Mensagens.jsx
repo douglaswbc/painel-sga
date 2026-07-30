@@ -170,7 +170,7 @@ const Mensagens = () => {
       if (template.media_url) {
         const oldPath = template.media_url.split('/mensagens-midia/').pop();
         if (oldPath) {
-          await mensagensService.removeMedia(oldPath);
+          try { await mensagensService.removeMedia(oldPath); } catch {}
         }
       }
 
@@ -181,15 +181,29 @@ const Mensagens = () => {
       else if (file.type.startsWith('video/')) mediatype = 'video';
 
       const updated = [...templates];
-      const idx = templates.findIndex(t => t.id === template.id);
-      updated[idx] = {
-        ...updated[idx],
+      const idx = updated.findIndex(t => t.id === template.id);
+      if (idx === -1) throw new Error("Template não encontrado");
+
+      const mediaData = {
         media_url: publicUrl,
         media_type: mediatype,
         media_mimetype: file.type,
         media_filename: file.name
       };
+
+      updated[idx] = { ...updated[idx], ...mediaData };
       setTemplates(updated);
+
+      await mensagensService.upsertTemplate({
+        id: template.id,
+        id_usuario: profile.id,
+        ordem: template.ordem || 1,
+        titulo: template.titulo || '',
+        conteudo: template.conteudo || '',
+        tipo: template.tipo || activeTab,
+        ...mediaData
+      });
+
       toast.success("Mídia anexada com sucesso!");
     } catch (error) {
       toast.error("Erro no upload: " + error.message);
@@ -198,7 +212,7 @@ const Mensagens = () => {
     }
   };
 
-  const handleRemoveMedia = (template) => {
+  const handleRemoveMedia = async (template) => {
     const updated = [...templates];
     const idx = templates.findIndex(t => t.id === template.id);
     updated[idx] = {
@@ -212,11 +226,28 @@ const Mensagens = () => {
     if (template.media_url) {
       const path = template.media_url.split('/mensagens-midia/').pop();
       if (path) {
-        mensagensService.removeMedia(path);
+        mensagensService.removeMedia(path).catch(() => {});
       }
     }
 
     setTemplates(updated);
+
+    try {
+      await mensagensService.upsertTemplate({
+        id: template.id,
+        id_usuario: profile.id,
+        ordem: template.ordem || 1,
+        titulo: template.titulo || '',
+        conteudo: template.conteudo || '',
+        tipo: template.tipo || activeTab,
+        media_url: null,
+        media_type: null,
+        media_mimetype: null,
+        media_filename: null
+      });
+    } catch (e) {
+      toast.error("Erro ao remover mídia do banco");
+    }
   };
 
   const updateTemplateContent = (id, field, value) => {

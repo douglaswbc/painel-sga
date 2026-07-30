@@ -17,40 +17,40 @@ Deno.serve(async (req) => {
 
     try {
         const payload = await req.json()
-        console.log("=== WEBHOOK FECHADURA RECEBIDO ===")
-        
-        // A Evolution API pode enviar o dado como objeto simples ou dentro de um array
+        console.log("=== WEBHOOK FECHADURA RECEBIDO (RyzeAPI) ===")
+
         const data = Array.isArray(payload) ? payload[0] : payload
         const body = data.body || data
-        
-        // Extração robusta conforme o novo payload
-        const message = body.data?.message?.conversation || body.data?.content || ""
-        const remoteJid = body.data?.key?.remoteJid || body.sender || ""
-        const fromMe = body.data?.key?.fromMe || false
+
+        const messageContent = body.data?.message?.content || ""
+        const remoteJid = body.data?.chat?.jid || body.data?.sender?.jid || ""
+        const direction = body.data?.direction || "incoming"
+        const chatType = body.data?.chat?.type || "private"
         const rawSender = remoteJid.split('@')[0] || ""
-        const instanceName = body.instance || data.instance
-        
-        // Filtros de segurança: Ignora mensagens do próprio bot ou de grupos
-        if (fromMe || !remoteJid.includes('@s.whatsapp.net')) {
-            console.log("Mensagem ignorada: fromMe ou Grupo.", { fromMe, remoteJid })
+        const instanceName = body.instanceData?.instance || data.instanceData?.instance || ""
+
+        if (direction === 'outgoing' || direction !== 'incoming') {
+            console.log("Mensagem ignorada: outgoing ou direção não-incoming.", { direction })
             return new Response(JSON.stringify({ status: 'ignored' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
         }
 
-        if (!message || !rawSender || !instanceName) {
-            console.log("Payload incompleto. Ignorando.", { message: !!message, sender: !!rawSender, instance: !!instanceName })
+        if (chatType !== 'private' || remoteJid.includes('@g.us')) {
+            console.log("Mensagem ignorada: grupo ou não-privado.", { chatType, remoteJid })
             return new Response(JSON.stringify({ status: 'ignored' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
         }
 
-        // 1. Normalização de Número (Brasil 12 vs 13 dígitos)
-        // O banco sempre tem o 9, o WhatsApp pode omitir.
+        if (!messageContent || !rawSender || !instanceName) {
+            console.log("Payload incompleto. Ignorando.", { message: !!messageContent, sender: !!rawSender, instance: !!instanceName })
+            return new Response(JSON.stringify({ status: 'ignored' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+        }
+
         const senderVariants = normalizePhoneNumber(rawSender)
         console.log(`Mensagem de: ${rawSender} (Variantes: ${senderVariants.join(", ")}) na instância: ${instanceName}`)
 
-        // 2. Identificar o Dono (Locador) pela Instância
         const { data: usuario, error: userError } = await supabase
             .from('usuarios')
-            .select('id, evolution_url, evolution_apikey, evolution_instance')
-            .eq('evolution_instance', instanceName)
+            .select('id, ryze_instance')
+            .eq('ryze_instance', instanceName)
             .single()
 
         if (userError || !usuario) {
@@ -58,13 +58,14 @@ Deno.serve(async (req) => {
             return new Response('Locador não encontrado', { status: 404 })
         }
 
-        const cleanMsg = message.trim().toLowerCase()
+        const { data: ryzeToken } = await supabase.rpc('get_user_ryze_token', { p_user_id: usuario.id });
+        usuario.ryze_token = ryzeToken || '';
 
-        // 3. Fluxo: SOLICITAÇÃO DE ABERTURA
+        const cleanMsg = messageContent.trim().toLowerCase()
+
         if (cleanMsg.startsWith("abrir")) {
             const identificador = cleanMsg.replace("abrir", "").trim()
             
-            // Validar se a fechadura existe (escopado ao locador)
             const { data: fechadura, error: fError } = await supabase
                 .from('fechaduras')
                 .select('id, nome')
@@ -78,7 +79,6 @@ Deno.serve(async (req) => {
                 return new Response('ok')
             }
 
-            // Validar se o remetente é um locatário ativo (usando variantes do número)
             const { data: locatario, error: lError } = await supabase
                 .from('locatarios')
                 .select('id, nome_completo, ativo')
@@ -94,15 +94,13 @@ Deno.serve(async (req) => {
                 return new Response('ok')
             }
 
-            // Gerar OTP
             const otp = Math.floor(100000 + Math.random() * 900000).toString()
             const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString() 
 
-            // Limpa verificações antigas deste número (qualquer variante)
             await supabase.from('fechadura_verificacoes').delete().in('whatsapp', senderVariants)
             
             await supabase.from('fechadura_verificacoes').insert({
-                whatsapp: rawSender, // Salvamos o remetente original para responder de volta
+                whatsapp: rawSender,
                 id_fechadura: fechadura.id,
                 codigo_otp: otp,
                 expires_at: expiresAt
@@ -122,9 +120,7 @@ Deno.serve(async (req) => {
             return new Response('ok')
         }
 
-        // 4. Fluxo: VALIDAÇÃO DE OTP
         if (/^\d{6}$/.test(cleanMsg)) {
-            // Busca verificação pendente (o remetente deve coincidir)
             const { data: verificacao, error: vError } = await supabase
                 .from('fechadura_verificacoes')
                 .select('*, fechaduras(nome, id_usuario)')
@@ -133,13 +129,12 @@ Deno.serve(async (req) => {
                 .single()
 
             if (vError || !verificacao) {
-                return new Response('ok') // Sem verificação pendente para este número exato
+                return new Response('ok')
             }
 
             if (verificacao.codigo_otp === cleanMsg) {
-                // Sucesso! Gerar comando de abertura
                 const token = Math.random().toString(36).substring(2, 10).toUpperCase()
-                const expiresAt = new Date(Date.now() + 60 * 1000).toISOString() // 1 minuto
+                const expiresAt = new Date(Date.now() + 60 * 1000).toISOString()
 
                 await supabase.from('fechadura_comandos').insert({
                     id_fechadura: verificacao.id_fechadura,
@@ -173,21 +168,17 @@ Deno.serve(async (req) => {
     }
 })
 
-// Função para lidar com números brasileiros de 12 e 13 dígitos
 function normalizePhoneNumber(phone: string): string[] {
     const clean = phone.replace(/\D/g, "")
     const variants = [clean]
 
-    // Se é um número brasileiro (55)
     if (clean.startsWith("55") && clean.length === 12) {
-        // Ex: 559184463240 (12) -> Adiciona o 9: 5591984463240 (13)
         const ddd = clean.substring(2, 4)
         const number = clean.substring(4)
         variants.push(`55${ddd}9${number}`)
     } else if (clean.startsWith("55") && clean.length === 13) {
-        // Ex: 5591984463240 (13) -> Versão sem o 9: 559184463240 (12)
         const ddd = clean.substring(2, 4)
-        const number = clean.substring(5) // Pula o 9
+        const number = clean.substring(5)
         variants.push(`55${ddd}${number}`)
     }
 
@@ -196,13 +187,16 @@ function normalizePhoneNumber(phone: string): string[] {
 
 async function sendWhatsApp(usuario: any, phone: string, text: string) {
     try {
-        const response = await fetch(`${usuario.evolution_url}/message/sendText/${usuario.evolution_instance}`, {
+        const RYZE_URL = Deno.env.get('RYZE_API_URL') || 'https://ryzeapi.cloud/api'
+        const hasLink = /https?:\/\/\S+/i.test(text);
+        const response = await fetch(`${RYZE_URL}/message/text/${usuario.ryze_instance}`, {
             method: 'POST',
-            headers: { 'apikey': usuario.evolution_apikey, 'Content-Type': 'application/json' },
+            headers: { 'token': usuario.ryze_token, 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 number: phone,
-                text: text,
-                delay: 1000
+                message: text,
+                delay: 3,
+                linkPreview: hasLink
             })
         })
         if (!response.ok) {

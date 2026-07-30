@@ -5,6 +5,8 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+const RYZE_URL = () => Deno.env.get('RYZE_API_URL') || 'https://ryzeapi.cloud/api'
+
 Deno.serve(async (req) => {
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders })
@@ -20,7 +22,6 @@ Deno.serve(async (req) => {
 
         const agora = new Date()
 
-        // Data de hoje no fuso de Brasília (yyyy-mm-dd)
         const brasiliaTime = new Intl.DateTimeFormat('pt-BR', {
             timeZone: 'America/Sao_Paulo',
             year: 'numeric',
@@ -31,11 +32,6 @@ Deno.serve(async (req) => {
         const [dia, mes, ano] = brasiliaTime.split('/')
         const hoje = `${ano}-${mes}-${dia}`
 
-        // Busca cobranças pendentes do dia.
-        // Fix 1 (Trava de horário): `.lte('created_at', agora)` garante que só
-        // processamos cobranças cujo created_at já passou — como o faturamento agora
-        // cria a cobrança exatamente no horário do contrato, isso impede qualquer
-        // lembrete ser enviado antes do horário definido.
         const { data: cobrancas, error: fetchError } = await supabase
             .from('cobrancas')
             .select(`
@@ -59,17 +55,14 @@ Deno.serve(async (req) => {
                     usuarios (
                         id,
                         nome_completo,
-                        access_token_mercado_pago,
-                        evolution_url,
-                        evolution_instance,
-                        evolution_apikey
+                        ryze_instance
                     )
                 )
             `)
             .eq('status', 'pendente')
             .eq('data_vencimento', hoje)
-            .lte('created_at', agora.toISOString())  // Fix 1: só cobra após o horário do contrato
-            .eq('contratos.status', 'ativo')          // Ignora cobranças de contratos inativos/encerrados
+            .lte('created_at', agora.toISOString())
+            .eq('contratos.status', 'ativo')
 
         if (fetchError) throw fetchError
 
@@ -87,7 +80,6 @@ Deno.serve(async (req) => {
             let locatarioNome = "Desconhecido"
             let locadorNome = "Desconhecido"
             try {
-                // Ajuste defensivo: garante que pegamos objetos mesmo se o Supabase retornar arrays
                 const contrato = Array.isArray(cobranca.contratos) ? cobranca.contratos[0] : cobranca.contratos
                 if (!contrato) {
                     console.error(`Contrato não encontrado para cobrança ${cobranca.id}`)
@@ -102,6 +94,11 @@ Deno.serve(async (req) => {
                     continue
                 }
 
+                const { data: mpToken } = await supabase.rpc('get_user_mp_token', { p_user_id: usuario.id });
+                usuario.access_token_mercado_pago = mpToken || '';
+                const { data: ryzeToken } = await supabase.rpc('get_user_ryze_token', { p_user_id: usuario.id });
+                usuario.ryze_token = ryzeToken || '';
+
                 locatarioNome = locatario.nome_completo
                 locadorNome = usuario.nome_completo || usuario.id
 
@@ -111,13 +108,11 @@ Deno.serve(async (req) => {
 
                 console.log(`Analisando cobrança ${cobranca.id} | Locador: ${locadorNome} | Locatário: ${locatarioNome} | Tentativa: ${proximaTentativa}`)
 
-                // Fix 1 (camada extra): Nunca processar cobrança criada no futuro
                 if (new Date(cobranca.created_at) > agora) {
                     console.log(`Cobrança ${cobranca.id} ainda não chegou seu horário.`)
                     continue
                 }
 
-                // 1. Pega total de templates deste locador
                 const { count: totalTemplates, error: countError } = await supabase
                     .from('mensagens_template')
                     .select('*', { count: 'exact', head: true })
@@ -129,13 +124,11 @@ Deno.serve(async (req) => {
                     continue
                 }
 
-                // Trava a) Já enviou todos os lembretes da régua?
                 if (proximaTentativa > totalTemplates) {
                     console.log(`Fim da régua para ${cobranca.id} (${locatarioNome}) — todos os ${totalTemplates} templates já enviados.`)
                     continue
                 }
 
-                // Trava b) Anti-Cron: não enviar 2x em menos de 15 min (protege contra runs sobrepostos)
                 const tempoUltimoEnvio = cobranca.ultimo_lembrete_at
                     ? agora.getTime() - new Date(cobranca.ultimo_lembrete_at).getTime()
                     : Infinity
@@ -145,8 +138,6 @@ Deno.serve(async (req) => {
                     continue
                 }
 
-
-                // Verificação no Mercado Pago antes de incomodar o cliente
                 const mpResponse = await fetch(
                     `https://api.mercadopago.com/v1/payments/${cobranca.mercado_pago_id}`,
                     { headers: { 'Authorization': `Bearer ${usuario.access_token_mercado_pago}` } }
@@ -165,7 +156,6 @@ Deno.serve(async (req) => {
                     }
                 }
 
-                // Busca template da vez (por ordem)
                 const { data: template } = await supabase
                     .from('mensagens_template')
                     .select('conteudo, media_url, media_type, media_mimetype, media_filename')
@@ -179,7 +169,6 @@ Deno.serve(async (req) => {
                     continue
                 }
 
-                // Montagem da mensagem
                 let mensagemFinal = `Olá, ${primeiroNome}! 🚗\n\n${template.conteudo}`
 
                 if (cobranca.payment_link) {
@@ -187,39 +176,36 @@ Deno.serve(async (req) => {
                     mensagemFinal += `\n*LINK PIX:* ${cobranca.payment_link}`
                 }
 
-                // Envio via Evolution API
                 const isMedia = !!template.media_url
-                const endpoint = isMedia ? 'sendMedia' : 'sendText'
+                const endpoint = isMedia ? 'media' : 'text'
                 const payload = isMedia ? {
                     number: whatsappLimpo,
-                    mediatype: template.media_type,
-                    mimetype: template.media_mimetype,
-                    caption: mensagemFinal,
-                    media: template.media_url,
+                    mediaType: template.media_type,
+                    mediaUrl: template.media_url,
+                    message: mensagemFinal,
                     fileName: template.media_filename,
-                    delay: 1200,
+                    delay: 3,
                 } : {
                     number: whatsappLimpo,
-                    text: mensagemFinal,
-                    delay: 1200,
+                    message: mensagemFinal,
+                    delay: 3,
+                    linkPreview: /https?:\/\/\S+/i.test(mensagemFinal)
                 }
 
-                const evoResponse = await fetch(
-                    `${usuario.evolution_url}/message/${endpoint}/${usuario.evolution_instance}`,
+                const ryzeResponse = await fetch(
+                    `${RYZE_URL()}/message/${endpoint}/${usuario.ryze_instance}`,
                     {
                         method: 'POST',
-                        headers: { 'apikey': usuario.evolution_apikey, 'Content-Type': 'application/json' },
+                        headers: { 'token': usuario.ryze_token, 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload),
                     }
                 )
 
-                // Fix 5: incluir status HTTP no erro do Evolution
-                if (!evoResponse.ok) {
-                    const evoBody = await evoResponse.text().catch(() => '')
-                    throw new Error(`Falha no envio Evolution [${evoResponse.status}]: ${evoBody}`)
+                if (!ryzeResponse.ok) {
+                    const ryzeBody = await ryzeResponse.text().catch(() => '')
+                    throw new Error(`Falha no envio RyzeAPI [${ryzeResponse.status}]: ${ryzeBody}`)
                 }
 
-                // Fix 3: capturar erro do update de tentativas
                 const { error: updateError } = await supabase
                     .from('cobrancas')
                     .update({
@@ -230,7 +216,6 @@ Deno.serve(async (req) => {
 
                 if (updateError) {
                     console.error(`Erro ao atualizar tentativas da cobrança ${cobranca.id} (${locatarioNome}): ${updateError.message}`)
-                    // Não lança — o envio já ocorreu; log é suficiente
                 }
 
                 console.log(`Cobrança ${cobranca.id} | Locador: ${locadorNome} | Lembrete ${proximaTentativa}/${totalTemplates} enviado para ${locatarioNome} (${whatsappLimpo}).`)

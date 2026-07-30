@@ -13,7 +13,7 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
     role: 'locatario',
     ativo: true,
     password: '',
-    instance_base: '' // Nome base para a instância
+    instance_base: ''
   });
 
   useEffect(() => {
@@ -21,7 +21,7 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
       setFormData({
         ...userToEdit,
         password: '',
-        instance_base: userToEdit.evolution_instance || ''
+        instance_base: userToEdit.ryze_instance || ''
       });
     } else {
       setFormData({ 
@@ -36,7 +36,6 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
     }
   }, [userToEdit, isOpen]);
 
-  // Função para gerar sufixo aleatório de 8 caracteres
   const generateRandomSuffix = () => Math.random().toString(36).substring(2, 10);
 
   const handleWhatsAppBlur = () => {
@@ -50,7 +49,6 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
 
     const cleanWhatsApp = formatWhatsAppToAPI(formData.whatsapp);
     
-    // Preparar o nome final da instância se for locador
     let finalInstanceName = null;
     if (formData.role === 'locador' && formData.instance_base) {
       const cleanBase = formData.instance_base.toLowerCase().replace(/\s+/g, '_');
@@ -59,7 +57,6 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
 
     try {
       if (userToEdit?.id) {
-        // EDIÇÃO
         const { error: err } = await supabase
           .from('usuarios')
           .update({
@@ -73,7 +70,6 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
         if (err) throw err;
         toast.success("Perfil atualizado!");
       } else {
-        // CRIAÇÃO VIA EDGE FUNCTION
         if (formData.password.length < 6) {
           throw new Error("A senha deve ter pelo menos 6 caracteres.");
         }
@@ -82,7 +78,7 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
           body: { 
             ...formData,
             whatsapp: cleanWhatsApp,
-            instanceName: finalInstanceName // Nome gerado com sufixo
+            instanceName: finalInstanceName
           }
         });
 
@@ -120,7 +116,6 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
-          {/* Nome Completo */}
           <div>
             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nome Completo</label>
             <input
@@ -132,7 +127,6 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* E-mail */}
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase mb-1">E-mail</label>
               <input
@@ -144,7 +138,6 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
                 onChange={e => setFormData({...formData, email: e.target.value})}
               />
             </div>
-            {/* WhatsApp */}
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
                 <Smartphone size={12} /> WhatsApp
@@ -159,7 +152,6 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
             </div>
           </div>
 
-          {/* Senha (Apenas na Criação) */}
           {!userToEdit && (
             <div className="bg-indigo-500/5 p-3 rounded-lg border border-indigo-500/10">
               <label className="block text-xs font-bold text-indigo-400 uppercase mb-1 flex items-center gap-1">
@@ -175,7 +167,6 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
             </div>
           )}
 
-          {/* Tipo de Usuário */}
           <div>
             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tipo de Usuário</label>
             <select
@@ -189,11 +180,10 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
             </select>
           </div>
 
-          {/* Campo Nome da Instância (Apenas para Locador e na Criação) */}
           {formData.role === 'locador' && !userToEdit && (
             <div className="animate-in slide-in-from-top-2 duration-300">
               <label className="block text-xs font-bold text-emerald-500 uppercase mb-1 flex items-center gap-1">
-                <Zap size={12} /> Identificador da Instância
+                <Zap size={12} /> Identificador da Instância (RyzeAPI)
               </label>
               <div className="flex items-center gap-2 bg-input border border-emerald-500/20 rounded-lg px-4 py-2">
                 <input
@@ -209,7 +199,6 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
             </div>
           )}
 
-          {/* Ativo */}
           <div className="flex items-center gap-2 pt-2">
             <input
               type="checkbox"
@@ -221,7 +210,6 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
             <label htmlFor="user-active" className="text-sm text-slate-300 font-medium cursor-pointer">Conta Ativa</label>
           </div>
 
-          {/* Botões */}
           <div className="flex justify-end gap-3 mt-8">
             <button type="button" onClick={onClose} className="px-4 py-2 text-slate-400 hover:text-white">Cancelar</button>
             <button

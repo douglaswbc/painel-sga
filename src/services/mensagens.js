@@ -37,6 +37,13 @@ export const mensagensService = {
     if (error) throw error;
   },
 
+  upsertTemplate: async (template) => {
+    const { error } = await supabase
+      .from('mensagens_template')
+      .upsert(template);
+    if (error) throw error;
+  },
+
   removeTemplate: async (id) => {
     const { error } = await supabase
       .from('mensagens_template')

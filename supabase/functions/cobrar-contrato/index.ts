@@ -100,7 +100,7 @@ Deno.serve(async (req) => {
             .from('contratos')
             .select(`
                 id, id_usuario, valor, recorrencia, proxima_cobranca, ocorrencias_realizadas,
-                usuarios!inner ( access_token_mercado_pago ),
+                usuarios!inner ( id ),
                 locatarios!inner ( nome_completo, email, cpf )
             `)
             .eq('id', contratoId)
@@ -117,6 +117,8 @@ Deno.serve(async (req) => {
         }
 
         const contrato = contratos[0]
+
+        const { data: mpToken } = await supabase.rpc('get_user_mp_token', { p_user_id: contrato.usuarios.id });
 
         let config = {
             frequencia: 'monthly',
@@ -174,7 +176,7 @@ Deno.serve(async (req) => {
         const mpResponse = await fetch('https://api.mercadopago.com/v1/payments', {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${contrato.usuarios.access_token_mercado_pago}`,
+                'Authorization': `Bearer ${mpToken}`,
                 'X-Idempotency-Key': crypto.randomUUID(),
                 'Content-Type': 'application/json',
             },

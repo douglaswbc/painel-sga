@@ -52,32 +52,32 @@ const MessageSelectorModal = ({ isOpen, onClose, locatario, usuario }) => {
       setSending(true);
       const finalMessage = getPreviewMessage(selectedTemplate.conteudo);
       const isMedia = !!selectedTemplate.media_url;
-      const endpoint = isMedia ? 'sendMedia' : 'sendText';
+      const action = isMedia ? 'sendMedia' : 'sendText';
       
       const payload = isMedia ? {
         number: locatario.whatsapp.replace(/\D/g, ''),
-        mediatype: selectedTemplate.media_type,
-        mimetype: selectedTemplate.media_mimetype,
-        caption: finalMessage,
-        media: selectedTemplate.media_url,
-        fileName: selectedTemplate.media_filename,
-        delay: 1200
+        mediaType: selectedTemplate.media_type,
+        mediaUrl: selectedTemplate.media_url,
+        message: finalMessage,
+        fileName: selectedTemplate.media_filename || '',
+        delay: 3
       } : {
         number: locatario.whatsapp.replace(/\D/g, ''),
-        text: finalMessage,
-        delay: 1200
+        message: finalMessage,
+        delay: 3,
+        linkPreview: /https?:\/\/\S+/i.test(finalMessage)
       };
 
-      const response = await fetch(`${usuario.evolution_url}/message/${endpoint}/${usuario.evolution_instance}`, {
-        method: 'POST',
-        headers: {
-          'apikey': usuario.evolution_apikey,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
+      const { data, error } = await supabase.functions.invoke('ryze-proxy', {
+        body: {
+          action,
+          instanceName: usuario.ryze_instance,
+          payload
+        }
       });
 
-      if (!response.ok) throw new Error("Erro no servidor de mensagens");
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.data?.message || "Erro no servidor de mensagens");
 
       toast.success("Mensagem enviada com sucesso!");
       onClose();
@@ -98,7 +98,6 @@ const MessageSelectorModal = ({ isOpen, onClose, locatario, usuario }) => {
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm animate-in fade-in duration-300">
       <div className="bg-zinc-900 border border-zinc-800 rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         
-        {/* Header */}
         <div className="p-6 border-b border-zinc-800 flex items-center justify-between bg-zinc-900">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-indigo-500/10 rounded-xl text-indigo-500">
@@ -114,10 +113,8 @@ const MessageSelectorModal = ({ isOpen, onClose, locatario, usuario }) => {
           </button>
         </div>
 
-        {/* Content */}
         <div className="p-6 overflow-y-auto flex-1 space-y-6">
           
-          {/* Search */}
           <div className="relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-600" size={16} />
             <input 
@@ -129,7 +126,6 @@ const MessageSelectorModal = ({ isOpen, onClose, locatario, usuario }) => {
             />
           </div>
 
-          {/* List */}
           <div className="space-y-3">
             <h4 className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.2em] px-1">Selecione um Modelo</h4>
             
@@ -201,7 +197,6 @@ const MessageSelectorModal = ({ isOpen, onClose, locatario, usuario }) => {
           </div>
         </div>
 
-        {/* Footer */}
         <div className="p-6 border-t border-zinc-800 bg-zinc-900/50">
           <div className="flex gap-4">
              <button 

@@ -12,9 +12,8 @@ CREATE TABLE public.usuarios (
   empresa_nome text,
   ativo boolean NOT NULL DEFAULT true,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
-  evolution_instance text,
-  evolution_apikey text,
-  evolution_url text,
+  ryze_instance text,
+  ryze_token text,
   access_token_mercado_pago text,
   mp_notification_url text DEFAULT 'https://stenyo-n8n.1vjhve.easypanel.host/webhook/mercado-pago-webhook'::text,
   CONSTRAINT usuarios_pkey PRIMARY KEY (id)
@@ -120,6 +119,7 @@ CREATE TABLE public.agendamentos_mensagens (
   id_template uuid NOT NULL,
   id_locatario uuid NOT NULL,
   id_usuario uuid NOT NULL,
+  id_contrato uuid,
   frequencia text NOT NULL CHECK (frequencia IN ('diario', 'semanal', 'quinzenal', 'mensal', 'personalizado')),
   frequencia_dias integer,
   proximo_envio date NOT NULL,
@@ -130,7 +130,8 @@ CREATE TABLE public.agendamentos_mensagens (
   CONSTRAINT agendamentos_mensagens_pkey PRIMARY KEY (id),
   CONSTRAINT agendamentos_mensagens_template_fkey FOREIGN KEY (id_template) REFERENCES public.mensagens_template(id) ON DELETE CASCADE,
   CONSTRAINT agendamentos_mensagens_locatario_fkey FOREIGN KEY (id_locatario) REFERENCES public.locatarios(id) ON DELETE CASCADE,
-  CONSTRAINT agendamentos_mensagens_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id) ON DELETE CASCADE
+  CONSTRAINT agendamentos_mensagens_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id) ON DELETE CASCADE,
+  CONSTRAINT fk_agendamento_contrato FOREIGN KEY (id_contrato) REFERENCES public.contratos(id) ON DELETE CASCADE
 );
 
 -- Tabela de Candidatos (Fluxo de Reserva)

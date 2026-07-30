@@ -9,7 +9,7 @@ Um sistema completo e moderno para gestão de frotas, contratos de aluguel e cob
 - **Frontend**: [React 19](https://react.dev/) + [Vite](https://vitejs.dev/)
 - **Estilização**: Tailwind CSS (Design Premium / Glassmorphism)
 - **Backend / DB**: [Supabase](https://supabase.com/) (PostgreSQL, Edge Functions, Auth, Storage)
-- **Mensagens**: [Evolution API](https://evolution-api.com/) (WhatsApp Business API)
+- **Mensagens**: [RyzeAPI](https://ryzeapi.cloud/) (WhatsApp Business API)
 - **Pagamentos**: [Mercado Pago](https://www.mercadopago.com.br/) (PIX Automático)
 - **Ícones**: [Lucide React](https://lucide.dev/)
 
@@ -39,7 +39,7 @@ Um sistema completo e moderno para gestão de frotas, contratos de aluguel e cob
 ### Pré-requisitos
 - Node.js (v18+)
 - Conta no Supabase
-- Instância da Evolution API
+- Conta e instância na RyzeAPI
 
 ### Passo a Passo
 1. **Clonar o repositório**

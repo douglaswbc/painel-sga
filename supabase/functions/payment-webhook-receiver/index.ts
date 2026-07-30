@@ -1,5 +1,4 @@
 
-//Recommended: OFF with JWT and custom auth logic in your function code.
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -8,13 +7,14 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+const RYZE_URL = () => Deno.env.get('RYZE_API_URL') || 'https://ryzeapi.cloud/api'
+
 serve(async (req) => {
     if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
     try {
         const payload = await req.json();
 
-        // O Mercado Pago envia notificações de vários tipos, filtramos apenas pagamentos
         if (payload.action === 'payment.updated' || payload.type === 'payment') {
             const paymentId = payload.data?.id || payload.resource?.split('/').pop();
 
@@ -23,15 +23,12 @@ serve(async (req) => {
                 Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
             );
 
-            // --- PASSO 1: LOCALIZAR O DONO DO PAGAMENTO ---
-            // Procuramos primeiro em Cobranças (Aluguéis)
             let { data: cobranca } = await supabaseAdmin
                 .from('cobrancas')
                 .select('*, contratos(usuarios(*), locatarios(*))')
                 .eq('mercado_pago_id', paymentId.toString())
                 .single();
 
-            // Se não achou em cobranças, procuramos em Candidatos (Reservas)
             let { data: candidato } = !cobranca ? await supabaseAdmin
                 .from('candidatos')
                 .select('*, usuarios(*)')
@@ -42,13 +39,12 @@ serve(async (req) => {
                 return new Response('Pagamento não localizado no sistema', { status: 404 });
             }
 
-            // Identificamos o Locador (Dono) e suas credenciais
             const locador = cobranca ? cobranca.contratos.usuarios : candidato.usuarios;
-            const accessToken = locador.access_token_mercado_pago;
+            const accessTokenData = await supabaseAdmin.rpc('get_user_mp_token', { p_user_id: locador.id });
+            const accessToken = (accessTokenData) || locador.access_token_mercado_pago || '';
 
             if (!accessToken) throw new Error("Locador sem Access Token configurado.");
 
-            // --- PASSO 2: VALIDAR STATUS NO MERCADO PAGO ---
             const mpResponse = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
                 headers: { 'Authorization': `Bearer ${accessToken}` }
             });
@@ -56,18 +52,16 @@ serve(async (req) => {
 
             if (mpPayment.status === 'approved') {
 
-                // --- CENÁRIO A: É UMA COBRANÇA DE ALUGUEL ---
                 if (cobranca && cobranca.status !== 'pago') {
                     await supabaseAdmin.from('cobrancas').update({
                         status: 'pago',
                         data_pagamento: new Date().toISOString()
                     }).eq('id', cobranca.id);
 
-                    await sendWhatsApp(locador, cobranca.contratos.locatarios.whatsapp,
+                    await sendWhatsApp(supabaseAdmin, locador, cobranca.contratos.locatarios.whatsapp,
                         `✅ Pagamento Confirmado!\nRecebemos o valor de R$ ${cobranca.valor} referente ao seu aluguel. Obrigado!`);
                 }
 
-                // --- CENÁRIO B: É UMA TAXA DE RESERVA (CANDIDATO) ---
                 if (candidato && candidato.status !== 'Vaga Reservada') {
                     await supabaseAdmin.from('candidatos').update({
                         status: 'Vaga Reservada',
@@ -75,10 +69,8 @@ serve(async (req) => {
                         reserva_confirmada_em: new Date().toISOString()
                     }).eq('id', candidato.id);
 
-                    await sendWhatsApp(locador, candidato.telefone,
+                    await sendWhatsApp(supabaseAdmin, locador, candidato.telefone,
                         `🚗⚡ Reserva Confirmada!\nOlá ${candidato.nome}, sua vaga está garantida. Em breve entraremos em contato.`);
-
-                    // Aqui você dispararia a lógica de Score de Crédito que mencionou
                 }
             }
         }
@@ -93,14 +85,19 @@ serve(async (req) => {
     }
 });
 
-// Função auxiliar para enviar WhatsApp usando a instância do Locador específico
-async function sendWhatsApp(locador, numero, texto) {
-    const { evolution_url, evolution_apikey, evolution_instance } = locador;
-    if (!evolution_url || !evolution_instance) return;
+async function sendWhatsApp(supabaseAdmin: any, locador: any, numero: string, texto: string) {
+    const ryze_instance = locador.ryze_instance || '';
+    if (!ryze_instance) return;
 
-    await fetch(`${evolution_url}/message/sendText/${evolution_instance}`, {
+    const { data: ryzeToken } = await supabaseAdmin.rpc('get_user_ryze_token', { p_user_id: locador.id });
+    const token = ryzeToken || '';
+
+    if (!token) return;
+
+    const hasLink = /https?:\/\/\S+/i.test(texto);
+    await fetch(`${RYZE_URL()}/message/text/${ryze_instance}`, {
         method: 'POST',
-        headers: { 'apikey': evolution_apikey, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ number: numero, text: texto })
+        headers: { 'token': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ number: numero, message: texto, delay: 3, linkPreview: hasLink })
     });
 }

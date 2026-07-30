@@ -3,7 +3,7 @@ import { supabase } from './supabase';
 export const locatariosService = {
   list: async (userId) => {
     const { data, error } = await supabase
-      .from('locatarios')
+      .from('locatarios_safe')
       .select('*')
       .eq('id_usuario', userId)
       .order('nome_completo');
@@ -13,7 +13,7 @@ export const locatariosService = {
 
   listWithAgendamentos: async (userId) => {
     const { data, error } = await supabase
-      .from('locatarios')
+      .from('locatarios_safe')
       .select('*, agendamentos_mensagens (id, ativo)')
       .eq('id_usuario', userId)
       .order('nome_completo');
@@ -23,7 +23,7 @@ export const locatariosService = {
 
   listSimple: async (userId, ativo = true) => {
     const { data, error } = await supabase
-      .from('locatarios')
+      .from('locatarios_safe')
       .select('id, nome_completo')
       .eq('id_usuario', userId)
       .eq('ativo', ativo);
@@ -33,7 +33,7 @@ export const locatariosService = {
 
   listSimpleWithWhatsApp: async (userId) => {
     const { data, error } = await supabase
-      .from('locatarios')
+      .from('locatarios_safe')
       .select('id, nome_completo, whatsapp')
       .eq('id_usuario', userId)
       .eq('ativo', true)
@@ -44,7 +44,7 @@ export const locatariosService = {
 
   getById: async (id) => {
     const { data, error } = await supabase
-      .from('locatarios')
+      .from('locatarios_safe')
       .select('*')
       .eq('id', id)
       .single();

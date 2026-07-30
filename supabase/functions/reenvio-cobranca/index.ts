@@ -6,6 +6,8 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type'
 };
 
+const RYZE_URL = () => Deno.env.get('RYZE_API_URL') || 'https://ryzeapi.cloud/api'
+
 serve(async (req) => {
     if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
@@ -18,12 +20,11 @@ serve(async (req) => {
             Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
         );
 
-        // 1. Busca dados da cobrança e do locador
         const { data: cobranca, error: queryError } = await supabaseAdmin.from('cobrancas').select(`
         *,
         contratos (
           locatarios ( nome_completo, whatsapp, email, documento, cpf ),
-          usuarios ( id, access_token_mercado_pago, evolution_url, evolution_instance, evolution_apikey )
+          usuarios ( id, ryze_instance )
         )
       `).eq('id', cobrancaId).single();
 
@@ -31,12 +32,16 @@ serve(async (req) => {
 
         const locatario = cobranca.contratos.locatarios;
         const usuario = cobranca.contratos.usuarios;
-        const userMercadoPagoToken = usuario.access_token_mercado_pago;
+
+        const { data: mpToken } = await supabaseAdmin.rpc('get_user_mp_token', { p_user_id: usuario.id });
+        const userMercadoPagoToken = mpToken || '';
+
+        const { data: ryzeToken } = await supabaseAdmin.rpc('get_user_ryze_token', { p_user_id: usuario.id });
+        usuario.ryze_token = ryzeToken || '';
 
         let linkDePagamento = cobranca.payment_link;
         let mercadoPagoPaymentId = cobranca.mercado_pago_id;
 
-        // --- LÓGICA DE VERIFICAÇÃO EXISTENTE ---
         if (mercadoPagoPaymentId && linkDePagamento) {
             const checkMP = await fetch(`https://api.mercadopago.com/v1/payments/${mercadoPagoPaymentId}`, {
                 headers: { 'Authorization': `Bearer ${userMercadoPagoToken}` }
@@ -50,17 +55,14 @@ serve(async (req) => {
                     await supabaseAdmin.from('cobrancas').update({ status: 'pago' }).eq('id', cobrancaId);
                     return new Response(JSON.stringify({ success: true, message: "Esta cobrança já está paga." }));
                 } else {
-                    linkDePagamento = null; // Expirado/Cancelado, gera novo abaixo
+                    linkDePagamento = null;
                 }
             }
         }
 
-        // --- CRIAÇÃO DE NOVA COBRANÇA COM CPF/CNPJ DINÂMICO ---
         if (!linkDePagamento) {
             const NOTIFICATION_URL = Deno.env.get('MP_WEBHOOK_URL');
             const [firstName, ...lastNameParts] = locatario.nome_completo.split(' ');
-
-            // Limpeza e Identificação do Documento
             const docLimpo = (locatario.cpf || "").replace(/\D/g, '');
             const tipoDoc = docLimpo.length > 11 ? "CNPJ" : "CPF";
 
@@ -80,8 +82,8 @@ serve(async (req) => {
                         first_name: firstName,
                         last_name: lastNameParts.join(' ') || firstName,
                         identification: {
-                            type: tipoDoc,     // CPF ou CNPJ baseado no tamanho
-                            number: docLimpo   // Apenas números
+                            type: tipoDoc,
+                            number: docLimpo
                         }
                     }
                 })
@@ -102,7 +104,6 @@ serve(async (req) => {
             }).eq('id', cobrancaId);
         }
 
-        // 🔎 Busca template para reenvio (baseado na tentativa atual ou a primeira)
         const ordemParaFetch = Math.max(1, cobranca.tentativas_envio || 1);
         const { data: template } = await supabaseAdmin
             .from('mensagens_template')
@@ -112,31 +113,35 @@ serve(async (req) => {
             .eq('ordem', ordemParaFetch)
             .maybeSingle();
 
-        // --- ENVIO WHATSAPP ---
         const dataVencimento = new Date(cobranca.data_vencimento).toLocaleDateString('pt-BR');
         const mensagem = `Olá, ${locatario.nome_completo.split(' ')[0]}! 🚗\n\nLembramos que sua cobrança de R$ ${Number(cobranca.valor).toFixed(2).replace('.', ',')} (Vencimento: ${dataVencimento}) está disponível.\n\nLink para pagamento PIX:\n${linkDePagamento}`;
 
         const isMedia = !!template?.media_url;
-        const endpoint = isMedia ? 'sendMedia' : 'sendText';
+        const endpoint = isMedia ? 'media' : 'text';
         const payload = isMedia ? {
             number: locatario.whatsapp,
-            mediatype: template.media_type,
-            mimetype: template.media_mimetype,
-            caption: mensagem,
-            media: template.media_url,
+            mediaType: template.media_type,
+            mediaUrl: template.media_url,
+            message: mensagem,
             fileName: template.media_filename,
-            delay: 1200
+            delay: 3
         } : {
             number: locatario.whatsapp,
-            text: mensagem,
-            delay: 1200
+            message: mensagem,
+            delay: 3,
+            linkPreview: /https?:\/\/\S+/i.test(mensagem)
         };
 
-        await fetch(`${usuario.evolution_url}/message/${endpoint}/${usuario.evolution_instance}`, {
+        const ryzeResponse = await fetch(`${RYZE_URL()}/message/${endpoint}/${usuario.ryze_instance}`, {
             method: 'POST',
-            headers: { 'apikey': usuario.evolution_apikey, 'Content-Type': 'application/json' },
+            headers: { 'token': usuario.ryze_token, 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
+
+        if (!ryzeResponse.ok) {
+            const errText = await ryzeResponse.text();
+            throw new Error(`Falha no envio RyzeAPI: ${errText}`);
+        }
 
         return new Response(JSON.stringify({ success: true, message: "Cobrança enviada com sucesso!" }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },

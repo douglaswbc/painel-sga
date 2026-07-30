@@ -1,4 +1,4 @@
-// Arquivo da Edge Function: delete-user (VERSÃO FINAL E COMPLETA)
+// Arquivo da Edge Function: delete-user
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
@@ -20,10 +20,9 @@ serve(async (req) => {
             Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
         );
 
-        // 1. Busca os dados do usuário para obter as informações da instância
         const { data: userToDelete, error: userError } = await supabaseAdmin
             .from('usuarios')
-            .select('evolution_instance, evolution_url')
+            .select('ryze_instance')
             .eq('id', userId)
             .single();
 
@@ -31,23 +30,25 @@ serve(async (req) => {
             console.warn(`Aviso: Usuário ${userId} não encontrado na tabela 'usuarios', mas a exclusão do Auth prosseguirá.`);
         }
 
-        // 2. Deleta a instância na Evolution API, se as informações existirem
-        const ADMIN_EVO_APIKEY = Deno.env.get('ADMIN_EVOLUTION_APIKEY');
-        if (userToDelete && userToDelete.evolution_url && userToDelete.evolution_instance && ADMIN_EVO_APIKEY) {
+        const RYZE_URL = Deno.env.get('RYZE_API_URL');
+        const ADMIN_TOKEN = Deno.env.get('RYZE_ADMIN_TOKEN');
+        if (userToDelete && userToDelete.ryze_instance && ADMIN_TOKEN) {
             try {
-                await fetch(`${userToDelete.evolution_url}/instance/delete/${userToDelete.evolution_instance}`, {
+                const ryzeResponse = await fetch(`${RYZE_URL}/instance/delete/${userToDelete.ryze_instance}`, {
                     method: 'DELETE',
-                    headers: { 'apikey': ADMIN_EVO_APIKEY }
+                    headers: { 'token': ADMIN_TOKEN }
                 });
-                console.log(`Instância ${userToDelete.evolution_instance} da Evolution API foi deletada.`);
-            } catch (evoError) {
-                console.error(`Falha ao deletar a instância da Evolution API para o usuário ${userId}:`, evoError.message);
+                if (ryzeResponse.ok) {
+                    console.log(`Instância ${userToDelete.ryze_instance} da RyzeAPI foi deletada.`);
+                } else {
+                    const errText = await ryzeResponse.text();
+                    console.error(`Falha ao deletar instância RyzeAPI: ${errText}`);
+                }
+            } catch (ryzeError) {
+                console.error(`Falha ao deletar a instância da RyzeAPI para o usuário ${userId}:`, ryzeError.message);
             }
         }
 
-        // --- CORREÇÃO APLICADA AQUI ---
-        // 3. Deleta o perfil do usuário da sua tabela 'public.usuarios'
-        // A regra "ON DELETE CASCADE" nas outras tabelas (contratos, cobranças) será acionada a partir daqui.
         const { error: profileError } = await supabaseAdmin
             .from('usuarios')
             .delete()
@@ -56,9 +57,7 @@ serve(async (req) => {
         console.log(`Perfil do usuário ${userId} deletado da tabela 'usuarios'.`);
 
 
-        // 4. Deleta o usuário do sistema de autenticação do Supabase
         const { error: authError } = await supabaseAdmin.auth.admin.deleteUser(userId);
-        // Ignoramos o erro "User not found" caso o perfil exista mas o auth user já tenha sido removido
         if (authError && authError.message !== "User not found") {
             throw authError;
         }

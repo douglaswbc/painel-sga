@@ -5,6 +5,8 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+const RYZE_URL = () => Deno.env.get('RYZE_API_URL') || 'https://ryzeapi.cloud/api'
+
 Deno.serve(async (req) => {
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders })
@@ -50,9 +52,7 @@ Deno.serve(async (req) => {
                 ),
                 usuarios!inner (
                     id,
-                    evolution_url,
-                    evolution_instance,
-                    evolution_apikey
+                    ryze_instance
                 )
             `)
             .eq('ativo', true)
@@ -68,10 +68,6 @@ Deno.serve(async (req) => {
             )
         }
 
-        // 🛡️ ESTRATÉGIA ANTI-SPAM: 
-        // Em vez de dar um sleep longo (30s+) que causaria Timeout na função,
-        // enviamos apenas 1 mensagem por locatário por execução.
-        // Se houver mais de uma, o próximo ciclo do CRON (ex: cada 1 min) pegará a próxima.
         const uniqueAgendamentos = []
         const locatariosVistos = new Set()
 
@@ -90,7 +86,6 @@ Deno.serve(async (req) => {
 
         for (const ag of uniqueAgendamentos) {
             try {
-                // Pequeno delay humanizado entre locatários diferentes (2 a 5 segundos)
                 const delayMs = Math.floor(Math.random() * (5000 - 2000 + 1) + 2000)
                 await sleep(delayMs)
                 
@@ -100,48 +95,48 @@ Deno.serve(async (req) => {
                 }
 
                 const locatario = ag.locatarios
-
                 const usuario = ag.usuarios
+                const { data: ryzeToken } = await supabase.rpc('get_user_ryze_token', { p_user_id: usuario.id });
+                usuario.ryze_token = ryzeToken || '';
                 const template = ag.mensagens_template
 
                 const primeiroNome = locatario.nome_completo?.split(' ')[0] ?? 'Cliente'
                 const content = template.conteudo.replace(/{nome}/g, primeiroNome)
 
                 const isMedia = !!template.media_url
-                const endpoint = isMedia ? 'sendMedia' : 'sendText'
+                const endpoint = isMedia ? 'media' : 'text'
 
                 const payload = isMedia ? {
                     number: locatario.whatsapp.replace(/\D/g, ''),
-                    mediatype: template.media_type,
-                    mimetype: template.media_mimetype,
-                    caption: content,
-                    media: template.media_url,
+                    mediaType: template.media_type,
+                    mediaUrl: template.media_url,
+                    message: content,
                     fileName: template.media_filename,
-                    delay: 1200,
+                    delay: 3,
                 } : {
                     number: locatario.whatsapp.replace(/\D/g, ''),
-                    text: content,
-                    delay: 1200,
+                    message: content,
+                    delay: 3,
+                    linkPreview: /https?:\/\/\S+/i.test(content)
                 }
 
-                const evoResponse = await fetch(
-                    `${usuario.evolution_url}/message/${endpoint}/${usuario.evolution_instance}`,
+                const ryzeResponse = await fetch(
+                    `${RYZE_URL()}/message/${endpoint}/${usuario.ryze_instance}`,
                     {
                         method: 'POST',
                         headers: {
-                            'apikey': usuario.evolution_apikey,
+                            'token': usuario.ryze_token,
                             'Content-Type': 'application/json'
                         },
                         body: JSON.stringify(payload),
                     }
                 )
 
-                if (!evoResponse.ok) {
-                    const evoBody = await evoResponse.text().catch(() => '')
-                    throw new Error(`Falha no envio Evolution [${evoResponse.status}]: ${evoBody}`)
+                if (!ryzeResponse.ok) {
+                    const ryzeBody = await ryzeResponse.text().catch(() => '')
+                    throw new Error(`Falha no envio RyzeAPI [${ryzeResponse.status}]: ${ryzeBody}`)
                 }
 
-                // 📅 próximo envio
                 let proximaData = new Date()
 
                 if (ag.frequencia === 'diario') proximaData.setDate(proximaData.getDate() + 1)
