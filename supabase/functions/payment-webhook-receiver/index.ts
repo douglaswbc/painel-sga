@@ -7,7 +7,8 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const RYZE_URL = () => Deno.env.get('RYZE_API_URL') || 'https://ryzeapi.cloud/api'
+const EVOLUTION_URL = () => Deno.env.get('EVOLUTION_API_URL') || ''
+const API_KEY = () => Deno.env.get('EVOLUTION_API_KEY') || ''
 
 serve(async (req) => {
     if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -89,15 +90,10 @@ async function sendWhatsApp(supabaseAdmin: any, locador: any, numero: string, te
     const ryze_instance = locador.ryze_instance || '';
     if (!ryze_instance) return;
 
-    const { data: ryzeToken } = await supabaseAdmin.rpc('get_user_ryze_token', { p_user_id: locador.id });
-    const token = ryzeToken || '';
-
-    if (!token) return;
-
     const hasLink = /https?:\/\/\S+/i.test(texto);
-    await fetch(`${RYZE_URL()}/message/text/${ryze_instance}`, {
+    await fetch(`${EVOLUTION_URL()}/message/sendText/${ryze_instance}`, {
         method: 'POST',
-        headers: { 'token': token, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ number: numero, message: texto, delay: 3, linkPreview: hasLink })
+        headers: { 'apikey': API_KEY(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ number: numero, text: texto, delay: 1200, linkPreview: hasLink })
     });
 }

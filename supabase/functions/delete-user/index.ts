@@ -30,22 +30,22 @@ serve(async (req) => {
             console.warn(`Aviso: Usuário ${userId} não encontrado na tabela 'usuarios', mas a exclusão do Auth prosseguirá.`);
         }
 
-        const RYZE_URL = Deno.env.get('RYZE_API_URL');
-        const ADMIN_TOKEN = Deno.env.get('RYZE_ADMIN_TOKEN');
-        if (userToDelete && userToDelete.ryze_instance && ADMIN_TOKEN) {
+        const EVOLUTION_URL = Deno.env.get('EVOLUTION_API_URL');
+        const API_KEY = Deno.env.get('EVOLUTION_API_KEY');
+        if (userToDelete && userToDelete.ryze_instance && API_KEY && EVOLUTION_URL) {
             try {
-                const ryzeResponse = await fetch(`${RYZE_URL}/instance/delete/${userToDelete.ryze_instance}`, {
+                const evolutionResponse = await fetch(`${EVOLUTION_URL}/instance/delete/${userToDelete.ryze_instance}`, {
                     method: 'DELETE',
-                    headers: { 'token': ADMIN_TOKEN }
+                    headers: { 'apikey': API_KEY }
                 });
-                if (ryzeResponse.ok) {
-                    console.log(`Instância ${userToDelete.ryze_instance} da RyzeAPI foi deletada.`);
+                if (evolutionResponse.ok) {
+                    console.log(`Instância ${userToDelete.ryze_instance} da Evolution API foi deletada.`);
                 } else {
-                    const errText = await ryzeResponse.text();
-                    console.error(`Falha ao deletar instância RyzeAPI: ${errText}`);
+                    const errText = await evolutionResponse.text();
+                    console.error(`Falha ao deletar instância Evolution API: ${errText}`);
                 }
-            } catch (ryzeError) {
-                console.error(`Falha ao deletar a instância da RyzeAPI para o usuário ${userId}:`, ryzeError.message);
+            } catch (evolutionError) {
+                console.error(`Falha ao deletar a instância da Evolution API para o usuário ${userId}:`, evolutionError.message);
             }
         }
 

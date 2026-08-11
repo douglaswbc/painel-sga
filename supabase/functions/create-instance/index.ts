@@ -6,7 +6,7 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const RYZE_URL = () => Deno.env.get('RYZE_API_URL') || 'https://ryzeapi.cloud/api'
+const EVOLUTION_URL = () => Deno.env.get('EVOLUTION_API_URL') || '';
 
 serve(async (req) => {
     if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -17,55 +17,49 @@ serve(async (req) => {
         if (!instanceName) throw new Error("Nome da instância é obrigatório.");
         if (!userId) throw new Error("ID do usuário é obrigatório.");
 
-        const ADMIN_TOKEN = Deno.env.get('RYZE_ADMIN_TOKEN');
-        if (!ADMIN_TOKEN) throw new Error("RYZE_ADMIN_TOKEN não configurado.");
+        const API_KEY = Deno.env.get('EVOLUTION_API_KEY');
+        if (!API_KEY) throw new Error("EVOLUTION_API_KEY não configurado.");
 
         const WEBHOOK_URL = Deno.env.get('URL_WEBHOOK_FECHADURA');
 
-        const ryzeResponse = await fetch(`${RYZE_URL()}/instance/new`, {
+        const body: any = {
+            instanceName,
+            integration: "WHATSAPP-BAILEYS"
+        };
+
+        if (WEBHOOK_URL) {
+            body.webhook = {
+                url: WEBHOOK_URL,
+                base64: true,
+                events: ["MESSAGES_UPSERT"]
+            };
+        }
+
+        const evolutionResponse = await fetch(`${EVOLUTION_URL()}/instance/create`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'token': ADMIN_TOKEN
+                'apikey': API_KEY
             },
-            body: JSON.stringify({
-                name: instanceName,
-                webhookEnabled: !!WEBHOOK_URL,
-                webhookURL: WEBHOOK_URL || undefined,
-                webhookEvents: ["message.exchange"],
-                webhookMediaBase64: true
-            })
+            body: JSON.stringify(body)
         });
 
-        let instance;
+        let instanceName_: string;
 
-        if (ryzeResponse.ok) {
-            const ryzeData = await ryzeResponse.json();
-            instance = ryzeData.instance;
-        } else if (ryzeResponse.status === 409) {
-            const listResponse = await fetch(`${RYZE_URL()}/instance/list?instanceName=${encodeURIComponent(instanceName)}`, {
-                headers: { 'token': ADMIN_TOKEN }
-            });
-
-            if (!listResponse.ok) {
-                const errText = await listResponse.text();
-                throw new Error(`RyzeAPI error [${listResponse.status}]: ${errText}`);
-            }
-
-            const listData = await listResponse.json();
-            if (!listData.instances || listData.instances.length === 0) {
-                throw new Error("Instância já existe mas não foi possível recuperá-la.");
-            }
-
-            instance = listData.instances[0];
-            console.log(`Instância ${instanceName} já existia, reutilizando token.`);
+        if (evolutionResponse.ok) {
+            const evolutionData = await evolutionResponse.json();
+            const inst = evolutionData.instance || evolutionData;
+            instanceName_ = inst.instanceName || inst.name || '';
+        } else if (evolutionResponse.status === 409) {
+            instanceName_ = instanceName;
+            console.log(`Instância ${instanceName} já existia, reutilizando.`);
         } else {
-            const errText = await ryzeResponse.text();
-            throw new Error(`RyzeAPI error [${ryzeResponse.status}]: ${errText}`);
+            const errText = await evolutionResponse.text();
+            throw new Error(`Evolution API error [${evolutionResponse.status}]: ${errText}`);
         }
 
-        if (!instance || !instance.token) {
-            throw new Error("Token da instância não encontrado.");
+        if (!instanceName_) {
+            throw new Error("Nome da instância não encontrado na resposta.");
         }
 
         const supabaseAdmin = createClient(
@@ -76,26 +70,15 @@ serve(async (req) => {
         const { error: updateError } = await supabaseAdmin
             .from('usuarios')
             .update({
-                ryze_instance: instance.name
+                ryze_instance: instanceName_
             })
             .eq('id', userId);
 
         if (updateError) throw new Error(`Erro ao salvar instância: ${updateError.message}`);
 
-        try {
-            const { error: vaultError } = await supabaseAdmin.rpc('create_user_ryze_secret', {
-                p_user_id: userId,
-                p_token: instance.token
-            });
-            if (vaultError) console.error("Falha ao salvar token no Vault:", vaultError.message);
-        } catch (e) {
-            console.error("Falha ao salvar token no Vault:", e.message);
-        }
-
         return new Response(JSON.stringify({
             success: true,
-            instance: instance.name,
-            token: instance.token,
+            instance: instanceName_,
             message: "Instância criada e vinculada ao seu perfil com sucesso!"
         }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },

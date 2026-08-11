@@ -30,13 +30,10 @@ serve(async (req) => {
         );
 
         const { data: mpToken } = await supabaseAdmin.rpc('get_user_mp_token', { p_user_id: user.id });
-        const { data: ryzeToken } = await supabaseAdmin.rpc('get_user_ryze_token', { p_user_id: user.id });
 
         return new Response(JSON.stringify({
             success: true,
-            mp_token: mpToken || '',
-            ryze_token: ryzeToken ? (ryzeToken.substring(0, 8) + '***' + ryzeToken.substring(ryzeToken.length - 4)) : '',
-            ryze_token_full: ryzeToken || ''
+            mp_token: mpToken || ''
         }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             status: 200

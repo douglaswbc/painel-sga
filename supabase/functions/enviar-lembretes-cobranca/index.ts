@@ -5,7 +5,8 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const RYZE_URL = () => Deno.env.get('RYZE_API_URL') || 'https://ryzeapi.cloud/api'
+const EVOLUTION_URL = () => Deno.env.get('EVOLUTION_API_URL') || ''
+const API_KEY = () => Deno.env.get('EVOLUTION_API_KEY') || ''
 
 Deno.serve(async (req) => {
     if (req.method === 'OPTIONS') {
@@ -96,8 +97,6 @@ Deno.serve(async (req) => {
 
                 const { data: mpToken } = await supabase.rpc('get_user_mp_token', { p_user_id: usuario.id });
                 usuario.access_token_mercado_pago = mpToken || '';
-                const { data: ryzeToken } = await supabase.rpc('get_user_ryze_token', { p_user_id: usuario.id });
-                usuario.ryze_token = ryzeToken || '';
 
                 locatarioNome = locatario.nome_completo
                 locadorNome = usuario.nome_completo || usuario.id
@@ -177,33 +176,34 @@ Deno.serve(async (req) => {
                 }
 
                 const isMedia = !!template.media_url
-                const endpoint = isMedia ? 'media' : 'text'
+                const endpoint = isMedia ? 'sendMedia' : 'sendText'
                 const payload = isMedia ? {
                     number: whatsappLimpo,
-                    mediaType: template.media_type,
-                    mediaUrl: template.media_url,
-                    message: mensagemFinal,
+                    mediatype: template.media_type,
+                    mimetype: template.media_mimetype || 'image/jpeg',
+                    caption: mensagemFinal,
+                    media: template.media_url,
                     fileName: template.media_filename,
-                    delay: 3,
+                    delay: 1200,
                 } : {
                     number: whatsappLimpo,
-                    message: mensagemFinal,
-                    delay: 3,
+                    text: mensagemFinal,
+                    delay: 1200,
                     linkPreview: /https?:\/\/\S+/i.test(mensagemFinal)
                 }
 
-                const ryzeResponse = await fetch(
-                    `${RYZE_URL()}/message/${endpoint}/${usuario.ryze_instance}`,
+                const evolutionResponse = await fetch(
+                    `${EVOLUTION_URL()}/message/${endpoint}/${usuario.ryze_instance}`,
                     {
                         method: 'POST',
-                        headers: { 'token': usuario.ryze_token, 'Content-Type': 'application/json' },
+                        headers: { 'apikey': API_KEY(), 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload),
                     }
                 )
 
-                if (!ryzeResponse.ok) {
-                    const ryzeBody = await ryzeResponse.text().catch(() => '')
-                    throw new Error(`Falha no envio RyzeAPI [${ryzeResponse.status}]: ${ryzeBody}`)
+                if (!evolutionResponse.ok) {
+                    const evolutionBody = await evolutionResponse.text().catch(() => '')
+                    throw new Error(`Falha no envio Evolution API [${evolutionResponse.status}]: ${evolutionBody}`)
                 }
 
                 const { error: updateError } = await supabase

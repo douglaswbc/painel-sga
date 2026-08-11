@@ -6,7 +6,8 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type'
 };
 
-const RYZE_URL = () => Deno.env.get('RYZE_API_URL') || 'https://ryzeapi.cloud/api'
+const EVOLUTION_URL = () => Deno.env.get('EVOLUTION_API_URL') || ''
+const API_KEY = () => Deno.env.get('EVOLUTION_API_KEY') || ''
 
 serve(async (req) => {
     if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -35,9 +36,6 @@ serve(async (req) => {
 
         const { data: mpToken } = await supabaseAdmin.rpc('get_user_mp_token', { p_user_id: usuario.id });
         const userMercadoPagoToken = mpToken || '';
-
-        const { data: ryzeToken } = await supabaseAdmin.rpc('get_user_ryze_token', { p_user_id: usuario.id });
-        usuario.ryze_token = ryzeToken || '';
 
         let linkDePagamento = cobranca.payment_link;
         let mercadoPagoPaymentId = cobranca.mercado_pago_id;
@@ -117,30 +115,35 @@ serve(async (req) => {
         const mensagem = `Olá, ${locatario.nome_completo.split(' ')[0]}! 🚗\n\nLembramos que sua cobrança de R$ ${Number(cobranca.valor).toFixed(2).replace('.', ',')} (Vencimento: ${dataVencimento}) está disponível.\n\nLink para pagamento PIX:\n${linkDePagamento}`;
 
         const isMedia = !!template?.media_url;
-        const endpoint = isMedia ? 'media' : 'text';
+        const endpoint = isMedia ? 'sendMedia' : 'sendText';
         const payload = isMedia ? {
             number: locatario.whatsapp,
-            mediaType: template.media_type,
-            mediaUrl: template.media_url,
-            message: mensagem,
+            mediatype: template.media_type,
+            mimetype: template.media_mimetype || 'image/jpeg',
+            caption: mensagem,
+            media: template.media_url,
             fileName: template.media_filename,
-            delay: 3
+            delay: 1200
         } : {
             number: locatario.whatsapp,
-            message: mensagem,
-            delay: 3,
+            text: mensagem,
+            delay: 1200,
             linkPreview: /https?:\/\/\S+/i.test(mensagem)
         };
 
-        const ryzeResponse = await fetch(`${RYZE_URL()}/message/${endpoint}/${usuario.ryze_instance}`, {
+        if (!usuario.ryze_instance) {
+            throw new Error("Usuário não possui instância configurada.");
+        }
+
+        const evolutionResponse = await fetch(`${EVOLUTION_URL()}/message/${endpoint}/${usuario.ryze_instance}`, {
             method: 'POST',
-            headers: { 'token': usuario.ryze_token, 'Content-Type': 'application/json' },
+            headers: { 'apikey': API_KEY(), 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
 
-        if (!ryzeResponse.ok) {
-            const errText = await ryzeResponse.text();
-            throw new Error(`Falha no envio RyzeAPI: ${errText}`);
+        if (!evolutionResponse.ok) {
+            const errText = await evolutionResponse.text();
+            throw new Error(`Falha no envio Evolution API: ${errText}`);
         }
 
         return new Response(JSON.stringify({ success: true, message: "Cobrança enviada com sucesso!" }), {

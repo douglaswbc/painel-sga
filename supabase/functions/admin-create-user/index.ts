@@ -43,39 +43,46 @@ Deno.serve(async (req) => {
         }
 
         if (role === 'locador' && instanceName) {
-            const RYZE_URL = Deno.env.get('RYZE_API_URL')
-            const ADMIN_TOKEN = Deno.env.get('RYZE_ADMIN_TOKEN')
+            const EVOLUTION_URL = Deno.env.get('EVOLUTION_API_URL')
+            const API_KEY = Deno.env.get('EVOLUTION_API_KEY')
 
-            if (!ADMIN_TOKEN) {
-                console.error("RYZE_ADMIN_TOKEN não configurado nas variáveis de ambiente.")
+            if (!API_KEY) {
+                console.error("EVOLUTION_API_KEY não configurado nas variáveis de ambiente.")
             } else {
                 try {
-                    const ryzeResponse = await fetch(`${RYZE_URL}/instance/new`, {
+                    const WEBHOOK_URL = Deno.env.get('URL_WEBHOOK_FECHADURA');
+                    const body: any = {
+                        instanceName,
+                        integration: "WHATSAPP-BAILEYS"
+                    };
+                    if (WEBHOOK_URL) {
+                        body.webhook = {
+                            url: WEBHOOK_URL,
+                            base64: true,
+                            events: ["MESSAGES_UPSERT"]
+                        };
+                    }
+
+                    const evolutionResponse = await fetch(`${EVOLUTION_URL}/instance/create`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'token': ADMIN_TOKEN
+                            'apikey': API_KEY
                         },
-                        body: JSON.stringify({
-                            name: instanceName,
-                            webhookEnabled: true,
-                            webhookURL: Deno.env.get('URL_WEBHOOK_FECHADURA'),
-                            webhookEvents: ["message.exchange"],
-                            webhookMediaBase64: true
-                        })
+                        body: JSON.stringify(body)
                     })
 
-                    if (ryzeResponse.ok) {
-                        const ryzeData = await ryzeResponse.json()
-                        updatePayload.ryze_instance = ryzeData.instance?.name || instanceName
-                        updatePayload._ryze_token_vault = ryzeData.instance?.token
-                        console.log(`Instância ${instanceName} criada com sucesso na RyzeAPI.`)
+                    if (evolutionResponse.ok) {
+                        const evolutionData = await evolutionResponse.json()
+                        const inst = evolutionData.instance || evolutionData
+                        updatePayload.ryze_instance = inst.instanceName || inst.name || instanceName
+                        console.log(`Instância ${instanceName} criada com sucesso na Evolution API.`)
                     } else {
-                        const errText = await ryzeResponse.text()
-                        console.error(`Erro ao criar instância na RyzeAPI: ${errText}`)
+                        const errText = await evolutionResponse.text()
+                        console.error(`Erro ao criar instância na Evolution API: ${errText}`)
                     }
-                } catch (ryzeErr) {
-                    console.error("Falha na comunicação com RyzeAPI:", ryzeErr.message)
+                } catch (evolutionErr) {
+                    console.error("Falha na comunicação com Evolution API:", evolutionErr.message)
                 }
             }
         }
@@ -86,19 +93,6 @@ Deno.serve(async (req) => {
             .eq('id', userId)
 
         if (updateError) throw updateError
-
-        if (updatePayload._ryze_token_vault) {
-            try {
-                const { error: vaultError } = await supabaseAdmin.rpc('create_user_ryze_secret', {
-                    p_user_id: userId,
-                    p_token: updatePayload._ryze_token_vault
-                });
-                if (vaultError) console.error("Falha ao salvar token no Vault:", vaultError.message);
-            } catch (e) {
-                console.error("Falha ao salvar token no Vault:", e.message);
-            }
-        }
-        delete updatePayload._ryze_token_vault;
 
         return new Response(JSON.stringify({
             success: true,

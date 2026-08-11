@@ -5,7 +5,8 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const RYZE_URL = () => Deno.env.get('RYZE_API_URL') || 'https://ryzeapi.cloud/api'
+const EVOLUTION_URL = () => Deno.env.get('EVOLUTION_API_URL') || ''
+const API_KEY = () => Deno.env.get('EVOLUTION_API_KEY') || ''
 
 Deno.serve(async (req) => {
     if (req.method === 'OPTIONS') {
@@ -96,45 +97,44 @@ Deno.serve(async (req) => {
 
                 const locatario = ag.locatarios
                 const usuario = ag.usuarios
-                const { data: ryzeToken } = await supabase.rpc('get_user_ryze_token', { p_user_id: usuario.id });
-                usuario.ryze_token = ryzeToken || '';
                 const template = ag.mensagens_template
 
                 const primeiroNome = locatario.nome_completo?.split(' ')[0] ?? 'Cliente'
                 const content = template.conteudo.replace(/{nome}/g, primeiroNome)
 
                 const isMedia = !!template.media_url
-                const endpoint = isMedia ? 'media' : 'text'
+                const endpoint = isMedia ? 'sendMedia' : 'sendText'
 
                 const payload = isMedia ? {
                     number: locatario.whatsapp.replace(/\D/g, ''),
-                    mediaType: template.media_type,
-                    mediaUrl: template.media_url,
-                    message: content,
+                    mediatype: template.media_type,
+                    mimetype: template.media_mimetype || 'image/jpeg',
+                    caption: content,
+                    media: template.media_url,
                     fileName: template.media_filename,
-                    delay: 3,
+                    delay: 1200,
                 } : {
                     number: locatario.whatsapp.replace(/\D/g, ''),
-                    message: content,
-                    delay: 3,
+                    text: content,
+                    delay: 1200,
                     linkPreview: /https?:\/\/\S+/i.test(content)
                 }
 
-                const ryzeResponse = await fetch(
-                    `${RYZE_URL()}/message/${endpoint}/${usuario.ryze_instance}`,
+                const evolutionResponse = await fetch(
+                    `${EVOLUTION_URL()}/message/${endpoint}/${usuario.ryze_instance}`,
                     {
                         method: 'POST',
                         headers: {
-                            'token': usuario.ryze_token,
+                            'apikey': API_KEY(),
                             'Content-Type': 'application/json'
                         },
                         body: JSON.stringify(payload),
                     }
                 )
 
-                if (!ryzeResponse.ok) {
-                    const ryzeBody = await ryzeResponse.text().catch(() => '')
-                    throw new Error(`Falha no envio RyzeAPI [${ryzeResponse.status}]: ${ryzeBody}`)
+                if (!evolutionResponse.ok) {
+                    const evolutionBody = await evolutionResponse.text().catch(() => '')
+                    throw new Error(`Falha no envio Evolution API [${evolutionResponse.status}]: ${evolutionBody}`)
                 }
 
                 let proximaData = new Date()

@@ -6,7 +6,7 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const RYZE_URL = () => Deno.env.get('RYZE_API_URL') || 'https://ryzeapi.cloud/api'
+const EVOLUTION_URL = () => Deno.env.get('EVOLUTION_API_URL') || '';
 
 serve(async (req) => {
     if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -18,26 +18,26 @@ serve(async (req) => {
             throw new Error("Nome da instância não fornecido.");
         }
 
-        const ADMIN_TOKEN = Deno.env.get('RYZE_ADMIN_TOKEN');
-        if (!ADMIN_TOKEN) {
-            throw new Error("RYZE_ADMIN_TOKEN não configurado.");
+        const API_KEY = Deno.env.get('EVOLUTION_API_KEY');
+        if (!API_KEY) {
+            throw new Error("EVOLUTION_API_KEY não configurado.");
         }
 
-        const ryzeResponse = await fetch(
-            `${RYZE_URL()}/instance/list?instanceName=${encodeURIComponent(instanceName)}`,
+        const evolutionResponse = await fetch(
+            `${EVOLUTION_URL()}/instance/connectionState/${encodeURIComponent(instanceName)}`,
             {
-                headers: { 'token': ADMIN_TOKEN }
+                headers: { 'apikey': API_KEY }
             }
         );
 
-        if (!ryzeResponse.ok) {
-            const errText = await ryzeResponse.text();
-            throw new Error(`RyzeAPI error [${ryzeResponse.status}]: ${errText}`);
+        if (!evolutionResponse.ok) {
+            const errText = await evolutionResponse.text();
+            throw new Error(`Evolution API error [${evolutionResponse.status}]: ${errText}`);
         }
 
-        const ryzeData = await ryzeResponse.json();
+        const evolutionData = await evolutionResponse.json();
 
-        if (!ryzeData.instances || ryzeData.instances.length === 0) {
+        if (!evolutionData || evolutionData.error) {
             return new Response(JSON.stringify({
                 success: true,
                 state: 'not_found'
@@ -47,16 +47,16 @@ serve(async (req) => {
             });
         }
 
-        const instance = ryzeData.instances[0];
+        const rawState = evolutionData.state || evolutionData.instance?.state || 'close';
+        const state = rawState === 'open' ? 'connected' : rawState === 'close' ? 'disconnected' : rawState;
 
         return new Response(JSON.stringify({
             success: true,
-            state: instance.connection?.state || instance.status || 'disconnected',
-            displayStatus: instance.connection?.displayStatus || '',
-            numberJid: instance.connection?.numberJid || '',
-            profile: instance.profile || null,
-            instance: instance.name,
-            token: instance.token
+            state,
+            displayStatus: evolutionData.state || '',
+            numberJid: evolutionData.numberJid || '',
+            profile: null,
+            instance: evolutionData.name || instanceName
         }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             status: 200

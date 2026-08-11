@@ -5,6 +5,9 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+const EVOLUTION_URL = () => Deno.env.get('EVOLUTION_API_URL') || ''
+const API_KEY = () => Deno.env.get('EVOLUTION_API_KEY') || ''
+
 Deno.serve(async (req) => {
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders })
@@ -17,17 +20,17 @@ Deno.serve(async (req) => {
 
     try {
         const payload = await req.json()
-        console.log("=== WEBHOOK FECHADURA RECEBIDO (RyzeAPI) ===")
+        console.log("=== WEBHOOK FECHADURA RECEBIDO ===")
 
         const data = Array.isArray(payload) ? payload[0] : payload
         const body = data.body || data
 
-        const messageContent = body.data?.message?.content || ""
-        const remoteJid = body.data?.chat?.jid || body.data?.sender?.jid || ""
-        const direction = body.data?.direction || "incoming"
+        const messageContent = body.data?.message?.content || body.data?.message?.conversation || ""
+        const remoteJid = body.data?.chat?.jid || body.data?.sender?.jid || body.data?.key?.remoteJid || ""
+        const direction = body.data?.direction || (body.data?.key?.fromMe ? "outgoing" : "incoming") || "incoming"
         const chatType = body.data?.chat?.type || "private"
         const rawSender = remoteJid.split('@')[0] || ""
-        const instanceName = body.instanceData?.instance || data.instanceData?.instance || ""
+        const instanceName = body.instanceData?.instance || data.instanceData?.instance || body.instance || ""
 
         if (direction === 'outgoing' || direction !== 'incoming') {
             console.log("Mensagem ignorada: outgoing ou direção não-incoming.", { direction })
@@ -57,9 +60,6 @@ Deno.serve(async (req) => {
             console.error("Locador não encontrado para instância:", instanceName)
             return new Response('Locador não encontrado', { status: 404 })
         }
-
-        const { data: ryzeToken } = await supabase.rpc('get_user_ryze_token', { p_user_id: usuario.id });
-        usuario.ryze_token = ryzeToken || '';
 
         const cleanMsg = messageContent.trim().toLowerCase()
 
@@ -187,15 +187,14 @@ function normalizePhoneNumber(phone: string): string[] {
 
 async function sendWhatsApp(usuario: any, phone: string, text: string) {
     try {
-        const RYZE_URL = Deno.env.get('RYZE_API_URL') || 'https://ryzeapi.cloud/api'
         const hasLink = /https?:\/\/\S+/i.test(text);
-        const response = await fetch(`${RYZE_URL}/message/text/${usuario.ryze_instance}`, {
+        const response = await fetch(`${EVOLUTION_URL()}/message/sendText/${usuario.ryze_instance}`, {
             method: 'POST',
-            headers: { 'token': usuario.ryze_token, 'Content-Type': 'application/json' },
+            headers: { 'apikey': API_KEY(), 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 number: phone,
-                message: text,
-                delay: 3,
+                text: text,
+                delay: 1200,
                 linkPreview: hasLink
             })
         })

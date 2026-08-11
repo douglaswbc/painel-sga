@@ -183,7 +183,7 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
           {formData.role === 'locador' && !userToEdit && (
             <div className="animate-in slide-in-from-top-2 duration-300">
               <label className="block text-xs font-bold text-emerald-500 uppercase mb-1 flex items-center gap-1">
-                <Zap size={12} /> Identificador da Instância (RyzeAPI)
+                <Zap size={12} /> Identificador da Instância (WhatsApp)
               </label>
               <div className="flex items-center gap-2 bg-input border border-emerald-500/20 rounded-lg px-4 py-2">
                 <input

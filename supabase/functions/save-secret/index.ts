@@ -37,11 +37,6 @@ serve(async (req) => {
                 p_user_id: user.id,
                 p_token: value
             });
-        } else if (secretType === 'ryze_token') {
-            await supabaseAdmin.rpc('create_user_ryze_secret', {
-                p_user_id: user.id,
-                p_token: value
-            });
         } else {
             throw new Error("Tipo de segredo inválido.");
         }

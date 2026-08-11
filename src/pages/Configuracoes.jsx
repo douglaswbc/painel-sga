@@ -26,8 +26,7 @@ const Configuracoes = () => {
     nome_completo: '',
     whatsapp: '',
     access_token_mercado_pago: '',
-    ryze_instance: '',
-    ryze_token: ''
+    ryze_instance: ''
   });
 
   useEffect(() => {
@@ -36,8 +35,7 @@ const Configuracoes = () => {
         nome_completo: profile.nome_completo || '',
         whatsapp: profile.whatsapp || '',
         access_token_mercado_pago: profile.access_token_mercado_pago || '',
-        ryze_instance: profile.ryze_instance || '',
-        ryze_token: profile.ryze_token || ''
+        ryze_instance: profile.ryze_instance || ''
       });
       loadSecrets();
       setLoading(false);
@@ -50,8 +48,7 @@ const Configuracoes = () => {
       if (!error && data?.success) {
         setFormData(prev => ({
           ...prev,
-          access_token_mercado_pago: data.mp_token || prev.access_token_mercado_pago,
-          ryze_token: data.ryze_token_full || prev.ryze_token
+          access_token_mercado_pago: data.mp_token || prev.access_token_mercado_pago
         }));
       }
     } catch {}
@@ -83,7 +80,7 @@ const Configuracoes = () => {
             body: {
               action: 'sendText',
               instanceName: formData.ryze_instance,
-              payload: { number: ownNumber, message: '\uD83D\uDD12 *Sessão ativada com sucesso!*', delay: 3 }
+              payload: { number: ownNumber, message: '\uD83D\uDD12 *Sessão ativada com sucesso!*', delay: 1200 }
             }
           }).catch(() => {});
         }
@@ -91,7 +88,7 @@ const Configuracoes = () => {
       return state;
     } catch (error) {
       setConnectionState('erro');
-      console.error("Erro na RyzeAPI:", error);
+      console.error("Erro na Evolution API:", error);
     }
   }, [formData, connectionState]);
 
@@ -124,12 +121,6 @@ const Configuracoes = () => {
         });
       }
 
-      if (formData.ryze_token) {
-        await supabase.functions.invoke('save-secret', {
-          body: { secretType: 'ryze_token', value: formData.ryze_token }
-        });
-      }
-
       toast.success("Configurações salvas!");
     } catch (error) {
       toast.error("Erro ao salvar: " + error.message);
@@ -158,8 +149,7 @@ const Configuracoes = () => {
 
       setFormData(prev => ({
         ...prev,
-        ryze_instance: data.instance,
-        ryze_token: data.token
+        ryze_instance: data.instance
       }));
 
       toast.success("Instância criada com sucesso!");
@@ -192,17 +182,23 @@ const Configuracoes = () => {
       if (!data?.success) throw new Error(data?.data?.message || "Erro ao gerar QR Code");
 
       const result = data.data;
-      if (result.qrCodeBase64) {
+      if (result.base64) {
+        const imageSrc = result.base64.startsWith('data:image') 
+          ? result.base64 
+          : `data:image/png;base64,${result.base64}`;
+        setQrCode({ image: imageSrc, code: result.code || '', visible: true });
+        toast.info("QR Code gerado. Escaneie no seu WhatsApp.");
+      } else if (result.qrcode) {
+        const imageSrc = result.qrcode.startsWith('data:image')
+          ? result.qrcode
+          : `data:image/png;base64,${result.qrcode}`;
+        setQrCode({ image: imageSrc, code: result.pairingCode || '', visible: true });
+        toast.info("QR Code gerado. Escaneie no seu WhatsApp.");
+      } else if (result.qrCodeBase64) {
         const imageSrc = result.qrCodeBase64.startsWith('data:image') 
           ? result.qrCodeBase64 
           : `data:image/png;base64,${result.qrCodeBase64}`;
         setQrCode({ image: imageSrc, code: result.qrCode || '', visible: true });
-        toast.info("QR Code gerado. Escaneie no seu WhatsApp.");
-      } else if (result.base64) {
-        const imageSrc = result.base64.startsWith('data:image') 
-          ? result.base64 
-          : `data:image/png;base64,${result.base64}`;
-        setQrCode({ image: imageSrc, code: result.pairingCode, visible: true });
         toast.info("QR Code gerado. Escaneie no seu WhatsApp.");
       } else {
         toast.error("Formato de QR Code não reconhecido.");
@@ -329,7 +325,7 @@ const Configuracoes = () => {
 
             <section className="pt-6 border-t border-slate-800">
               <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                <Link size={16} /> RyzeAPI (WhatsApp)
+                <Link size={16} /> Evolution API (WhatsApp)
               </h3>
 
               {!hasInstance ? (
@@ -360,43 +356,22 @@ const Configuracoes = () => {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <div className="grid grid-cols-1 gap-4">
-                    <div>
-                      <label className="block text-xs text-slate-500 mb-1">Nome da Instância</label>
-                      <div className="flex items-center gap-2">
-                        <input 
-                          className="flex-1 bg-input border border-slate-600 rounded-lg px-4 py-2 text-emerald-300 outline-none focus:border-accent font-mono text-sm"
-                          value={formData.ryze_instance}
-                          readOnly
-                        />
-                        <button
-                          type="button"
-                          onClick={() => copyToClipboard(formData.ryze_instance, 'instance')}
-                          className="p-2.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-all"
-                          title="Copiar nome da instância"
-                        >
-                          {copiedField === 'instance' ? <Check size={16} className="text-emerald-400" /> : <Copy size={16} />}
-                        </button>
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-xs text-slate-500 mb-1">Token da Instância</label>
-                      <div className="flex items-center gap-2">
-                        <input 
-                          type="password"
-                          className="flex-1 bg-input border border-slate-600 rounded-lg px-4 py-2 text-emerald-300 outline-none font-mono text-sm"
-                          value={formData.ryze_token}
-                          readOnly
-                        />
-                        <button
-                          type="button"
-                          onClick={() => copyToClipboard(formData.ryze_token, 'token')}
-                          className="p-2.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-all"
-                          title="Copiar token"
-                        >
-                          {copiedField === 'token' ? <Check size={16} className="text-emerald-400" /> : <Copy size={16} />}
-                        </button>
-                      </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Nome da Instância</label>
+                    <div className="flex items-center gap-2">
+                      <input 
+                        className="flex-1 bg-input border border-slate-600 rounded-lg px-4 py-2 text-emerald-300 outline-none focus:border-accent font-mono text-sm"
+                        value={formData.ryze_instance}
+                        readOnly
+                      />
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(formData.ryze_instance, 'instance')}
+                        className="p-2.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-all"
+                        title="Copiar nome da instância"
+                      >
+                        {copiedField === 'instance' ? <Check size={16} className="text-emerald-400" /> : <Copy size={16} />}
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -477,7 +452,7 @@ const Configuracoes = () => {
                 {qrCode.visible && (
                   <div className="mt-8 p-6 bg-white rounded-2xl flex flex-col items-center gap-4 animate-in fade-in zoom-in duration-300">
                     <p className="text-zinc-900 font-bold text-sm">Escaneie com o WhatsApp</p>
-                    <img src={qrCode.image} alt="QR Code RyzeAPI" className="w-48 h-48 rounded-lg shadow-inner" />
+                    <img src={qrCode.image} alt="QR Code WhatsApp" className="w-48 h-48 rounded-lg shadow-inner" />
                     {qrCode.code && (
                       <div className="w-full bg-zinc-100 p-3 rounded-lg border border-zinc-200">
                         <p className="text-[10px] text-zinc-500 font-bold uppercase text-center mb-1 tracking-tighter">Código de Emparelhamento</p>
@@ -495,7 +470,7 @@ const Configuracoes = () => {
               </div>
               <div>
                 <p className="text-slate-400 font-bold text-sm">Nenhuma instância configurada</p>
-                <p className="text-slate-600 text-xs mt-1">Crie uma instância RyzeAPI para gerenciar sua conexão WhatsApp.</p>
+                <p className="text-slate-600 text-xs mt-1">Crie uma instância WhatsApp para gerenciar sua conexão.</p>
               </div>
             </div>
           )}
