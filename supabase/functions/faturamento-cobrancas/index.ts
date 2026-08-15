@@ -245,7 +245,7 @@ Deno.serve(async (req) => {
                 results.push({ id: contrato.id, status: 'ok' })
 
             } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err)
+                const msg = err instanceof Error ? err.message : (err?.message ?? JSON.stringify(err))
                 console.error(`Contrato ${contrato.id}: ERRO —`, msg)
                 results.push({ id: contrato.id, status: 'error', msg })
             }
@@ -257,7 +257,7 @@ Deno.serve(async (req) => {
         )
 
     } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error)
+        const msg = error instanceof Error ? error.message : (error?.message ?? JSON.stringify(error))
         console.error('Erro geral no faturamento:', msg)
         return new Response(
             JSON.stringify({ error: msg }),
