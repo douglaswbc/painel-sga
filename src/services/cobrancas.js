@@ -73,7 +73,7 @@ export const cobrancasService = {
   },
 
   gerarCobrancasDiarias: async (userId) => {
-    const { data, error } = await supabase.functions.invoke('gerar-cobrancas-diarias', {
+    const { data, error } = await supabase.functions.invoke('faturamento-cobrancas', {
       body: { userId },
     });
     if (error) throw error;
