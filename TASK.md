@@ -38,7 +38,7 @@
 - [x] Restringir upload/exclusão do Storage à pasta do usuário. A leitura pública foi mantida por compatibilidade com as URLs atuais de mídia; migrar para URLs privadas exige adaptar o envio.
 - [x] Alterar `handle_new_user` para iniciar com papel `locador`; a criação administrativa atribui o papel solicitado via Edge Function com service role.
 - [x] Exigir autenticação e papel `admin` nas Edge Functions `admin-create-user` e `delete-user`, que executam operações privilegiadas.
-- [x] Revogar acesso do cliente às colunas de segredo de `usuarios`, proteger as RPCs de criptografia contra execução por `anon`/`authenticated` e corrigir a volatilidade declarada.
+- [x] Revogar acesso do cliente às colunas de segredo de `usuarios`, bloquear as RPCs de criptografia para `anon` e corrigir a volatilidade; a execução de `decrypt_val` por `authenticated` é necessária para a view `locatarios_safe`, cujas linhas são limitadas por RLS por locador.
 - [ ] Confirmar no projeto Supabase a estrutura real de `app_config` e as RPCs `get_user_mp_token`/`create_user_mp_secret`, que são chamadas pelas Edge Functions mas não estão definidas no repositório; provisionar/documentar após conferir como os segredos existentes foram armazenados.
 - [x] Identificar `supabase/sql_banco.txt` como referência de instalação inicial e alinhar nele o tipo `date`.
 
@@ -49,6 +49,8 @@
 - Um locador autenticado só pode ler ou alterar os próprios dados pelas APIs do Supabase. (migration aplicada; requer validação ponta a ponta)
 - O banco rejeita relações entre registros de locadores diferentes e duplicatas de cobrança. (migration aplicada)
 - Segredos só podem ser descriptografados por rotinas autorizadas do backend. (migration aplicada; pendente confirmar estrutura de segredos legados)
+
+**Ajuste posterior:** `008_locatarios_safe_decrypt_grant.sql` concede `EXECUTE` de `decrypt_val(bytea)` a `authenticated`, necessário porque `locatarios_safe` usa `security_invoker`; `anon` e `PUBLIC` continuam sem acesso e as linhas da tabela permanecem limitadas por RLS.
 
 ## Fase 3 - Persistir e validar a chave Zernio de cada locador
 
