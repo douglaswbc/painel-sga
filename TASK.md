@@ -78,20 +78,33 @@
 - Parâmetros alterados manualmente na URL não permitem vincular canal de outro perfil ou locador.
 - Cancelamento ou falha não gravam um novo canal como conectado.
 
-## Fase 5 — Templates Meta e envio de cobranças
+## Fase 5 - Templates Meta e envio de cobrancas
 
-- [ ] Criar funções backend para criar, listar e consultar templates Zernio usando a chave e o `accountId` do locador autenticado.
-- [ ] Persistir metadados do template remoto: nome, idioma, categoria, estado da Meta, motivo de rejeição quando disponível, componentes e mapeamento de variáveis.
-- [ ] Mostrar estados `PENDING`, `APPROVED`, `REJECTED`, `PAUSED` e `DISABLED`; permitir enviar somente templates `APPROVED`.
-- [ ] Definir os templates transacionais de cobrança e seus campos (locatário, valor, vencimento e link/PIX), incluindo exemplos exigidos durante a análise da Meta.
-- [ ] Substituir os envios de texto livre fora da janela de atendimento por templates aprovados, respeitando os campos e o idioma exato do template.
-- [ ] Persistir o identificador da mensagem enviada e o resultado para auditoria e reenvio sem duplicidade.
+- [x] Criar a Edge Function `zernio-whatsapp` para sincronizar/listar templates, criar template transacional e consultar a aprovacao remota pela chave e canal do locador autenticado.
+- [x] Persistir nome, idioma, categoria, status Meta, motivo de rejeicao, componentes, mapeamento de variaveis e escolha do template padrao.
+- [x] Exibir estados `PENDING`, `APPROVED`, `REJECTED`, `PAUSED`, `DISABLED`, `IN_APPEAL` e `PENDING_DELETION`; o backend so envia templates `APPROVED` confirmados na Meta.
+- [x] Definir o template UTILITY da cobranca com locatario, valor, vencimento e link PIX, incluindo exemplos para analise da Meta.
+- [x] Ligar o envio manual de cobrancas do Dashboard a um template aprovado. Se ainda nao houver link, o SGA gera e salva o PIX antes do envio.
+- [x] Registrar o `messageId`, conversa, status e erro seguro; proteger concorrencia e repeticoes com idempotencia local e da Zernio.
+- [x] Centralizar criacao e gestao dos templates Meta na rota `/mensagens`, remover a criacao manual de modelos legados e manter os registros existentes para os agendamentos ainda em uso.
+- [x] Adicionar formulário guiado com categorias, idiomas, componentes Meta, exemplos de variáveis, limites, botões interativos e prévia de WhatsApp; permitir classificar templates UTILITY compatíveis para cobranças do SGA.
 
-### Critérios de conclusão
+**Estado:** codigo pronto localmente. Aplicar `006_zernio_templates_and_deliveries.sql`, publicar `zernio-whatsapp` e o frontend. Os cron/lembretes e os outros fluxos que ainda usam Evolution/RyzeAPI permanecem para a migracao da fase 6.
 
-- Um locador cria/acompanha seu template; após aprovação, o SGA envia uma cobrança ao destinatário com as variáveis corretas.
-- Templates pendentes/rejeitados/pausados não podem ser usados para disparo.
-- Falhas do Zernio/Meta ficam visíveis e não marcam a cobrança como enviada.
+### Criterios de conclusao
+
+- O locador cria o template e acompanha a revisao da Meta; somente um aprovado pode ser escolhido e usado.
+- A cobranca e enviada com nome, valor, vencimento e link PIX mapeados nas posicoes definidas pelo template.
+- Falhas ficam no historico sem marcar a cobranca como enviada; repeticoes nao geram uma segunda mensagem.
+
+### Agendamentos Meta na rota `/mensagens`
+
+- [x] Remover as abas de modelos legados da rota e manter Templates Meta e Agendamentos Ativos.
+- [x] Criar agendamento recorrente a partir de template Meta aprovado, com locatário, variáveis, frequência, data e horário.
+- [x] Listar e permitir pausar, reativar ou excluir agendamentos; identificar os registros antigos como legados.
+- [x] Adicionar envio recorrente idempotente por Zernio e registrar tentativas/erros.
+
+**Estado:** implementação local pronta. Aplicar `007_zernio_message_scheduling.sql`, publicar `zernio-whatsapp` e a nova Edge Function `zernio-message-scheduler`, e instalar o cron descrito em `supabase/cron-example.txt`. O cron legado continua atendendo somente aos agendamentos antigos.
 
 ## Fase 6 — Substituir Evolution e RyzeAPI
 

@@ -4,7 +4,7 @@ export const cobrancasService = {
   list: async (userId) => {
     const { data, error } = await supabase
       .from('cobrancas')
-      .select('*, contratos (*, locatarios (nome_completo), veiculos (placa))')
+      .select('*, locatario_cobranca:locatarios!cobrancas_locatario_mesmo_usuario_fkey (nome_completo, whatsapp), contratos (*, locatarios (nome_completo), veiculos (placa))')
       .eq('id_usuario', userId)
       .order('data_vencimento', { ascending: false });
     if (error) throw error;
@@ -17,6 +17,7 @@ export const cobrancasService = {
       .select(`
         id, valor, status, tipo, categoria, data_vencimento,
         payment_link, tentativas_envio, created_at,
+        locatario_cobranca:locatarios!cobrancas_locatario_mesmo_usuario_fkey (nome_completo, whatsapp),
         contratos (id, status, locatarios (nome_completo), veiculos (placa))
       `)
       .eq('id_usuario', userId)
@@ -81,8 +82,8 @@ export const cobrancasService = {
   },
 
   gerarPix: async (cobrancaId) => {
-    const { data, error } = await supabase.functions.invoke('gerar-cobranca-pix', {
-      body: { cobrancaId },
+    const { data, error } = await supabase.functions.invoke('zernio-whatsapp', {
+      body: { action: 'send_charge', chargeId: cobrancaId },
     });
     if (error) throw error;
     return data;

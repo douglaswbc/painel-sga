@@ -81,6 +81,7 @@ CREATE TABLE public.contratos (
 CREATE TABLE public.cobrancas (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   id_contrato uuid,
+  id_locatario uuid,
   id_usuario uuid NOT NULL,
   valor numeric NOT NULL,
   data_vencimento date NOT NULL,
@@ -96,6 +97,7 @@ CREATE TABLE public.cobrancas (
   ultimo_lembrete_at timestamp with time zone,
   CONSTRAINT cobrancas_pkey PRIMARY KEY (id),
   CONSTRAINT cobrancas_id_contrato_fkey FOREIGN KEY (id_contrato) REFERENCES public.contratos(id) ON DELETE CASCADE,
+  CONSTRAINT cobrancas_id_locatario_fkey FOREIGN KEY (id_locatario) REFERENCES public.locatarios(id) ON DELETE RESTRICT,
   CONSTRAINT cobrancas_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id) ON DELETE CASCADE
 );
 

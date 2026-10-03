@@ -6,6 +6,27 @@
 select vault.create_secret('https://<PROJECT_REF>.supabase.co', 'sga_project_url');
 select vault.create_secret('<SUPABASE_SERVICE_ROLE_KEY>', 'sga_service_role_key');
 
+-- Recurring sends for Meta approved templates through Zernio.
+select cron.unschedule(jobid)
+from cron.job
+where jobname = 'sga-zernio-message-scheduler';
+
+select cron.schedule(
+  'sga-zernio-message-scheduler',
+  '*/5 * * * *',
+  $$
+    select net.http_post(
+      url := (select decrypted_secret from vault.decrypted_secrets where name = 'sga_project_url')
+             || '/functions/v1/zernio-message-scheduler',
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'sga_service_role_key')
+      ),
+      body := '{}'::jsonb
+    ) as request_id;
+  $$
+);
+
 -- Remove the antiga rotina com endpoint inválido e substitui o job gerenciado.
 select cron.unschedule(jobid)
 from cron.job
@@ -56,5 +77,5 @@ select cron.schedule(
 -- select * from cron.job_run_details order by start_time desc limit 20;
 -- select cron.unschedule('sga-faturamento-cobrancas');
 
--- O cron de lembretes continua chamando a função atual. O envio WhatsApp será
--- migrado para Zernio na fase 6 do TASK.md.
+-- O cron de lembretes continua atendendo aos agendamentos legados.
+-- Novos agendamentos com templates Meta usam sga-zernio-message-scheduler.

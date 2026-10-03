@@ -60,7 +60,7 @@ const Dashboard = () => {
     try {
       const data = await cobrancasService.gerarPix(cobrancaId);
       if (data.success) {
-        toast.success('PIX gerado e enviado ao WhatsApp!');
+        toast.success(data.alreadySent ? 'Esta cobrança já foi enviada.' : 'Cobrança enviada pelo WhatsApp!');
         await fetchDashboardData();
       }
     } catch (error) {
@@ -193,7 +193,7 @@ const Dashboard = () => {
                   {currentData.map((item) => (
                     <tr key={item.id} className="hover:bg-zinc-800/40 transition-all">
                       <td className="p-6">
-                        <div className="text-white font-bold text-sm mb-1">{item.contratos?.locatarios?.nome_completo || "Cobrança Avulsa"}</div>
+                        <div className="text-white font-bold text-sm mb-1">{item.locatario_cobranca?.nome_completo || item.contratos?.locatarios?.nome_completo || "Cobrança Avulsa"}</div>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="px-2 py-0.5 bg-zinc-950 rounded text-[9px] text-indigo-400 font-mono uppercase border border-zinc-800">{item.contratos?.veiculos?.placa || "N/A"}</span>
                           <div className="sm:hidden flex flex-wrap items-center gap-x-3 gap-y-2 mt-1">

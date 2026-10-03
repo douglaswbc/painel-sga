@@ -22,13 +22,6 @@ export const mensagensService = {
     return data;
   },
 
-  upsertTemplates: async (templates) => {
-    const { error } = await supabase
-      .from('mensagens_template')
-      .upsert(templates);
-    if (error) throw error;
-  },
-
   updateTemplate: async (id, data) => {
     const { error } = await supabase
       .from('mensagens_template')
@@ -37,11 +30,11 @@ export const mensagensService = {
     if (error) throw error;
   },
 
-  upsertTemplate: async (template) => {
-    const { error } = await supabase
-      .from('mensagens_template')
-      .upsert(template);
-    if (error) throw error;
+  updateTemplates: async (templates) => {
+    await Promise.all(templates.map(({ id, ...data }) => {
+      if (!id) throw new Error('Não é possível atualizar um modelo sem identificador.');
+      return mensagensService.updateTemplate(id, data);
+    }));
   },
 
   removeTemplate: async (id) => {

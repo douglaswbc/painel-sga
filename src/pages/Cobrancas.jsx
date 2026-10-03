@@ -169,7 +169,7 @@ const Cobrancas = () => {
           toast.warning("Não há fatura PENDENTE para somar. Criando cobrança SEPARADA.");
           const contrato = await contratosService.getAtivoByLocatario(manualData.id_locatario);
           await cobrancasService.create({
-            id_usuario: profile.id, id_contrato: contrato?.id || null,
+            id_usuario: profile.id, id_contrato: contrato?.id || null, id_locatario: manualData.id_locatario,
             valor: manualData.valor, categoria: manualData.categoria,
             tipo: 'receita', status: 'pendente', data_vencimento: manualData.data_vencimento,
           });
@@ -183,7 +183,7 @@ const Cobrancas = () => {
       } else {
         const contrato = await contratosService.getAtivoByLocatario(manualData.id_locatario);
         await cobrancasService.create({
-          id_usuario: profile.id, id_contrato: contrato?.id || null,
+          id_usuario: profile.id, id_contrato: contrato?.id || null, id_locatario: manualData.id_locatario,
           valor: manualData.valor, categoria: manualData.categoria,
           tipo: 'receita', status: 'pendente', data_vencimento: manualData.data_vencimento,
         });
