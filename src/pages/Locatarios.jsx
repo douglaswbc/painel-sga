@@ -43,7 +43,7 @@ const emptyForm = { nome_completo: '', whatsapp: '', email: '', documento: 'CPF'
 
 const Locatarios = () => {
   const { profile } = useAuth();
-  const { tenants, loading, fetch: fetchTenants, create, update, toggleStatus, remove } = useTenants(profile?.id);
+  const { tenants, loading, create, update, toggleStatus, remove } = useTenants(profile?.id);
 
   const [showModal, setShowModal] = useState(false);
   const [editingTenant, setEditingTenant] = useState(null);

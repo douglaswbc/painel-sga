@@ -1,94 +1,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { billingDate, nextContractSchedule, parseRecurrence, paymentIdempotencyKey } from '../_shared/billing.ts'
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
-
-// Mapeia abreviações de dias para índices JS (0=dom ... 6=sab)
-// Aceita tanto português (seg, ter...) quanto inglês (mon, tue...) pois o
-// frontend pode salvar qualquer um dos dois formatos.
-const DAY_MAP: Record<string, number> = {
-    // Português
-    dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6,
-    // Inglês
-    sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6,
-}
-
-/**
- * Calcula a próxima data de cobrança preservando o HH:mm:ss original,
- * garantindo que o faturamento nunca ocorra antes do horário definido no contrato.
- */
-function calcularProximaData(
-    dataAtual: Date,
-    config: {
-        frequencia: string
-        intervalo: number
-        dias: string[]
-    }
-): Date {
-    // Preserva o horário exato (HH:mm:ss) da data original
-    const horas = dataAtual.getUTCHours()
-    const minutos = dataAtual.getUTCMinutes()
-    const segundos = dataAtual.getUTCSeconds()
-
-    const proxima = new Date(dataAtual)
-
-    if (config.frequencia === 'daily') {
-        proxima.setUTCDate(proxima.getUTCDate() + (config.intervalo || 1))
-
-    } else if (config.frequencia === 'weekly') {
-        const selectedIndices = (config.dias || [])
-            .map(d => DAY_MAP[d.toLowerCase()])
-            .filter(v => v !== undefined)
-
-        // Fix 6: Validar dias antes de entrar no loop para evitar loop infinito
-        if (selectedIndices.length === 0) {
-            console.warn('Nenhum dia válido configurado para recorrência semanal. Avançando 7 dias.')
-            proxima.setUTCDate(proxima.getUTCDate() + 7)
-        } else {
-            // Fix 2: Implementar pulo de semanas correto com base no intervalo
-            // Avança dia a dia até encontrar o próximo dia válido.
-            // Se voltou ao início do ciclo semanal (passou por dom), aplica o pulo de intervalo - 1 semanas.
-            let encontrou = false
-            let counts = 0
-            let voltouInicioCiclo = false
-
-            while (!encontrou && counts < 365) {
-                const diaAnterior = proxima.getUTCDay()
-                proxima.setUTCDate(proxima.getUTCDate() + 1)
-                counts++
-
-                const diaAtual = proxima.getUTCDay()
-
-                // Detecta a virada de ciclo semanal (passou pelo domingo para seg)
-                if (!voltouInicioCiclo && diaAnterior > diaAtual) {
-                    // Pulamos (intervalo - 1) semanas extras
-                    if ((config.intervalo || 1) > 1) {
-                        proxima.setUTCDate(proxima.getUTCDate() + ((config.intervalo - 1) * 7))
-                        voltouInicioCiclo = true
-                    }
-                }
-
-                if (selectedIndices.includes(proxima.getUTCDay())) {
-                    encontrou = true
-                }
-            }
-
-            if (!encontrou) {
-                console.error('Não foi possível calcular próxima data semanal — avançando 7 dias como fallback.')
-                proxima.setUTCDate(dataAtual.getUTCDate() + 7)
-            }
-        }
-
-    } else if (config.frequencia === 'monthly') {
-        proxima.setUTCMonth(proxima.getUTCMonth() + (config.intervalo || 1))
-    }
-
-    // Fix 1: Reaplicar o horário original após o cálculo da data
-    proxima.setUTCHours(horas, minutos, segundos, 0)
-
-    return proxima
 }
 
 Deno.serve(async (req) => {
@@ -96,13 +11,32 @@ Deno.serve(async (req) => {
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? ''
     const NOTIFICATION_URL = Deno.env.get('MP_WEBHOOK_URL')
 
     const supabase = createClient(supabaseUrl, supabaseKey)
 
     try {
-        const body = await req.json().catch(() => ({}))
-        const userId: string | undefined = typeof body.userId === 'string' ? body.userId : undefined
+        const authorization = req.headers.get('Authorization') || ''
+        const bearerToken = authorization.replace(/^Bearer\s+/i, '')
+        const isServiceRole = bearerToken === supabaseKey
+        let authenticatedUserId: string | undefined
+
+        if (!isServiceRole) {
+            if (!bearerToken || !supabaseAnonKey) {
+                return new Response(JSON.stringify({ error: 'Autenticação obrigatória.' }), {
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401,
+                })
+            }
+            const authClient = createClient(supabaseUrl, supabaseAnonKey)
+            const { data: { user }, error: authError } = await authClient.auth.getUser(bearerToken)
+            if (authError || !user) {
+                return new Response(JSON.stringify({ error: 'Sessão inválida.' }), {
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401,
+                })
+            }
+            authenticatedUserId = user.id
+        }
 
         console.log('--- Iniciando faturamento inteligente ---')
 
@@ -117,7 +51,9 @@ Deno.serve(async (req) => {
             .eq('status', 'ativo')
             .lte('proxima_cobranca', new Date().toISOString())
 
-        if (userId) query = query.eq('id_usuario', userId)
+        // Chamadas feitas pelo app só podem processar o próprio locador.
+        // O cron usa service_role e processa todos os locadores.
+        if (authenticatedUserId) query = query.eq('id_usuario', authenticatedUserId)
 
         const { data: contratos, error: fetchError } = await query
         if (fetchError) throw fetchError
@@ -132,41 +68,33 @@ Deno.serve(async (req) => {
 
         for (const contrato of contratos) {
             try {
-                const { data: mpToken } = await supabase.rpc('get_user_mp_token', { p_user_id: contrato.usuarios.id });
+                const { data: mpToken, error: tokenError } = await supabase.rpc('get_user_mp_token', { p_user_id: contrato.id_usuario })
+                if (tokenError) throw new Error(`Falha ao obter token Mercado Pago: ${tokenError.message}`)
+                if (!mpToken) throw new Error('Locador sem token do Mercado Pago configurado.')
 
-                let config = {
-                    frequencia: 'monthly',
-                    intervalo: 1,
-                    dias: ['seg'],
-                    termina: { tipo: 'nunca', valor: undefined as number | string | undefined },
-                    expiracao: 4,
-                }
-
-                try {
-                    if (typeof contrato.recorrencia === 'string') {
-                        if (contrato.recorrencia.startsWith('{')) {
-                            config = { ...config, ...JSON.parse(contrato.recorrencia) }
-                        } else if (contrato.recorrencia.includes('daily')) {
-                            config.frequencia = 'daily'
-                        }
-                    }
-                } catch (e) {
-                    console.error(`Erro ao parsear recorrencia do contrato ${contrato.id}:`, e)
-                }
+                const dataAtual = new Date(contrato.proxima_cobranca)
+                const config = parseRecurrence(contrato.recorrencia, dataAtual)
 
                 // --- GUARD DE DEDUPLICAÇÃO ---
                 // Impede criar cobrança duplicada caso o cron rode mais de uma vez
                 // para o mesmo contrato no mesmo período de faturamento.
-                const dataVencimentoCheck = new Date(contrato.proxima_cobranca).toISOString().split('T')[0]
-                const { count: jaExiste } = await supabase
+                const dataVencimentoCheck = billingDate(contrato.proxima_cobranca)
+                const { count: jaExiste, error: duplicateCheckError } = await supabase
                     .from('cobrancas')
                     .select('id', { count: 'exact', head: true })
                     .eq('id_contrato', contrato.id)
-                    .eq('data_vencimento', dataVencimentoCheck)
-                    .in('status', ['pendente', 'pago'])
+                    .eq('ciclo_cobranca', dataVencimentoCheck)
+
+                if (duplicateCheckError) throw duplicateCheckError
 
                 if (jaExiste && jaExiste > 0) {
-                    console.warn(`Cobrança duplicada ignorada para contrato ${contrato.id} em ${dataVencimentoCheck}.`)
+                    // Recupera casos antigos em que a fatura foi gravada, mas o
+                    // cursor do contrato não avançou após uma falha parcial.
+                    const schedule = nextContractSchedule(dataAtual, contrato.ocorrencias_realizadas, config)
+                    const { error: repairError } = await supabase.from('contratos').update(schedule)
+                        .eq('id', contrato.id).eq('proxima_cobranca', contrato.proxima_cobranca)
+                    if (repairError) throw new Error(`Fatura já existe, mas não foi possível avançar o contrato: ${repairError.message}`)
+                    console.warn(`Cobrança existente encontrada para contrato ${contrato.id} em ${dataVencimentoCheck}; recorrência reconciliada.`)
                     results.push({ id: contrato.id, status: 'skipped_duplicate' })
                     continue
                 }
@@ -193,7 +121,7 @@ Deno.serve(async (req) => {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${mpToken}`,
-                        'X-Idempotency-Key': crypto.randomUUID(),
+                        'X-Idempotency-Key': await paymentIdempotencyKey(contrato.id, dataVencimentoCheck),
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify(mpPayload),
@@ -205,7 +133,7 @@ Deno.serve(async (req) => {
                 }
 
                 // Fix 3: data_vencimento usa proxima_cobranca do contrato, não "hoje"
-                const dataVencimento = new Date(contrato.proxima_cobranca).toISOString().split('T')[0]
+                const dataVencimento = dataVencimentoCheck
 
                 // Fix 4: capturar erro do insert de cobrança
                 const { error: insertError } = await supabase.from('cobrancas').insert({
@@ -213,35 +141,26 @@ Deno.serve(async (req) => {
                     id_usuario: contrato.id_usuario,
                     valor: contrato.valor,
                     data_vencimento: dataVencimento,
+                    ciclo_cobranca: dataVencimento,
                     status: 'pendente',
                     mercado_pago_id: mpData.id.toString(),
                     payment_link: mpData.point_of_interaction?.transaction_data?.ticket_url ?? null,
                 })
+                if (insertError?.code === '23505') {
+                    results.push({ id: contrato.id, status: 'skipped_duplicate' })
+                    continue
+                }
                 if (insertError) throw new Error(`Erro ao salvar cobrança: ${insertError.message}`)
 
                 // --- CALCULAR PRÓXIMA DATA (Fix 1+2: preserva horário e intervalo correto) ---
-                const novasRealizadas = (contrato.ocorrencias_realizadas || 0) + 1
-                const dataAtual = new Date(contrato.proxima_cobranca)
-                const proximaData = calcularProximaData(dataAtual, config)
-                let novoStatus = 'ativo'
-
-                // --- VERIFICAR TÉRMINO ---
-                if (config.termina?.tipo === 'ocorrencia' && novasRealizadas >= (config.termina.valor as number)) {
-                    novoStatus = 'encerrado'
-                } else if (config.termina?.tipo === 'data' && config.termina.valor) {
-                    if (proximaData > new Date(config.termina.valor as string)) novoStatus = 'encerrado'
-                }
+                const schedule = nextContractSchedule(dataAtual, contrato.ocorrencias_realizadas, config)
 
                 // Fix 5: capturar erro do update de contrato
-                const { error: updateError } = await supabase.from('contratos').update({
-                    proxima_cobranca: proximaData.toISOString(),
-                    ocorrencias_realizadas: novasRealizadas,
-                    status: novoStatus,
-                }).eq('id', contrato.id)
+                const { error: updateError } = await supabase.from('contratos').update(schedule).eq('id', contrato.id)
 
                 if (updateError) throw new Error(`Erro ao atualizar contrato: ${updateError.message}`)
 
-                console.log(`Contrato ${contrato.id}: OK — próxima cobrança em ${proximaData.toISOString()}`)
+                console.log(`Contrato ${contrato.id}: OK — próxima cobrança em ${schedule.proxima_cobranca}`)
                 results.push({ id: contrato.id, status: 'ok' })
 
             } catch (err) {

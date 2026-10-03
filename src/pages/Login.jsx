@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import { toast } from 'react-toastify';
 import { Mail, Lock, Loader2 } from 'lucide-react';
@@ -9,15 +9,20 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const redirectTo = searchParams.get('redirectTo');
+  const destination = redirectTo?.startsWith('/') && !redirectTo.startsWith('//')
+    ? redirectTo
+    : '/dashboard';
 
   // Verifica se o usuário já está logado ao carregar a página
   useEffect(() => {
     const checkUser = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      if (session) navigate('/dashboard');
+      if (session) navigate(destination, { replace: true });
     };
     checkUser();
-  }, [navigate]);
+  }, [destination, navigate]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -45,7 +50,7 @@ const Login = () => {
       }
 
       toast.success("Login realizado com sucesso!");
-      navigate('/dashboard');
+      navigate(destination, { replace: true });
     } catch (error) {
       toast.error(error.message);
     } finally {

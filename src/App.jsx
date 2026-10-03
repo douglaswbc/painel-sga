@@ -17,6 +17,7 @@ import Triagem from './pages/Triagem';
 import Configuracoes from './pages/Configuracoes';
 import Admin from './pages/Admin';
 import Acessos from './pages/Acessos';
+import ZernioCallback from './pages/ZernioCallback';
 
 
 // Componente temporário para teste
@@ -29,6 +30,7 @@ function App() {
         <div className="min-h-screen bg-[#121829]">
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/zernio/callback" element={<ZernioCallback />} />
 
             
             {/* Rotas Protegidas pelo DashboardLayout */}

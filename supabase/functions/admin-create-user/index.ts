@@ -16,6 +16,26 @@ Deno.serve(async (req) => {
     )
 
     try {
+        const authHeader = req.headers.get('Authorization')
+        if (!authHeader) throw new Error("Autenticação obrigatória.")
+
+        const supabaseCaller = createClient(
+            Deno.env.get('SUPABASE_URL') ?? '',
+            Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+            { global: { headers: { Authorization: authHeader } } }
+        )
+        const { data: { user }, error: callerAuthError } = await supabaseCaller.auth.getUser()
+        if (callerAuthError || !user) throw new Error("Usuário não autenticado.")
+
+        const { data: callerProfile, error: callerProfileError } = await supabaseCaller
+            .from('usuarios')
+            .select('role')
+            .eq('id', user.id)
+            .single()
+        if (callerProfileError || callerProfile?.role !== 'admin') {
+            throw new Error("Acesso restrito a administradores.")
+        }
+
         const { email, password, nome_completo, role, whatsapp, instanceName } = await req.json()
 
         if (!email || !password || !role) {
@@ -39,7 +59,10 @@ Deno.serve(async (req) => {
 
         const updatePayload: any = {
             whatsapp: whatsapp || null,
-            ativo: true
+            ativo: true,
+            // handle_new_user now assigns the safe default role. Only this
+            // authenticated admin Edge Function may apply the requested role.
+            role
         }
 
         if (role === 'locador' && instanceName) {

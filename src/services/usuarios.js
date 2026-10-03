@@ -4,7 +4,7 @@ export const usuariosService = {
   list: async () => {
     const { data, error } = await supabase
       .from('usuarios')
-      .select('*')
+      .select('id, nome_completo, whatsapp, email, role, empresa_nome, ativo, created_at, ryze_instance, mp_notification_url')
       .order('created_at', { ascending: false });
     if (error) throw error;
     return data;
@@ -13,7 +13,7 @@ export const usuariosService = {
   getById: async (id) => {
     const { data, error } = await supabase
       .from('usuarios')
-      .select('*')
+      .select('id, nome_completo, whatsapp, email, role, empresa_nome, ativo, created_at, ryze_instance, mp_notification_url')
       .eq('id', id)
       .single();
     if (error) throw error;
@@ -39,10 +39,10 @@ export const usuariosService = {
   },
 
   toggleStatus: async (id, currentStatus) => {
-    const { error } = await supabase
-      .from('usuarios')
-      .update({ ativo: !currentStatus })
-      .eq('id', id);
+    const { error } = await supabase.rpc('admin_set_usuario_status', {
+      p_user_id: id,
+      p_ativo: !currentStatus,
+    });
     if (error) throw error;
   },
 

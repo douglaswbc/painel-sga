@@ -57,15 +57,13 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
 
     try {
       if (userToEdit?.id) {
-        const { error: err } = await supabase
-          .from('usuarios')
-          .update({
-            nome_completo: formData.nome_completo,
-            whatsapp: cleanWhatsApp,
-            role: formData.role,
-            ativo: formData.ativo
-          })
-          .eq('id', userToEdit.id);
+        const { error: err } = await supabase.rpc('admin_update_usuario', {
+          p_user_id: userToEdit.id,
+          p_nome_completo: formData.nome_completo,
+          p_whatsapp: cleanWhatsApp,
+          p_role: formData.role,
+          p_ativo: formData.ativo,
+        });
         
         if (err) throw err;
         toast.success("Perfil atualizado!");

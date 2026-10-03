@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { usuariosService } from '../services/usuarios';
 import { supabase } from '../services/supabase';
+import ZernioIntegrationCard from '../components/ZernioIntegrationCard';
 import { toast } from 'react-toastify';
 import { 
   Settings, User, Key, Link, 
@@ -289,6 +290,7 @@ const Configuracoes = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         <div className="lg:col-span-2 space-y-6">
+          {profile?.role === 'locador' && <ZernioIntegrationCard />}
           <form onSubmit={handleSaveConfig} className="bg-card border border-slate-700 rounded-xl p-6 shadow-lg space-y-6">
             <section>
               <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">

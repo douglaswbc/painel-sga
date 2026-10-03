@@ -3,6 +3,33 @@ import { X, Loader2 } from 'lucide-react';
 import { supabase } from '../services/supabase';
 import { toast } from 'react-toastify';
 
+const saoPauloToday = () => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+};
+
+const recurrenceOption = (value) => {
+  if (typeof value !== 'string') return 'mensal';
+  const normalized = value.trim().toLowerCase();
+  if (normalized.startsWith('{')) {
+    try {
+      const config = JSON.parse(value);
+      if (config.frequencia === 'weekly') return Number(config.intervalo) > 1 ? 'quinzenal' : 'semanal';
+      if (config.frequencia === 'daily') return 'diaria';
+      if (config.frequencia === 'yearly') return 'anual';
+      return 'mensal';
+    } catch { return 'mensal'; }
+  }
+  if (normalized.includes('quinzenal') || normalized.includes('biweekly')) return 'quinzenal';
+  if (normalized.includes('semanal') || normalized.includes('weekly')) return 'semanal';
+  if (normalized.includes('diari') || normalized.includes('daily')) return 'diaria';
+  if (normalized.includes('anual') || normalized.includes('yearly')) return 'anual';
+  return 'mensal';
+};
+
 const ContratoModal = ({ isOpen, onClose, onSuccess, contrato = null, userId }) => {
   const [loading, setLoading] = useState(false);
   const [dataOptions, setDataOptions] = useState({ locatarios: [], veiculos: [] });
@@ -11,7 +38,7 @@ const ContratoModal = ({ isOpen, onClose, onSuccess, contrato = null, userId }) 
     id_veiculo: '',
     valor: '',
     recorrencia: 'semanal',
-    data_inicio: new Date().toISOString().split('T')[0],
+    data_inicio: saoPauloToday(),
     status: 'ativo'
   });
 
@@ -28,11 +55,11 @@ const ContratoModal = ({ isOpen, onClose, onSuccess, contrato = null, userId }) 
     if (isOpen) {
       fetchOptions();
       if (contrato) {
-        setFormData(contrato);
+        setFormData({ ...contrato, recorrencia: recurrenceOption(contrato.recorrencia) });
       } else {
         setFormData({
           id_locatario: '', id_veiculo: '', valor: '',
-          recorrencia: 'semanal', data_inicio: new Date().toISOString().split('T')[0],
+          recorrencia: 'semanal', data_inicio: saoPauloToday(),
           status: 'ativo'
         });
       }
@@ -44,12 +71,32 @@ const ContratoModal = ({ isOpen, onClose, onSuccess, contrato = null, userId }) 
     setLoading(true);
 
     try {
-      // Calcula a primeira cobrança (simplificado: igual à data de início)
+      const dueDate = new Date(`${formData.data_inicio}T12:00:00-03:00`);
+      const dueWeekDay = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'][dueDate.getUTCDay()];
+      const biweekly = formData.recorrencia === 'quinzenal';
+      let savedRecurrence = null;
+      if (contrato && recurrenceOption(contrato.recorrencia) === formData.recorrencia && typeof contrato.recorrencia === 'string') {
+        try {
+          if (contrato.recorrencia.trim().startsWith('{')) savedRecurrence = JSON.parse(contrato.recorrencia);
+        } catch { /* Rebuild malformed values below. */ }
+      }
+      const recurrence = savedRecurrence || {
+        frequencia: ({ diaria: 'daily', semanal: 'weekly', quinzenal: 'weekly', mensal: 'monthly', anual: 'yearly' })[formData.recorrencia] || 'monthly',
+        intervalo: biweekly ? 2 : 1,
+        dias: [dueWeekDay],
+        termina: { tipo: 'nunca', valor: null },
+        expiracao: 4,
+      };
+
       const payload = { 
         ...formData, 
         id_usuario: userId, 
         valor: parseFloat(formData.valor),
-        proxima_cobranca: new Date(formData.data_inicio).toISOString()
+        recorrencia: JSON.stringify(recurrence),
+        // Editar valor/veículo/locatário não pode reiniciar a recorrência já avançada.
+        proxima_cobranca: contrato && contrato.data_inicio === formData.data_inicio
+          ? contrato.proxima_cobranca
+          : dueDate.toISOString()
       };
       
       let error;
@@ -129,6 +176,8 @@ const ContratoModal = ({ isOpen, onClose, onSuccess, contrato = null, userId }) 
                 <option value="semanal">Semanal</option>
                 <option value="quinzenal">Quinzenal</option>
                 <option value="mensal">Mensal</option>
+                <option value="diaria">Diária</option>
+                <option value="anual">Anual</option>
               </select>
             </div>
           </div>

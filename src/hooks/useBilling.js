@@ -41,9 +41,9 @@ export function useBilling(userId) {
   };
 
   const runDailyBilling = async () => {
-    await cobrancasService.gerarCobrancasDiarias(userId);
-    toast.success('Faturamento processado!');
+    const result = await cobrancasService.gerarCobrancasDiarias();
     await fetch();
+    return result;
   };
 
   const createManual = async (data) => {

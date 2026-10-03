@@ -1,6 +1,8 @@
 -- ==========================================
 -- ESTRUTURA DO BANCO DE DADOS - PAINEL SGA
 -- ==========================================
+-- REFERÊNCIA DE INSTALAÇÃO INICIAL, NÃO É UMA MIGRATION.
+-- Em bancos existentes, aplique os arquivos versionados em supabase/migrations.
 
 -- Tabela de Usuários (Deltalhes do Usuário logado)
 CREATE TABLE public.usuarios (
@@ -81,7 +83,8 @@ CREATE TABLE public.cobrancas (
   id_contrato uuid,
   id_usuario uuid NOT NULL,
   valor numeric NOT NULL,
-  data_vencimento text NOT NULL,
+  data_vencimento date NOT NULL,
+  ciclo_cobranca date, -- Preenchido apenas em faturas recorrentes de contrato
   data_pagamento timestamp with time zone,
   status text NOT NULL DEFAULT 'pendente'::text,
   tentativas_envio integer NOT NULL DEFAULT 0,

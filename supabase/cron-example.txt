@@ -1,50 +1,60 @@
--- === 1. CRIAR AGENDAMENTO PARA FATURAMENTO DIÁRIO ===
--- Este cron executa todo dia à meia-noite (00:00) para processar os contratos e gerar novas faturas.
--- Substitua 'YOUR_SERVICE_ROLE_KEY' pelo seu Service Role Key do Supabase (Settings -> API)
--- Substitua 'USER_ID_HERE' pelo ID do usuário padrão que processa os contratos (ou passe vazio se a função tratar disto)
+-- Faturamento automático do SGA
+-- Habilite pg_cron, pg_net e Vault no Supabase antes de configurar o job.
+-- Guarde valores reais no Vault; não coloque service_role em arquivos versionados.
 
-select
-  cron.schedule(
-    'processar-faturamento-diario',  -- Nome amigável do agendamento
-    '0 * * * *',                    -- Hora em Hora
-    $$
-    select
-      net.http_post(
-        url:='https://ykvmzelwpodjmvoujumf.supabase.co/functions/v1/gerar-cobrancas-diarias',
-        headers:='{"Content-Type": "application/json", "Authorization": "Bearer YOUR_SERVICE_ROLE_KEY"}'::jsonb,
-        body:='{"userId": "45b00546-ad4e-4481-9a2d-d2dffe2871e3"}'::jsonb
-      ) as request_id;
-    $$
-  );
+-- Execute uma vez, trocando os dois valores. Escolha nomes de secrets estáveis.
+select vault.create_secret('https://<PROJECT_REF>.supabase.co', 'sga_project_url');
+select vault.create_secret('<SUPABASE_SERVICE_ROLE_KEY>', 'sga_service_role_key');
 
+-- Remove the antiga rotina com endpoint inválido e substitui o job gerenciado.
+select cron.unschedule(jobid)
+from cron.job
+where jobname in ('processar-faturamento-diario', 'sga-faturamento-cobrancas');
 
--- === 2. CRIAR AGENDAMENTO PARA ENVIAR LEMBRETES DE COBRANÇA ===
--- Este cron executa a cada 30 minutos para checar se há alguma cobrança na régua que precisa ser disparada.
--- A função já tem trava interna de 15 minutos, então pode rodar com segurança.
+-- A função existente é `faturamento-cobrancas`.
+-- Rodar de hora em hora também recupera contratos que ficaram vencidos durante
+-- indisponibilidade. Sem userId no corpo, a Edge Function processa todos os locadores.
+select cron.schedule(
+  'sga-faturamento-cobrancas',
+  '0 * * * *',
+  $$
+    select net.http_post(
+      url := (select decrypted_secret from vault.decrypted_secrets where name = 'sga_project_url')
+             || '/functions/v1/faturamento-cobrancas',
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'sga_service_role_key')
+      ),
+      body := '{}'::jsonb
+    ) as request_id;
+  $$
+);
 
-select
-  cron.schedule(
-    'enviar-lembretes-whatsapp',    -- Nome amigável do agendamento
-    '*/30 * * * *',                -- A cada 30 minutos
-    $$
-    select
-      net.http_post(
-        url:='https://ykvmzelwpodjmvoujumf.supabase.co/functions/v1/enviar-lembretes-cobranca',
-        headers:='{"Content-Type": "application/json", "Authorization": "Bearer YOUR_SERVICE_ROLE_KEY"}'::jsonb,
-        body:='{}'::jsonb
-      ) as request_id;
-    $$
-  );
+-- Manter a régua atual de lembretes ativa até a migração WhatsApp da fase 6.
+select cron.unschedule(jobid)
+from cron.job
+where jobname = 'enviar-lembretes-whatsapp';
 
+select cron.schedule(
+  'enviar-lembretes-whatsapp',
+  '*/30 * * * *',
+  $$
+    select net.http_post(
+      url := (select decrypted_secret from vault.decrypted_secrets where name = 'sga_project_url')
+             || '/functions/v1/enviar-lembretes-cobranca',
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'sga_service_role_key')
+      ),
+      body := '{}'::jsonb
+    ) as request_id;
+  $$
+);
 
--- === COMANDOS ÚTEIS PARA GERENCIAMENTO ===
-
--- Listar todos os crons ativos:
+-- Conferir execuções e remover/ajustar o job:
 -- select * from cron.job;
+-- select * from cron.job_run_details order by start_time desc limit 20;
+-- select cron.unschedule('sga-faturamento-cobrancas');
 
--- Ver logs de execução (para ver se deu erro 400, 500, etc):
--- select * from cron.job_run_details order by start_time desc limit 10;
-
--- Para remover um cron se precisar ajustar:
--- select cron.unschedule('processar-faturamento-diario');
--- select cron.unschedule('enviar-lembretes-whatsapp');
+-- O cron de lembretes continua chamando a função atual. O envio WhatsApp será
+-- migrado para Zernio na fase 6 do TASK.md.

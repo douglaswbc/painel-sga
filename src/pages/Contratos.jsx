@@ -2,7 +2,6 @@ import React, { useState, useMemo } from 'react';
 import { Plus, Pencil, Trash2, User, Car, DollarSign, Calendar } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useContracts } from '../hooks/useContracts';
-import { contratosService } from '../services/contratos';
 import { Button } from '../components/ui/Button';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Modal, ModalBody, ModalFooter } from '../components/ui/Modal';
@@ -34,7 +33,7 @@ const defaultForm = {
 
 const Contratos = () => {
   const { profile } = useAuth();
-  const { contracts, locatarios, veiculos, loading, fetch: fetchContratos, save: saveContract, toggleStatus, remove } = useContracts(profile?.id);
+  const { contracts, locatarios, veiculos, loading, save: saveContract, toggleStatus, remove } = useContracts(profile?.id);
   const [showModal, setShowModal] = useState(false);
   const [editingContract, setEditingContract] = useState(null);
   const [formData, setFormData] = useState(defaultForm);

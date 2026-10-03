@@ -1,0 +1,315 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
+const ZERNIO_API = 'https://zernio.com/api/v1';
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+type JsonRecord = Record<string, any>;
+type ZernioProfile = { id: string; name: string; accounts: ZernioAccount[] };
+type ZernioAccount = {
+  id: string;
+  name: string;
+  phoneNumber: string | null;
+  active: boolean;
+};
+
+class ZernioRequestError extends Error {
+  status: number;
+  constructor(status: number) {
+    super('Não foi possível validar a chave na Zernio. Confira a chave e tente novamente.');
+    this.status = status;
+  }
+}
+
+function base64(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function fromBase64(value: string): Uint8Array {
+  const binary = atob(value);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function encryptionKeyBytes(): Uint8Array {
+  const value = Deno.env.get('ZERNIO_ENCRYPTION_KEY') ?? '';
+  if (!/^[a-fA-F0-9]{64}$/.test(value)) {
+    throw new Error('A chave de criptografia da integração ainda não foi configurada no Supabase.');
+  }
+  return Uint8Array.from(value.match(/.{2}/g)!, (pair) => Number.parseInt(pair, 16));
+}
+
+async function cryptoKey(): Promise<CryptoKey> {
+  return crypto.subtle.importKey(
+    'raw',
+    encryptionKeyBytes(),
+    { name: 'AES-GCM' },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+}
+
+async function encryptApiKey(apiKey: string, ownerId: string): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, additionalData: encoder.encode(ownerId) },
+    await cryptoKey(),
+    encoder.encode(apiKey),
+  );
+  return `v1.${base64(iv)}.${base64(new Uint8Array(encrypted))}`;
+}
+
+async function decryptApiKey(ciphertext: string, ownerId: string): Promise<string> {
+  const [version, encodedIv, encodedCiphertext] = ciphertext.split('.');
+  if (version !== 'v1' || !encodedIv || !encodedCiphertext) {
+    throw new Error('Formato da credencial armazenada não reconhecido.');
+  }
+  const decrypted = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: fromBase64(encodedIv), additionalData: encoder.encode(ownerId) },
+    await cryptoKey(),
+    fromBase64(encodedCiphertext),
+  );
+  return decoder.decode(decrypted);
+}
+
+async function zernioGet(path: string, apiKey: string): Promise<JsonRecord> {
+  let response: Response;
+  try {
+    response = await fetch(`${ZERNIO_API}${path}`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch {
+    throw new Error('Não foi possível conectar à Zernio agora. Tente novamente.');
+  }
+
+  if (!response.ok) throw new ZernioRequestError(response.status);
+  try {
+    return await response.json();
+  } catch {
+    throw new Error('A Zernio retornou uma resposta inesperada.');
+  }
+}
+
+function arrayAt(payload: JsonRecord, key: string): JsonRecord[] {
+  if (Array.isArray(payload?.[key])) return payload[key];
+  if (Array.isArray(payload?.data?.[key])) return payload.data[key];
+  return [];
+}
+
+function normalizeProfile(profile: JsonRecord): Omit<ZernioProfile, 'accounts'> | null {
+  const id = profile?._id ?? profile?.id;
+  if (typeof id !== 'string' || !/^[a-fA-F0-9]{24}$/.test(id)) return null;
+  return { id, name: String(profile.name ?? profile.displayName ?? 'Perfil Zernio') };
+}
+
+function normalizeAccount(account: JsonRecord): ZernioAccount | null {
+  const id = account?._id ?? account?.id;
+  if (typeof id !== 'string' || !/^[a-fA-F0-9]{24}$/.test(id)) return null;
+  const meta = account.metadata ?? account.platformSpecificData?.whatsapp ?? {};
+  return {
+    id,
+    name: String(account.displayName ?? account.name ?? account.username ?? 'Canal WhatsApp'),
+    phoneNumber: account.phoneNumber ?? meta.phoneNumber ?? account.username ?? null,
+    active: account.isActive !== false,
+  };
+}
+
+async function getProfilesAndWhatsAppAccounts(apiKey: string): Promise<ZernioProfile[]> {
+  const profilePayload = await zernioGet('/profiles', apiKey);
+  const profiles = arrayAt(profilePayload, 'profiles')
+    .map(normalizeProfile)
+    .filter((profile): profile is Omit<ZernioProfile, 'accounts'> => Boolean(profile));
+
+  return await Promise.all(profiles.map(async (profile) => {
+    const query = new URLSearchParams({ profileId: profile.id });
+    const accountsPayload = await zernioGet(`/accounts?${query.toString()}`, apiKey);
+    const accounts = arrayAt(accountsPayload, 'accounts')
+      .filter((account) => account.platform === 'whatsapp')
+      .map(normalizeAccount)
+      .filter((account): account is ZernioAccount => Boolean(account));
+    return { ...profile, accounts };
+  }));
+}
+
+function publicIntegration(row: JsonRecord | null) {
+  if (!row) return { hasApiKey: false, keyStatus: 'missing', keyLast4: null, profile: null, account: null };
+  return {
+    hasApiKey: Boolean(row.api_key_ciphertext),
+    keyStatus: row.key_status,
+    keyLast4: row.api_key_last4?.trim() || null,
+    validatedAt: row.validated_at,
+    lastCheckedAt: row.last_checked_at,
+    profile: row.zernio_profile_id ? {
+      id: row.zernio_profile_id,
+      name: row.zernio_profile_name,
+    } : null,
+    account: row.whatsapp_account_id ? {
+      id: row.whatsapp_account_id,
+      name: row.whatsapp_account_name,
+      phoneNumber: row.whatsapp_phone_number,
+    } : null,
+  };
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  const json = (body: JsonRecord, status = 200) => new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+
+  try {
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) return json({ error: 'Autenticação obrigatória.' }, 401);
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+    const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+    const caller = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data: { user }, error: authError } = await caller.auth.getUser();
+    if (authError || !user) return json({ error: 'Sessão inválida ou expirada.' }, 401);
+
+    const admin = createClient(supabaseUrl, serviceKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data: userProfile, error: profileError } = await admin
+      .from('usuarios')
+      .select('role, ativo')
+      .eq('id', user.id)
+      .maybeSingle();
+    if (profileError || userProfile?.role !== 'locador' || userProfile.ativo !== true) {
+      return json({ error: 'Esta integração está disponível para contas ativas de locador.' }, 403);
+    }
+
+    const { action, apiKey, profileId, accountId } = await req.json();
+    const { data: integration, error: integrationError } = await admin
+      .from('zernio_integracoes')
+      .select('*')
+      .eq('id_usuario', user.id)
+      .maybeSingle();
+    if (integrationError) throw new Error('Não foi possível carregar a integração.');
+
+    if (action === 'status') return json({ integration: publicIntegration(integration) });
+
+    if (action === 'remove') {
+      const { error } = await admin.from('zernio_integracoes').delete().eq('id_usuario', user.id);
+      if (error) throw new Error('Não foi possível remover a chave Zernio.');
+      return json({ integration: publicIntegration(null) });
+    }
+
+    if (action === 'validate') {
+      if (typeof apiKey !== 'string' || !/^sk_[a-fA-F0-9]{64}$/.test(apiKey.trim())) {
+        return json({ error: 'A chave precisa estar no formato sk_ seguido de 64 caracteres hexadecimais.' }, 400);
+      }
+      const cleanApiKey = apiKey.trim();
+      const profiles = await getProfilesAndWhatsAppAccounts(cleanApiKey);
+      const ciphertext = await encryptApiKey(cleanApiKey, user.id);
+      const now = new Date().toISOString();
+      const { data: saved, error } = await admin
+        .from('zernio_integracoes')
+        .upsert({
+          id_usuario: user.id,
+          api_key_ciphertext: ciphertext,
+          api_key_last4: cleanApiKey.slice(-4),
+          key_status: 'valid',
+          zernio_profile_id: null,
+          zernio_profile_name: null,
+          whatsapp_account_id: null,
+          whatsapp_account_name: null,
+          whatsapp_phone_number: null,
+          validated_at: now,
+          last_checked_at: now,
+          updated_at: now,
+        }, { onConflict: 'id_usuario' })
+        .select('*')
+        .single();
+      if (error || !saved) throw new Error('A chave foi validada, mas não foi possível salvá-la. Tente novamente.');
+      return json({ integration: publicIntegration(saved), profiles });
+    }
+
+    if (!integration?.api_key_ciphertext) {
+      return json({ error: 'Cadastre e valide uma chave Zernio primeiro.' }, 409);
+    }
+    const savedApiKey = await decryptApiKey(integration.api_key_ciphertext, user.id);
+
+    if (action === 'refresh') {
+      try {
+        const profiles = await getProfilesAndWhatsAppAccounts(savedApiKey);
+        const now = new Date().toISOString();
+        const { data: updated, error } = await admin
+          .from('zernio_integracoes')
+          .update({ key_status: 'valid', last_checked_at: now, updated_at: now })
+          .eq('id_usuario', user.id)
+          .select('*')
+          .single();
+        if (error) throw new Error('Não foi possível atualizar o estado da integração.');
+        return json({ integration: publicIntegration(updated), profiles });
+      } catch (error) {
+        if (error instanceof ZernioRequestError && [401, 403].includes(error.status)) {
+          await admin.from('zernio_integracoes').update({
+            key_status: 'invalid',
+            last_checked_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }).eq('id_usuario', user.id);
+        }
+        throw error;
+      }
+    }
+
+    if (action === 'select') {
+      if (typeof profileId !== 'string' || typeof accountId !== 'string') {
+        return json({ error: 'Selecione um perfil e um canal WhatsApp.' }, 400);
+      }
+      const profiles = await getProfilesAndWhatsAppAccounts(savedApiKey);
+      const selectedProfile = profiles.find((profile) => profile.id === profileId);
+      const selectedAccount = selectedProfile?.accounts.find((account) => account.id === accountId && account.active);
+      if (!selectedProfile || !selectedAccount) {
+        return json({ error: 'Esse canal não está disponível para a chave e o perfil selecionados. Atualize a lista e tente novamente.' }, 400);
+      }
+      const now = new Date().toISOString();
+      const { data: updated, error } = await admin
+        .from('zernio_integracoes')
+        .update({
+          zernio_profile_id: selectedProfile.id,
+          zernio_profile_name: selectedProfile.name,
+          whatsapp_account_id: selectedAccount.id,
+          whatsapp_account_name: selectedAccount.name,
+          whatsapp_phone_number: selectedAccount.phoneNumber,
+          last_checked_at: now,
+          updated_at: now,
+        })
+        .eq('id_usuario', user.id)
+        .select('*')
+        .single();
+      if (error) throw new Error('Não foi possível salvar o canal selecionado.');
+      return json({ integration: publicIntegration(updated) });
+    }
+
+    return json({ error: 'Ação não reconhecida.' }, 400);
+  } catch (error) {
+    if (error instanceof ZernioRequestError) {
+      const message = error.status === 401 || error.status === 403
+        ? 'A chave Zernio é inválida ou não tem permissão para listar perfis e canais.'
+        : error.status === 429
+          ? 'A Zernio limitou temporariamente as consultas. Aguarde e tente novamente.'
+          : error.status >= 500
+            ? 'A Zernio está temporariamente indisponível. Tente novamente.'
+            : 'Não foi possível consultar perfis e canais na Zernio.';
+      return json({ error: message }, error.status === 401 ? 401 : 400);
+    }
+    const message = error instanceof Error ? error.message : 'Não foi possível concluir a operação.';
+    return json({ error: message }, 400);
+  }
+});

@@ -105,8 +105,20 @@ const Cobrancas = () => {
     setShowConfirmBillingModal(false);
     setGenerating(true);
     try {
-      await runDailyBilling();
-      toast.success("Faturamento processado!");
+      const result = await runDailyBilling();
+      const outcomes = Array.isArray(result?.results) ? result.results : [];
+      const failed = outcomes.filter(item => item.status === 'error');
+      const created = outcomes.filter(item => item.status === 'ok').length;
+      const skipped = outcomes.filter(item => item.status === 'skipped_duplicate').length;
+
+      if (failed.length) {
+        const details = failed.slice(0, 3).map(item => `${item.id?.slice(0, 8) || 'contrato'}: ${item.msg || 'falha'}`).join(' | ');
+        toast.error(`${failed.length} contrato(s) falharam. ${details}`);
+      } else if (created || skipped) {
+        toast.success(`Faturamento concluído: ${created} cobrança(s) criada(s), ${skipped} já existente(s).`);
+      } else {
+        toast.info(result?.message || 'Não há contratos vencidos para faturar.');
+      }
     } catch (error) { toast.error(error.message); }
     finally { setGenerating(false); }
   };
