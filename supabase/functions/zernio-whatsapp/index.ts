@@ -179,7 +179,7 @@ function safeZernioError(error: ZernioError): PublicError {
   const requestRef = error.requestId ? ` Referência: ${error.requestId}.` : '';
   return new PublicError(
     details
-      ? `A Zernio/Meta recusou o template: ${details}.${requestRef}`
+      ? `A Zernio/Meta recusou a solicitacao: ${details}.${requestRef}`
       : `A Zernio ou a Meta recusou a operação (HTTP ${error.status}). Confira o conteúdo do template.${requestRef}`,
     error.status === 422 ? 400 : error.status,
   );
@@ -291,6 +291,7 @@ Deno.serve(async (req) => {
   });
   let admin: any = null;
   let claimedDeliveryId: string | null = null;
+  let claimedManualDeliveryId: string | null = null;
   try {
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) return json({ error: 'Authentication required.' }, 401);
@@ -321,6 +322,99 @@ Deno.serve(async (req) => {
       return json({ error: 'A operação está disponível para contas ativas de locador.' }, 403);
     }
     const action = body?.action;
+    if (action === 'health') {
+      const { data: integration, error: integrationError } = await admin.from('zernio_integracoes')
+        .select('api_key_ciphertext,key_status,whatsapp_account_id,zernio_profile_id')
+        .eq('id_usuario', user.id).maybeSingle();
+      if (integrationError || !integration?.api_key_ciphertext || integration.key_status !== 'valid'
+        || !integration.whatsapp_account_id || !integration.zernio_profile_id) {
+        return json({ health: 'attention', message: 'Configure e valide a integracao Zernio em Configuracoes.' });
+      }
+      try {
+        const apiKey = await decryptApiKey(integration.api_key_ciphertext, user.id);
+        const query = new URLSearchParams({ profileId: integration.zernio_profile_id });
+        const payload = await zernioRequest(`/accounts?${query.toString()}`, apiKey);
+        const connected = listAt(payload, 'accounts').some((item) => {
+          if ((item._id ?? item.id) !== integration.whatsapp_account_id || item.platform !== 'whatsapp' || item.isActive === false) return false;
+          const profileId = typeof item.profileId === 'object' ? item.profileId?._id ?? item.profileId?.id : item.profileId;
+          return !profileId || profileId === integration.zernio_profile_id;
+        });
+        return json({ health: connected ? 'connected' : 'attention', message: connected ? 'Canal WhatsApp conectado e ativo na Zernio.' : 'O canal nao esta ativo no perfil Zernio configurado.' });
+      } catch (error) {
+        const message = error instanceof ZernioError ? safeZernioError(error).message : 'Nao foi possivel consultar o canal Zernio agora.';
+        return json({ health: 'unavailable', message });
+      }
+    }
+    if (action === 'activity') {
+      const page = Math.max(1, Math.min(1000, Number.parseInt(String(body.page || '1'), 10) || 1));
+      const requestedPageSize = Number.parseInt(String(body.pageSize || ''), 10);
+      const pageSize = body.pageSize == null ? 100 : Math.max(1, Math.min(50, requestedPageSize || 25));
+      const offset = (page - 1) * pageSize;
+      const hasDateFilter = typeof body.start === 'string' || typeof body.end === 'string';
+      let startDate: Date | null = null;
+      let endDate: Date | null = null;
+      if (hasDateFilter) {
+        startDate = new Date(typeof body.start === 'string' ? body.start : '');
+        endDate = new Date(typeof body.end === 'string' ? body.end : '');
+        const rangeDays = (endDate.getTime() - startDate.getTime()) / 86400000;
+        if (!Number.isFinite(startDate.getTime()) || !Number.isFinite(endDate.getTime())
+          || !Number.isFinite(rangeDays) || rangeDays < 0 || rangeDays > 366) {
+          return json({ error: 'Selecione um periodo valido de ate 12 meses.' }, 400);
+        }
+      }
+      const search = typeof body.search === 'string' ? body.search.trim().slice(0, 100) : '';
+      let query = admin.from('zernio_whatsapp_activity_log')
+        .select('type,source_id,status,template_name,template_language,category,recipient_name,recipient_phone,occurred_at,message_id,error', { count: 'exact' })
+        .eq('id_usuario', user.id)
+        .order('occurred_at', { ascending: false });
+      if (startDate && endDate) query = query.gte('occurred_at', startDate.toISOString()).lte('occurred_at', endDate.toISOString());
+      if (search.length >= 3) query = query.ilike('recipient_name', `%${search}%`);
+      const { data, count, error } = await query.range(offset, offset + pageSize - 1);
+      if (error) throw new PublicError('Nao foi possivel carregar o historico de operacao. Aplique a migration 018.', 500);
+      const activity = (data || []).map((row: JsonRecord) => ({
+        id: `${row.type}-${row.source_id}`,
+        type: row.type,
+        label: row.template_name || ({ charge: 'Template de cobranca', scheduled: 'Template agendado', payment: 'Confirmacao de pagamento', manual: 'Template manual' }[row.type] || 'Template WhatsApp'),
+        templateLanguage: row.template_language,
+        category: row.category,
+        recipientName: row.recipient_name || 'Destinatario nao identificado',
+        recipientPhone: row.recipient_phone,
+        status: row.status,
+        occurredAt: row.occurred_at,
+        messageId: row.message_id,
+        error: row.error,
+      }));
+      return json({ activity, page, pageSize, total: count || 0, totalPages: Math.max(1, Math.ceil((count || 0) / pageSize)) });
+    }
+    if (action === 'pricing_analytics') {
+      const startDate = new Date(typeof body.start === 'string' ? body.start : '');
+      const endDate = new Date(typeof body.end === 'string' ? body.end : '');
+      const rangeDays = (endDate.getTime() - startDate.getTime()) / 86400000;
+      if (!Number.isFinite(startDate.getTime()) || !Number.isFinite(endDate.getTime())
+        || !Number.isFinite(rangeDays) || rangeDays < 0 || rangeDays > 366) {
+        return json({ error: 'Selecione um periodo valido de ate 12 meses.' }, 400);
+      }
+      const { data, error } = await admin.from('zernio_whatsapp_activity_log')
+        .select('category,recipient_phone')
+        .eq('id_usuario', user.id).eq('status', 'sent')
+        .gte('occurred_at', startDate.toISOString()).lte('occurred_at', endDate.toISOString());
+      if (error) throw new PublicError('Nao foi possivel calcular a estimativa local de uso. Aplique a migration 018.', 500);
+      const rates: Record<string, number> = { MARKETING: 0.3217, UTILITY: 0.035, AUTHENTICATION: 0.035 };
+      const grouped = new Map<string, JsonRecord>();
+      for (const row of data || []) {
+        const digits = String(row.recipient_phone || '').replace(/\D/g, '');
+        const country = digits.startsWith('55') || digits.length === 10 || digits.length === 11 ? 'BR' : 'UNKNOWN';
+        const category = ['MARKETING', 'UTILITY', 'AUTHENTICATION'].includes(String(row.category).toUpperCase())
+          ? String(row.category).toUpperCase() : 'UNKNOWN';
+        const key = `${category}:${country}`;
+        const current = grouped.get(key) || { category, country, volume: 0, cost: 0, currency: country === 'BR' ? 'BRL' : null };
+        current.volume += 1;
+        if (country === 'BR' && rates[category]) current.cost += rates[category];
+        grouped.set(key, current);
+      }
+      return json({ analytics: [...grouped.values()], approximate: true, costAvailable: true, source: 'local_delivery_logs',
+        message: 'Estimativa baseada nos envios aceitos registrados no SGA, categorias dos templates e tarifas Meta do Brasil vigentes desde 01/10/2026. A fatura do parceiro pode variar.' });
+    }
     const { data: integration, error: integrationError } = await admin.from('zernio_integracoes')
       .select('*').eq('id_usuario', user.id).maybeSingle();
     if (integrationError || !integration?.api_key_ciphertext || integration.key_status !== 'valid') {
@@ -391,6 +485,13 @@ Deno.serve(async (req) => {
         return json({ error: `Preencha os ${expectedParams} valores de variável do template.` }, 400);
       }
       const idempotencyKey = `sga-manual-${crypto.randomUUID()}`;
+      const { data: manualDelivery, error: manualDeliveryError } = await admin.from('zernio_whatsapp_manual_deliveries').insert({
+        id_usuario: user.id, id_locatario: tenant.id, template_id: template.id, account_id: accountId,
+        idempotency_key: idempotencyKey, template_name: template.name, template_language: template.language,
+        status: 'sending',
+      }).select('id').single();
+      if (manualDeliveryError || !manualDelivery) throw new PublicError('Nao foi possivel registrar a tentativa de envio. A mensagem nao foi enviada.', 500);
+      claimedManualDeliveryId = manualDelivery.id;
       let sentPayload: JsonRecord;
       try {
         sentPayload = await zernioRequest('/inbox/conversations', apiKey, {
@@ -410,6 +511,14 @@ Deno.serve(async (req) => {
       const result = sentPayload.data ?? sentPayload;
       const messageId = result.messageId ?? result.message?.id;
       if (typeof messageId !== 'string' || !messageId) throw new PublicError('A Zernio não retornou a identificação da mensagem enviada.', 502);
+      const sentAt = new Date().toISOString();
+      const { error: auditError } = await admin.from('zernio_whatsapp_manual_deliveries').update({
+        status: 'sent', message_id: messageId,
+        conversation_id: result.conversationId ?? result.conversation?.id ?? null,
+        sent_at: sentAt, updated_at: sentAt, safe_error: null, error_code: null,
+      }).eq('id', manualDelivery.id).eq('status', 'sending');
+      if (auditError) throw new Error('A Zernio enviou a mensagem, mas o registro de operacao nao foi concluido.');
+      claimedManualDeliveryId = null;
       return json({ success: true, messageId });
     }
 
@@ -853,6 +962,12 @@ Deno.serve(async (req) => {
       await admin.from('zernio_whatsapp_deliveries').update({
         status: 'failed', error_code: code, safe_error: safeError.message, updated_at: new Date().toISOString(),
       }).eq('id', claimedDeliveryId).eq('status', 'sending');
+    }
+    if (claimedManualDeliveryId && admin) {
+      const code = error instanceof ZernioError && error.code ? error.code : 'send_failed';
+      await admin.from('zernio_whatsapp_manual_deliveries').update({
+        status: 'failed', error_code: code, safe_error: safeError.message, updated_at: new Date().toISOString(),
+      }).eq('id', claimedManualDeliveryId).eq('status', 'sending');
     }
     return json({ error: safeError.message }, safeError.status);
   }

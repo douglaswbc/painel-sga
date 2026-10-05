@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
-import { CalendarClock, MessageSquareQuote } from 'lucide-react';
+import { CalendarClock, CircleDollarSign, MessageSquareQuote } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import ZernioTemplatesCard from '../components/ZernioTemplatesCard';
 import ZernioSchedulesCard from '../components/ZernioSchedulesCard';
+import ZernioOperationsCard from '../components/ZernioOperationsCard';
 
 const tabs = [
   { id: 'templates', label: 'Templates Meta', icon: MessageSquareQuote },
   { id: 'schedules', label: 'Agendamentos Ativos', icon: CalendarClock },
+  { id: 'operations', label: 'Custos e Operação', icon: CircleDollarSign },
 ];
 
 export default function Mensagens() {
@@ -40,8 +42,10 @@ export default function Mensagens() {
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-6 text-sm text-zinc-400">A gestão de mensagens está disponível para contas de locador.</div>
       ) : activeTab === 'templates' ? (
         <ZernioTemplatesCard />
-      ) : (
+      ) : activeTab === 'schedules' ? (
         <ZernioSchedulesCard />
+      ) : (
+        <ZernioOperationsCard />
       )}
     </main>
   );

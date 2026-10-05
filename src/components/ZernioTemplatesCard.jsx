@@ -268,7 +268,7 @@ function TemplateForm({ busy, storageKey, onCancel, onSubmit }) {
     });
   };
 
-  const inputClass = (invalid = false) => `w-full bg-slate-950 border rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400 ${invalid && attempted ? 'border-red-500' : 'border-slate-700'}`;
+  const inputClass = (invalid = false) => `w-full bg-[#e8e8ed] border rounded-lg px-3 py-2.5 text-sm text-[#1d1d1f] outline-none placeholder:text-[#6e6e73] focus:border-[#0066cc] ${invalid && attempted ? 'border-red-500' : 'border-[#b8b8be]'}`;
   const shownError = (key) => attempted && errors[key] ? <p className="mt-1 text-[11px] text-red-400">{errors[key]}</p> : null;
 
   return (
