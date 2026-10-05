@@ -85,6 +85,14 @@ Deno.serve(async (req) => {
       results.push({ id: charge.id, ownerId: charge.id_usuario, status: 'failed', detail: error instanceof Error ? error.message.slice(0, 300) : 'Request failed.' });
     }
   }
-  console.log(`Reminder run completed: ${results.filter((item) => item.status === 'sent').length} sent, ${results.filter((item) => item.status === 'already_sent').length} already sent, ${results.filter((item) => item.status === 'failed').length} failed.`);
+  const failedByReason = results.reduce<Record<string, number>>((counts, item) => {
+    if (item.status === 'failed') {
+      const reason = item.detail || 'Unknown error';
+      counts[reason] = (counts[reason] || 0) + 1;
+    }
+    return counts;
+  }, {});
+  const failureSummary = Object.entries(failedByReason).map(([reason, count]) => `${count} × ${reason}`).join('; ');
+  console.log(`Reminder run completed: ${results.filter((item) => item.status === 'sent').length} sent, ${results.filter((item) => item.status === 'already_sent').length} already sent, ${results.filter((item) => item.status === 'failed').length} failed.${failureSummary ? ` Failure reasons: ${failureSummary}` : ''}`);
   return json({ processed: results.length, results });
 });

@@ -830,10 +830,15 @@ Deno.serve(async (req) => {
       const nextReminderAt = new Date(new Date(sentAt).getTime() + Number(charge.reminder_interval_minutes || 30) * 60000);
       const nextReminder = nextReminderAt.getTime() < new Date(pixExpiresAt).getTime()
         ? nextReminderAt.toISOString() : null;
-      await admin.from('cobrancas').update({
+      const { error: scheduleError } = await admin.from('cobrancas').update({
         tentativas_envio: reminderSequence, ultimo_lembrete_at: sentAt, next_reminder_at: nextReminder,
         pix_expires_at: pixExpiresAt,
       }).eq('id', charge.id).eq('id_usuario', user.id).in('status', ['pendente', 'atrasado']);
+      if (scheduleError) {
+        console.error('WhatsApp reminder was sent, but its next reminder schedule could not be saved:', scheduleError.message);
+      } else {
+        console.log(`WhatsApp reminder sequence ${reminderSequence} saved; next reminder: ${nextReminder ?? 'none before PIX expiry'}.`);
+      }
       return json({ success: true, message: 'Link PIX enviado por um template aprovado da Meta.', messageId, paymentLink });
     }
 
