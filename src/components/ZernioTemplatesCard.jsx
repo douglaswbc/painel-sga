@@ -111,6 +111,41 @@ function FieldLabel({ children, htmlFor, right }) {
   );
 }
 
+function highlightTemplateVariables(text) {
+  return String(text || '').split(/(\{\{\d+\}\})/g).map((part, index) => (
+    /^\{\{\d+\}\}$/.test(part)
+      ? <span key={`${part}-${index}`} className="rounded bg-indigo-500/20 px-1 font-bold text-indigo-200">{part}</span>
+      : <React.Fragment key={`text-${index}`}>{part}</React.Fragment>
+  ));
+}
+
+function TemplateAssociationPreview({ template }) {
+  const components = template.components || [];
+  const header = components.find((component) => String(component.type).toUpperCase() === 'HEADER');
+  const body = components.find((component) => String(component.type).toUpperCase() === 'BODY');
+  const footer = components.find((component) => String(component.type).toUpperCase() === 'FOOTER');
+  const buttons = components.find((component) => String(component.type).toUpperCase() === 'BUTTONS')?.buttons || [];
+  const headerFormat = String(header?.format || '').toUpperCase();
+  const mediaLabel = { IMAGE: 'Imagem', VIDEO: 'Vídeo', DOCUMENT: 'Documento', LOCATION: 'Localização' }[headerFormat];
+
+  return (
+    <aside className="rounded-xl border border-slate-700 bg-slate-900/70 p-4">
+      <div className="mb-3 flex items-center gap-2 text-xs font-bold text-slate-300"><Smartphone size={15} className="text-emerald-400" />Prévia do template</div>
+      <div className="mx-auto max-w-sm rounded-[1.5rem] border border-slate-700 bg-[#e5ddd5] p-3 shadow-inner">
+        <div className="mb-3 flex items-center gap-2 rounded-xl bg-emerald-800 px-3 py-2 text-xs font-semibold text-white"><span className="grid h-7 w-7 place-items-center rounded-full bg-emerald-600">WA</span>WhatsApp</div>
+        <div className="max-w-[92%] rounded-xl rounded-tl-sm bg-white p-3 text-sm leading-relaxed text-slate-800 shadow-sm">
+          {header && <div className="mb-2 font-semibold">{header.text ? highlightTemplateVariables(header.text) : <span className="text-slate-500">[{mediaLabel || 'Cabeçalho de mídia'}]</span>}</div>}
+          <div className="whitespace-pre-wrap">{body?.text ? highlightTemplateVariables(body.text) : <span className="text-slate-500">O corpo do template aparecerá aqui.</span>}</div>
+          {footer?.text && <div className="mt-2 text-xs text-slate-500">{footer.text}</div>}
+          <div className="mt-1 text-right text-[10px] text-slate-400">Agora</div>
+        </div>
+        {buttons.map((button, index) => <div key={`${button.type}-${index}`} className="mx-auto mt-1 max-w-[92%] rounded-lg bg-white px-3 py-2 text-center text-xs font-semibold text-blue-600 shadow-sm">{button.text || `Botão ${index + 1}`}{button.url ? <span className="block truncate text-[10px] font-normal text-slate-500">{highlightTemplateVariables(button.url)}</span> : null}</div>)}
+        {!buttons.length && <p className="mt-2 px-1 text-[10px] text-slate-500">As variáveis destacadas são substituídas pelos campos associados ao lado.</p>}
+      </div>
+    </aside>
+  );
+}
+
 function TemplateForm({ busy, storageKey, onCancel, onSubmit }) {
   const [draft, setDraft] = useState(() => readSavedDraft(storageKey));
   const [attempted, setAttempted] = useState(false);
@@ -536,8 +571,8 @@ const ZernioTemplatesCard = () => {
                 <span className="text-sm font-semibold text-white">{template.name}</span>
                 <span className="text-[10px] text-slate-400 font-mono">{template.language}</span>
                 <span className={`text-[10px] uppercase font-bold border rounded-full px-2 py-0.5 ${statusStyles[status] || statusStyles.PENDING}`}>{status}</span>
-                {isChargeTemplate && <span className="text-[10px] text-indigo-300">COBRANÇAS</span>}
-                {isPaymentTemplate && <span className="text-[10px] text-sky-300">CONFIRMAÇÃO DE PAGAMENTO</span>}
+                {isChargeTemplate && <span className="inline-flex items-center rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-200">Lembrete de cobrança</span>}
+                {isPaymentTemplate && <span className="inline-flex items-center rounded-full border border-sky-400/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-200">Confirmação de pagamento</span>}
               </div>
               <p className="text-[11px] text-slate-500 mt-1">{template.category}{template.rejection_reason ? ` · ${template.rejection_reason}` : ''}</p>
             </div>
@@ -554,21 +589,27 @@ const ZernioTemplatesCard = () => {
       </div> : <div className="flex items-start gap-3 text-xs text-slate-500 bg-slate-900/40 border border-slate-800 rounded-lg p-3"><AlertCircle size={16} className="shrink-0" />Nenhum template encontrado neste canal. Clique em “Novo Template” para criar o primeiro.</div>}
 
       {selection && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setSelection(null); }}>
-        <form onSubmit={(event) => { event.preventDefault(); setDefault(); }} className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-700 bg-slate-950 p-5 shadow-2xl">
+        <form onSubmit={(event) => { event.preventDefault(); setDefault(); }} className="max-h-[92vh] w-full max-w-6xl overflow-y-auto rounded-2xl border border-slate-700 bg-slate-950 p-5 shadow-2xl">
           <div className="flex items-start justify-between gap-4">
             <div>
               <h3 className="text-base font-bold text-white">Configurar uso do template</h3>
-              <p className="mt-1 text-xs text-slate-400">{selection.template.name} · {selection.purpose === 'charge' ? 'Lembrete de cobrança' : 'Confirmação de pagamento'}</p>
+              <div className="mt-1 flex flex-wrap items-center gap-2"><p className="text-xs text-slate-400">{selection.template.name}</p><span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${selection.purpose === 'charge' ? 'border-indigo-400/30 bg-indigo-500/10 text-indigo-200' : 'border-sky-400/30 bg-sky-500/10 text-sky-200'}`}>{selection.purpose === 'charge' ? 'Lembrete de cobrança' : 'Confirmação de pagamento'}</span></div>
             </div>
             <button type="button" onClick={() => setSelection(null)} disabled={busy} className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white" aria-label="Fechar"><X size={18} /></button>
           </div>
           <p className="mt-4 text-xs text-slate-400">Associe cada variável do template a uma informação do SGA. O mapeamento define os valores enviados em cada mensagem.</p>
-          {selection.slots.length ? <div className="mt-4 space-y-3">{selection.slots.map((slot, index) => <label key={`${slot.position}-${slot.label}`} className="grid grid-cols-1 gap-1.5 sm:grid-cols-[1fr_1.2fr] sm:items-center">
-            <span className="text-xs font-semibold text-slate-300">{slot.position}. {slot.label}</span>
-            <select value={variableMapping[index]?.field || ''} onChange={(event) => setVariableMapping((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, field: event.target.value } : item))} className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white">
-              {usageFields[selection.purpose].map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
-          </label>)}</div> : <p className="mt-4 rounded-lg border border-slate-800 bg-slate-900 p-3 text-xs text-slate-300">Este template não tem variáveis. Ele será enviado sem parâmetros dinâmicos.</p>}
+          <div className="mt-4 grid gap-5 lg:grid-cols-2 lg:items-start">
+            <div>
+              <h4 className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-300">Associação das variáveis</h4>
+              {selection.slots.length ? <div className="space-y-3">{selection.slots.map((slot, index) => <label key={`${slot.position}-${slot.label}`} className="block rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                <span className="mb-2 block text-xs font-semibold text-slate-300"><span className="mr-1 rounded bg-indigo-500/20 px-1 font-mono text-indigo-200">{`{{${slot.variable}}}`}</span>{slot.label}</span>
+                <select value={variableMapping[index]?.field || ''} onChange={(event) => setVariableMapping((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, field: event.target.value } : item))} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white">
+                  {usageFields[selection.purpose].map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+              </label>)}</div> : <p className="rounded-lg border border-slate-800 bg-slate-900 p-3 text-xs text-slate-300">Este template não tem variáveis. Ele será enviado sem parâmetros dinâmicos.</p>}
+            </div>
+            <TemplateAssociationPreview template={selection.template} />
+          </div>
           <p className="mt-4 text-[11px] text-slate-500">O template substituirá o padrão atual deste tipo de mensagem para este locador.</p>
           <div className="mt-5 flex justify-end gap-2 border-t border-slate-800 pt-4">
             <button type="button" onClick={() => setSelection(null)} disabled={busy} className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800">Cancelar</button>
