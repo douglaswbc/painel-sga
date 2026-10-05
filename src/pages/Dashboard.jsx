@@ -1,287 +1,513 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  AlertCircle,
+  ArrowUpRight,
+  CheckCircle2,
+  CircleDollarSign,
+  Clock3,
+  Copy,
+  ExternalLink,
+  FileText,
+  HandCoins,
+  LayoutDashboard,
+  Loader2,
+  MessageCircle,
+  RefreshCw,
+  X,
+} from 'lucide-react';
+import { toast } from 'react-toastify';
 import { useAuth } from '../contexts/AuthContext';
 import { cobrancasService } from '../services/cobrancas';
-import { KpiCard } from '../components/ui/KpiCard';
-import { StatusBadge } from '../components/ui/StatusBadge';
+import { PageHeader } from '../components/ui/PageHeader';
 import { Pagination } from '../components/ui/Pagination';
+import { StatusBadge } from '../components/ui/StatusBadge';
 import ExpirationTimer from '../components/ExpirationTimer';
-import { toast } from 'react-toastify';
-import {
-  CircleDollarSign, HandCoins, MessageCircle, Loader2,
-  Zap, Copy, ExternalLink, X, Check, AlertCircle,
-  ChevronLeft, ChevronRight
-} from 'lucide-react';
+
+const PAGE_SIZE = 8;
+const FILTERS = [
+  { value: 'all', label: 'Todas' },
+  { value: 'atrasado', label: 'Atrasadas' },
+  { value: 'pendente', label: 'Pendentes' },
+];
+
+const currency = (value) => Number(value || 0).toLocaleString('pt-BR', {
+  style: 'currency', currency: 'BRL', minimumFractionDigits: 2,
+});
+
+const dateLabel = (date) => {
+  if (!date) return 'Sem vencimento';
+  const parsed = new Date(`${date}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? 'Sem vencimento' : parsed.toLocaleDateString('pt-BR');
+};
+
+const pixExpiration = (charge) => {
+  if (charge.pix_expires_at) return charge.pix_expires_at;
+  if (!charge.created_at) return null;
+  const createdAt = new Date(charge.created_at);
+  if (Number.isNaN(createdAt.getTime())) return null;
+  return new Date(createdAt.getTime() + 4 * 60 * 60 * 1000).toISOString();
+};
+
+const MetricCard = ({ title, value, detail, icon: Icon, tone = 'indigo' }) => {
+  const tones = {
+    emerald: 'bg-emerald-500/10 text-emerald-300 ring-emerald-500/15',
+    blue: 'bg-blue-500/10 text-blue-300 ring-blue-500/15',
+    rose: 'bg-rose-500/10 text-rose-300 ring-rose-500/15',
+    indigo: 'bg-indigo-500/10 text-indigo-300 ring-indigo-500/15',
+  };
+
+  return (
+    <section className="min-w-0 rounded-2xl border border-zinc-800 bg-zinc-900 p-4 shadow-lg sm:p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-zinc-400">{title}</p>
+          <p className="mt-3 truncate text-xl font-bold tracking-tight text-white sm:text-2xl">{value}</p>
+        </div>
+        <div className={`rounded-xl p-2.5 ring-1 ${tones[tone]}`}>
+          <Icon size={19} aria-hidden="true" />
+        </div>
+      </div>
+      <p className="mt-3 text-xs leading-5 text-zinc-500">{detail}</p>
+    </section>
+  );
+};
+
+const ChargeIdentity = ({ charge }) => {
+  const tenantName = charge.locatario_cobranca?.nome_completo
+    || charge.contratos?.locatarios?.nome_completo
+    || 'Cobrança avulsa';
+  const plate = charge.contratos?.veiculos?.placa;
+
+  return (
+    <div className="min-w-0">
+      <p className="truncate font-semibold text-white">{tenantName}</p>
+      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+        {plate && <span className="rounded-md border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 font-mono text-zinc-300">{plate}</span>}
+        {charge.categoria && <span className="capitalize">{charge.categoria}</span>}
+        <span>{charge.tentativas_envio || 0} lembrete(s)</span>
+      </div>
+    </div>
+  );
+};
+
+const usePixExpired = (expiresAt) => {
+  const [expired, setExpired] = useState(() => Boolean(expiresAt && new Date(expiresAt).getTime() <= Date.now()));
+
+  useEffect(() => {
+    if (!expiresAt) {
+      setExpired(false);
+      return undefined;
+    }
+    const expiration = new Date(expiresAt).getTime();
+    if (!Number.isFinite(expiration)) return undefined;
+    const update = () => setExpired(expiration <= Date.now());
+    update();
+    if (expiration <= Date.now()) return undefined;
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [expiresAt]);
+
+  return expired;
+};
+
+const ChargeActions = ({ charge, processing, onSend, onOpenLink, compact = false }) => {
+  const expiresAt = pixExpiration(charge);
+  const pixExpired = usePixExpired(expiresAt);
+  const name = charge.locatario_cobranca?.nome_completo || charge.contratos?.locatarios?.nome_completo || 'Cobrança avulsa';
+
+  return (
+    <div className={compact ? 'flex flex-wrap items-center gap-2' : 'flex items-center justify-end gap-2'}>
+      {charge.payment_link && (
+        <button
+          type="button"
+          onClick={() => onOpenLink(charge.payment_link)}
+          className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-zinc-700 text-sm font-semibold text-zinc-200 hover:bg-zinc-800 ${compact ? 'flex-1' : 'px-3'}`}
+          aria-label={`Abrir link de pagamento de ${name}`}
+        >
+          <ExternalLink size={15} aria-hidden="true" /> {compact ? 'Link PIX' : 'Link'}
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={() => onSend(charge)}
+        disabled={processing || pixExpired}
+        title={pixExpired ? 'Este PIX expirou e não pode receber lembretes.' : undefined}
+        className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-200 ring-1 ring-emerald-500/20 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50 ${compact ? 'flex-1' : ''}`}
+      >
+        {processing ? <Loader2 size={15} className="animate-spin" /> : <MessageCircle size={15} aria-hidden="true" />}
+        {pixExpired ? 'PIX expirado' : 'Enviar cobrança'}
+      </button>
+      {pixExpired && !compact && <Link to="/cobrancas" className="text-xs font-semibold text-rose-300 underline underline-offset-2 hover:text-rose-100">Revisar</Link>}
+      {pixExpired && compact && <p className="basis-full text-xs text-rose-300">PIX expirado. <Link to="/cobrancas" className="font-semibold underline underline-offset-2 hover:text-rose-100">Revisar cobrança</Link>.</p>}
+    </div>
+  );
+};
 
 const Dashboard = () => {
   const { profile } = useAuth();
-  const [loading, setLoading] = useState(true);
+  const [summary, setSummary] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState('');
+  const [queue, setQueue] = useState({ items: [], total: 0, statusCounts: { atrasado: 0, pendente: 0 } });
+  const [queueLoading, setQueueLoading] = useState(true);
+  const [queueError, setQueueError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
   const [processingId, setProcessingId] = useState(null);
-  const [showLinkModal, setShowLinkModal] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [filter, setFilter] = useState('all');
   const [activeLink, setActiveLink] = useState('');
   const [copied, setCopied] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 8;
 
-  const [stats, setStats] = useState({
-    lucroLiquido: 0, receitaPendente: 0, contratosAtivos: 0,
-    proximasCobrancas: [], totalAtrasado: 0, adimplencia: 0,
-  });
-
-  const fetchDashboardData = async () => {
+  const loadSummary = useCallback(async () => {
     if (!profile?.id) return;
+    setSummaryError('');
+    setSummaryLoading(true);
     try {
-      setLoading(true);
-      const data = await cobrancasService.listDashboard(profile.id);
-
-      const totalReceitaPaga = data.filter(c => c.status === 'pago' && c.tipo === 'receita').reduce((s, c) => s + Number(c.valor), 0);
-      const totalDespesas = data.filter(c => c.tipo === 'despesa').reduce((s, c) => s + Number(c.valor), 0);
-      const lucroLiquido = totalReceitaPaga - totalDespesas;
-      const receitaPendente = data.filter(c => ['pendente', 'atrasado'].includes(c.status) && c.tipo === 'receita').reduce((s, c) => s + Number(c.valor), 0);
-      const contratosAtivos = new Set(data.filter(c => c.contratos?.status === 'ativo').map(c => c.contratos.id)).size;
-      const totalAtrasado = data.filter(c => c.status === 'atrasado' && c.tipo === 'receita').reduce((s, c) => s + Number(c.valor), 0);
-      const pagasCount = data.filter(c => c.status === 'pago' && c.tipo === 'receita').length;
-      const totalCount = data.filter(c => c.tipo === 'receita').length;
-      const adimplencia = totalCount > 0 ? (pagasCount / totalCount) * 100 : 100;
-      const proximasCobrancas = data.filter(c => ['pendente', 'atrasado'].includes(c.status) && c.tipo === 'receita')
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-      setStats({ lucroLiquido, receitaPendente, contratosAtivos, proximasCobrancas, totalAtrasado, adimplencia });
+      setSummary(await cobrancasService.getDashboardSummary());
     } catch (error) {
-      toast.error('Erro ao carregar dados: ' + error.message);
+      setSummaryError(error.message || 'Não foi possível carregar os indicadores.');
     } finally {
-      setLoading(false);
+      setSummaryLoading(false);
     }
+  }, [profile?.id]);
+
+  const loadQueue = useCallback(async () => {
+    if (!profile?.id) return;
+    setQueueError('');
+    setQueueLoading(true);
+    try {
+      const result = await cobrancasService.listDashboardCharges(profile.id, {
+        page: currentPage,
+        pageSize: PAGE_SIZE,
+        status: filter,
+      });
+      setQueue(result);
+    } catch (error) {
+      setQueueError(error.message || 'Não foi possível carregar as cobranças.');
+    } finally {
+      setQueueLoading(false);
+    }
+  }, [profile?.id, currentPage, filter]);
+
+  useEffect(() => { loadSummary(); }, [loadSummary]);
+  useEffect(() => { loadQueue(); }, [loadQueue]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await Promise.all([loadSummary(), loadQueue()]);
+    setRefreshing(false);
   };
 
-  useEffect(() => { fetchDashboardData(); }, [profile]);
+  const handleFilter = (nextFilter) => {
+    setFilter(nextFilter);
+    setCurrentPage(1);
+  };
 
-  const handleGerarCobrancaPix = async (cobrancaId) => {
-    setProcessingId(cobrancaId);
+  const handleSendReminder = async (charge) => {
+    setProcessingId(charge.id);
     try {
-      const data = await cobrancasService.gerarPix(cobrancaId);
-      if (data.success) {
-        toast.success(data.alreadySent ? 'Esta cobrança já foi enviada.' : 'Cobrança enviada pelo WhatsApp!');
-        await fetchDashboardData();
+      const result = await cobrancasService.gerarPix(charge.id);
+      if (result?.success) {
+        toast.success(result.alreadySent ? 'Este lembrete já foi enviado.' : 'Cobrança enviada pelo WhatsApp.');
+        await handleRefresh();
       }
     } catch (error) {
-      toast.error('Falha ao processar PIX: ' + error.message);
+      toast.error(error.message || 'Falha ao enviar a cobrança.');
     } finally {
       setProcessingId(null);
     }
   };
 
-  const openLinkModal = (link) => {
-    setActiveLink(link);
-    setShowLinkModal(true);
-    setCopied(false);
+  const handleCopyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(activeLink);
+      setCopied(true);
+      toast.success('Link copiado.');
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error('Não foi possível copiar o link neste navegador.');
+    }
   };
 
-  const handleCopyLink = () => {
-    navigator.clipboard.writeText(activeLink);
-    setCopied(true);
-    toast.info('Link copiado!');
-    setTimeout(() => setCopied(false), 2000);
-  };
+  const monthLabel = useMemo(() => new Intl.DateTimeFormat('pt-BR', {
+    month: 'long', year: 'numeric', timeZone: 'America/Sao_Paulo',
+  }).format(new Date()), []);
 
-  const totalPages = Math.ceil(stats.proximasCobrancas.length / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const currentData = stats.proximasCobrancas.slice(startIndex, startIndex + itemsPerPage);
+  useEffect(() => {
+    if (!activeLink) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setActiveLink('');
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeLink]);
 
-  if (loading) {
-    return <div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-500" /></div>;
-  }
+  const totalPages = Math.max(1, Math.ceil(queue.total / PAGE_SIZE));
+  const statusCounts = queue.statusCounts || { atrasado: 0, pendente: 0 };
+  const paymentRate = summary?.adimplencia_mes == null ? null : Number(summary.adimplencia_mes);
+
+  useEffect(() => {
+    if (queue.total > 0 && currentPage > totalPages) setCurrentPage(totalPages);
+  }, [queue.total, currentPage, totalPages]);
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 pb-10">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <KpiCard title="Saldo Líquido" value={`R$ ${stats.lucroLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-          icon={CircleDollarSign} bgIcon="bg-emerald-400/20" desc="Realizado (Pagas - Despesas)" trend="+8.2%" />
-        <KpiCard title="A Receber" value={`R$ ${stats.receitaPendente.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-          icon={HandCoins} bgIcon="bg-blue-400/20" desc="Pendente + Atrasado" />
-        <KpiCard title="Em Atraso" value={`R$ ${(stats.totalAtrasado || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-          icon={AlertCircle} bgIcon="bg-rose-400/20" desc="Valor crítico em aberto" />
-        <KpiCard title="Taxa de Pagamento" value={`${Math.round(stats.adimplencia || 0)}%`}
-          icon={Zap} bgIcon="bg-amber-400/20" desc="Geral de adimplência" />
-      </div>
+    <div className="mx-auto w-full max-w-screen-2xl space-y-6 pb-8 sm:space-y-8">
+      <PageHeader
+        icon={LayoutDashboard}
+        title="Visão geral"
+        description={`Resumo financeiro de ${monthLabel}`}
+        actions={(
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={refreshing || summaryLoading || queueLoading}
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-900 px-4 text-sm font-semibold text-zinc-200 transition hover:border-zinc-500 hover:bg-zinc-800 disabled:cursor-wait disabled:opacity-60"
+            aria-label="Atualizar painel"
+          >
+            <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} aria-hidden="true" />
+            <span>Atualizar</span>
+          </button>
+        )}
+      />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800 rounded-3xl p-8 shadow-2xl relative overflow-hidden">
-          <div className="flex items-center justify-between mb-8">
+      {summaryError ? (
+        <section className="flex flex-col gap-3 rounded-2xl border border-rose-500/25 bg-rose-500/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3 text-sm text-rose-200">
+            <AlertCircle className="mt-0.5 shrink-0" size={18} aria-hidden="true" />
             <div>
-              <h3 className="text-lg font-black text-white uppercase tracking-tight">Atividade Financeira</h3>
-              <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-1">Últimos disparos e recebimentos</p>
-            </div>
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-zinc-950 rounded-full border border-zinc-800">
-              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-[9px] font-black text-zinc-400 uppercase">Live</span>
+              <p className="font-semibold">Falha ao carregar o resumo financeiro</p>
+              <p className="mt-1 text-rose-200/70">{summaryError}</p>
             </div>
           </div>
-          <div className="h-64 mt-4 relative">
-            <svg className="w-full h-full" viewBox="0 0 400 100" preserveAspectRatio="none">
-              <defs>
-                <linearGradient id="gradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#6366f1" stopOpacity="0.3" />
-                  <stop offset="100%" stopColor="#6366f1" stopOpacity="0" />
-                </linearGradient>
-              </defs>
-              <path d="M0,80 Q50,20 100,50 T200,30 T300,60 T400,10" fill="none" stroke="#6366f1" strokeWidth="3" strokeLinecap="round" />
-              <path d="M0,80 Q50,20 100,50 T200,30 T300,60 T400,10 V100 H0 Z" fill="url(#gradient)" />
-              <circle cx="100" cy="50" r="4" fill="#6366f1" />
-              <circle cx="200" cy="30" r="4" fill="#6366f1" />
-              <circle cx="300" cy="60" r="4" fill="#6366f1" />
-            </svg>
-            <div className="absolute bottom-0 left-0 right-0 flex justify-between text-[8px] font-bold text-zinc-600 uppercase tracking-widest">
-              <span>Seg</span><span>Ter</span><span>Qua</span><span>Qui</span><span>Sex</span><span>Sáb</span><span>Dom</span>
-            </div>
-          </div>
-        </div>
+          <button onClick={loadSummary} className="min-h-10 rounded-lg border border-rose-500/30 px-3 text-sm font-semibold text-rose-100 hover:bg-rose-500/10">Tentar novamente</button>
+        </section>
+      ) : null}
 
-        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 shadow-2xl flex flex-col justify-between relative overflow-hidden">
-          <h3 className="text-lg font-black text-white uppercase tracking-tight mb-6">Contratos Ativos</h3>
-          <div className="flex items-center justify-center py-4">
-            <div className="relative w-40 h-40">
-              <svg className="w-full h-full rotate-[-90deg]" viewBox="0 0 36 36">
-                <path className="stroke-zinc-800" strokeWidth="3" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-                <path className="stroke-indigo-500" strokeWidth="3" strokeDasharray="75, 100" strokeLinecap="round" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-4xl font-black text-white">{stats.contratosAtivos}</span>
-                <span className="text-[9px] text-zinc-500 font-bold uppercase mt-1 tracking-widest">Ativos</span>
+      {summaryLoading && !summary ? (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Carregando indicadores">
+          {Array.from({ length: 4 }, (_, index) => <div key={index} className="h-32 animate-pulse rounded-2xl border border-zinc-800 bg-zinc-900" />)}
+        </div>
+      ) : summary ? (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <MetricCard
+              title="Saldo líquido no mês"
+              value={currency(summary.saldo_liquido_mes)}
+              detail="Receitas pagas menos despesas pagas neste mês"
+              icon={CircleDollarSign}
+              tone="emerald"
+            />
+            <MetricCard
+              title="A receber"
+              value={currency(summary.receita_a_receber)}
+              detail="Cobranças pendentes e atrasadas"
+              icon={HandCoins}
+              tone="blue"
+            />
+            <MetricCard
+              title="Em atraso"
+              value={currency(summary.total_atrasado)}
+              detail={`${statusCounts.atrasado} cobrança(s) atrasada(s)`}
+              icon={AlertCircle}
+              tone="rose"
+            />
+            <MetricCard
+              title="Contratos ativos"
+              value={Number(summary.contratos_ativos || 0).toLocaleString('pt-BR')}
+              detail="Total de contratos ativos cadastrados"
+              icon={FileText}
+              tone="indigo"
+            />
+          </div>
+
+          <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4 sm:flex sm:items-center sm:gap-6 sm:p-5">
+            <div className="flex min-w-0 flex-1 items-start gap-3">
+              <div className="rounded-xl bg-amber-500/10 p-2.5 text-amber-300 ring-1 ring-amber-500/15">
+                <CheckCircle2 size={19} aria-hidden="true" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                  <h2 className="text-sm font-semibold text-white">Adimplência do mês</h2>
+                  <span className="text-sm font-bold text-zinc-100">
+                    {paymentRate == null ? 'Sem cobranças vencidas' : `${paymentRate.toLocaleString('pt-BR')}%`}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-zinc-500">
+                  {paymentRate == null
+                    ? 'Ainda não há cobranças com vencimento neste mês até hoje.'
+                    : `${Number(summary.cobrancas_pagas_mes || 0)} de ${Number(summary.cobrancas_vencidas_mes || 0)} cobranças vencidas até hoje foram pagas.`}
+                </p>
+                {paymentRate != null && (
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-zinc-800" role="progressbar" aria-label="Adimplência do mês" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(paymentRate, 100)}>
+                    <div className="h-full rounded-full bg-amber-400 transition-all" style={{ width: `${Math.min(paymentRate, 100)}%` }} />
+                  </div>
+                )}
               </div>
             </div>
-          </div>
-          <div className="mt-6 pt-6 border-t border-zinc-800 space-y-4">
-            <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest">
-              <span className="text-zinc-500">Capacidade Operacional</span>
-              <span className="text-white">75%</span>
-            </div>
-            <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden p-[2px]">
-              <div className="h-full bg-indigo-500 rounded-full w-[75%]" />
-            </div>
-          </div>
-        </div>
-      </div>
+          </section>
+        </>
+      ) : null}
 
-      <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl">
-        <div className="p-8 border-b border-zinc-800 bg-zinc-800/20 flex items-center justify-between">
+      <section className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-lg">
+        <div className="flex flex-col gap-4 border-b border-zinc-800 p-4 sm:p-5 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h3 className="text-xl font-black text-white flex items-center gap-3 uppercase tracking-tight">
-              <div className="p-2.5 bg-amber-400/10 rounded-xl"><Zap className="text-amber-400" size={22} /></div>
-              Cobranças Recentes
-            </h3>
-            <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-1 ml-12">Prioridade de faturamento e ação rápida</p>
+            <div className="flex items-center gap-2">
+              <Clock3 size={18} className="text-amber-300" aria-hidden="true" />
+              <h2 className="text-base font-bold text-white sm:text-lg">Cobranças que precisam de ação</h2>
+            </div>
+            <p className="mt-1 text-sm text-zinc-500">
+              {statusCounts.atrasado} atrasada(s) · {statusCounts.pendente} pendente(s)
+            </p>
           </div>
-          <div className="bg-zinc-950 px-4 py-2 rounded-2xl border border-zinc-800">
-            <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">{stats.proximasCobrancas.length} Itens em Fila</span>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrar cobranças">
+            {FILTERS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => handleFilter(option.value)}
+                aria-pressed={filter === option.value}
+                className={`min-h-10 rounded-lg px-3 text-sm font-semibold transition ${filter === option.value
+                  ? 'bg-indigo-500/15 text-indigo-200 ring-1 ring-indigo-400/30'
+                  : 'bg-zinc-950 text-zinc-400 ring-1 ring-zinc-800 hover:text-white'}`}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          {stats.proximasCobrancas.length > 0 ? (
-            <>
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-zinc-900/50">
-                    <th className="p-6 text-zinc-400 font-black text-[10px] uppercase tracking-[0.2em]">Locatário / Placa</th>
-                    <th className="p-6 text-zinc-400 font-black text-[10px] uppercase tracking-[0.2em] hidden sm:table-cell">Vencimento</th>
-                    <th className="p-6 text-zinc-400 font-black text-[10px] uppercase tracking-[0.2em] hidden sm:table-cell">Valor</th>
-                    <th className="p-6 text-zinc-400 font-black text-[10px] uppercase tracking-[0.2em] text-center hidden md:table-cell">Status</th>
-                    <th className="p-6 text-zinc-400 font-black text-[10px] uppercase tracking-[0.2em] text-right">Ações</th>
+        {queueError ? (
+          <div className="flex flex-col items-start gap-3 p-6 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-rose-200">Não foi possível carregar a fila: {queueError}</p>
+            <button onClick={loadQueue} className="min-h-10 rounded-lg border border-zinc-700 px-3 text-sm font-semibold text-zinc-200 hover:bg-zinc-800">Tentar novamente</button>
+          </div>
+        ) : queueLoading ? (
+          <div className="space-y-3 p-4" aria-label="Carregando cobranças">
+            {Array.from({ length: 4 }, (_, index) => <div key={index} className="h-20 animate-pulse rounded-xl bg-zinc-800/70" />)}
+          </div>
+        ) : queue.items.length === 0 ? (
+          <div className="flex flex-col items-center px-5 py-12 text-center sm:py-16">
+            <div className="mb-4 rounded-2xl bg-emerald-500/10 p-4 text-emerald-300">
+              <CheckCircle2 size={26} aria-hidden="true" />
+            </div>
+            <h3 className="font-semibold text-white">{filter === 'all' ? 'Tudo em dia' : `Nenhuma cobrança ${filter === 'atrasado' ? 'atrasada' : 'pendente'}`}</h3>
+            <p className="mt-1 max-w-md text-sm text-zinc-500">Não há cobranças em aberto para mostrar neste filtro.</p>
+            <Link to="/cobrancas" className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-lg border border-zinc-700 px-3 text-sm font-semibold text-zinc-200 hover:bg-zinc-800">
+              Abrir cobranças <ArrowUpRight size={15} aria-hidden="true" />
+            </Link>
+          </div>
+        ) : (
+          <>
+            <div className="divide-y divide-zinc-800 lg:hidden">
+              {queue.items.map((charge) => {
+                const expiresAt = pixExpiration(charge);
+                return (
+                  <article key={charge.id} className="space-y-4 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <ChargeIdentity charge={charge} />
+                      <StatusBadge status={charge.status}>{charge.status}</StatusBadge>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 rounded-xl bg-zinc-950/70 p-3">
+                      <div>
+                        <p className="text-[11px] text-zinc-500">Valor</p>
+                        <p className="mt-1 font-semibold text-white">{currency(charge.valor)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] text-zinc-500">Vencimento</p>
+                        <p className="mt-1 font-medium text-zinc-200">{dateLabel(charge.data_vencimento)}</p>
+                      </div>
+                      {expiresAt && <div className="col-span-2"><ExpirationTimer expiresAt={expiresAt} /></div>}
+                    </div>
+                    <ChargeActions
+                      charge={charge}
+                      processing={processingId === charge.id}
+                      onSend={handleSendReminder}
+                      onOpenLink={(link) => { setActiveLink(link); setCopied(false); }}
+                      compact
+                    />
+                  </article>
+                );
+              })}
+            </div>
+
+            <div className="hidden overflow-x-auto lg:block">
+              <table className="w-full text-left">
+                <thead className="bg-zinc-950/70">
+                  <tr>
+                    <th className="px-5 py-3 text-xs font-semibold text-zinc-500">Locatário / veículo</th>
+                    <th className="px-5 py-3 text-xs font-semibold text-zinc-500">Vencimento / PIX</th>
+                    <th className="px-5 py-3 text-xs font-semibold text-zinc-500">Valor</th>
+                    <th className="px-5 py-3 text-center text-xs font-semibold text-zinc-500">Status</th>
+                    <th className="px-5 py-3 text-right text-xs font-semibold text-zinc-500">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800">
-                  {currentData.map((item) => (
-                    <tr key={item.id} className="hover:bg-zinc-800/40 transition-all">
-                      <td className="p-6">
-                        <div className="text-white font-bold text-sm mb-1">{item.locatario_cobranca?.nome_completo || item.contratos?.locatarios?.nome_completo || "Cobrança Avulsa"}</div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="px-2 py-0.5 bg-zinc-950 rounded text-[9px] text-indigo-400 font-mono uppercase border border-zinc-800">{item.contratos?.veiculos?.placa || "N/A"}</span>
-                          <div className="sm:hidden flex flex-wrap items-center gap-x-3 gap-y-2 mt-1">
-                            <span className="text-[10px] font-black text-white px-1.5 py-0.5 bg-zinc-800 rounded">R$ {Number(item.valor).toFixed(2).replace('.', ',')}</span>
-                            <span className="text-[9px] text-zinc-500 font-mono">{new Date(item.data_vencimento + 'T00:00:00').toLocaleDateString('pt-BR')}</span>
-                            <StatusBadge status={item.status}>{item.status}</StatusBadge>
-                            <div className="scale-90 origin-left"><ExpirationTimer dataVencimento={item.data_vencimento} status={item.status} /></div>
-                          </div>
-                        </div>
-                        <div className="mt-3 text-[9px] font-black text-zinc-500">{item.tentativas_envio || 0} lembrete(s) enviado(s)</div>
-                      </td>
-                      <td className="p-6 hidden sm:table-cell">
-                        <div className="text-zinc-300 font-mono text-xs mb-1">{new Date(item.data_vencimento + 'T00:00:00').toLocaleDateString('pt-BR')}</div>
-                        <ExpirationTimer dataVencimento={item.data_vencimento} status={item.status} />
-                      </td>
-                      <td className="p-6 hidden sm:table-cell">
-                        <div className="text-white font-black text-base">R$ {Number(item.valor).toFixed(2).replace('.', ',')}</div>
-                        <div className="text-[9px] text-indigo-400 font-black uppercase tracking-widest mt-0.5 opacity-60">{item.categoria}</div>
-                      </td>
-                      <td className="p-6 text-center hidden md:table-cell">
-                        <StatusBadge status={item.status}>{item.status}</StatusBadge>
-                      </td>
-                      <td className="p-6 text-right">
-                        <div className="flex items-center justify-end gap-1.5 sm:gap-3">
-                          {item.payment_link && (
-                            <button onClick={() => openLinkModal(item.payment_link)} className="p-2 sm:p-2.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-xl transition-all">
-                              <ExternalLink size={18} />
-                            </button>
-                          )}
-                          <button onClick={() => handleGerarCobrancaPix(item.id)} disabled={processingId === item.id}
-                            className={`group flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-black text-[9px] sm:text-[10px] uppercase tracking-widest transition-all ${
-                              processingId === item.id
-                                ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
-                                : 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 hover:bg-emerald-500 hover:text-white shadow-lg hover:shadow-emerald-500/20'
-                            }`}>
-                            {processingId === item.id
-                              ? <Loader2 size={14} className="animate-spin" />
-                              : <><MessageCircle size={14} className="group-hover:scale-110 transition-transform" /> <span>Cobrar</span></>}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {queue.items.map((charge) => {
+                    const expiresAt = pixExpiration(charge);
+                    return (
+                      <tr key={charge.id} className="transition hover:bg-zinc-800/30">
+                        <td className="max-w-xs px-5 py-4"><ChargeIdentity charge={charge} /></td>
+                        <td className="px-5 py-4">
+                          <p className="text-sm text-zinc-200">{dateLabel(charge.data_vencimento)}</p>
+                          {expiresAt && <div className="mt-2"><ExpirationTimer expiresAt={expiresAt} /></div>}
+                        </td>
+                        <td className="px-5 py-4 font-semibold text-white">{currency(charge.valor)}</td>
+                        <td className="px-5 py-4 text-center"><StatusBadge status={charge.status}>{charge.status}</StatusBadge></td>
+                        <td className="px-5 py-4">
+                          <ChargeActions
+                            charge={charge}
+                            processing={processingId === charge.id}
+                            onSend={handleSendReminder}
+                            onOpenLink={(link) => { setActiveLink(link); setCopied(false); }}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
-              <Pagination currentPage={currentPage} totalPages={totalPages}
-                onPrev={() => setCurrentPage(p => Math.max(p - 1, 1))}
-                onNext={() => setCurrentPage(p => Math.min(p + 1, totalPages))}
-                label={`Página ${currentPage} / ${totalPages}`}
-              />
-            </>
-          ) : (
-            <div className="p-24 text-center">
-              <div className="bg-zinc-800/30 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-6 border border-zinc-800">
-                <CircleDollarSign className="text-zinc-700" size={36} />
-              </div>
-              <h4 className="text-white font-bold mb-1 uppercase tracking-tight">Tudo em dia!</h4>
-              <p className="text-zinc-600 font-bold text-[10px] uppercase tracking-widest">Nenhuma cobrança pendente identificada no momento.</p>
             </div>
-          )}
-        </div>
-      </div>
 
-      {showLinkModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
-          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-md rounded-3xl shadow-2xl overflow-hidden ring-1 ring-white/5">
-            <div className="p-8 border-b border-zinc-800 flex justify-between items-center">
-              <h3 className="text-white font-black uppercase tracking-tight flex items-center gap-3">
-                <div className="p-2 bg-indigo-500/10 rounded-lg"><ExternalLink size={18} className="text-indigo-400" /></div>
-                Gateway de Pagamento
-              </h3>
-              <button onClick={() => setShowLinkModal(false)} className="p-2 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded-xl"><X size={20} /></button>
-            </div>
-            <div className="p-8 space-y-6">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest ml-1">URL da Fatura</label>
-                <div className="flex gap-2">
-                  <input readOnly value={activeLink} className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-xs text-indigo-300 font-mono outline-none" />
-                  <button onClick={handleCopyLink} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 rounded-xl transition-all shadow-lg shadow-indigo-600/20">
-                    {copied ? <Check size={20} /> : <Copy size={20} />}
-                  </button>
-                </div>
+            {queue.total > PAGE_SIZE && (
+              <div className="border-t border-zinc-800">
+                <Pagination
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  onPrev={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                  onNext={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                  label={`Página ${currentPage} de ${totalPages} · ${queue.total} cobranças`}
+                />
               </div>
-              <a href={activeLink} target="_blank" rel="noreferrer" className="flex items-center justify-center gap-2 w-full py-4 bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-black rounded-2xl uppercase tracking-widest border border-zinc-700">
-                Abrir link externo <ExternalLink size={14} />
+            )}
+          </>
+        )}
+      </section>
+
+      {activeLink && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) setActiveLink(''); }}>
+          <section className="w-full max-w-lg rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="payment-link-title">
+            <div className="flex items-center justify-between border-b border-zinc-800 p-4 sm:p-5">
+              <div>
+                <h2 id="payment-link-title" className="font-bold text-white">Link de pagamento</h2>
+                <p className="mt-1 text-sm text-zinc-500">Copie ou abra o link PIX desta cobrança.</p>
+              </div>
+              <button type="button" onClick={() => setActiveLink('')} className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-800 hover:text-white" aria-label="Fechar janela">
+                <X size={20} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="space-y-4 p-4 sm:p-5">
+              <div className="flex gap-2">
+                <input readOnly value={activeLink} aria-label="URL de pagamento" className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-200 outline-none" />
+                <button type="button" onClick={handleCopyLink} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-indigo-600 px-3 text-sm font-semibold text-white hover:bg-indigo-500">
+                  {copied ? <CheckCircle2 size={16} /> : <Copy size={16} />}<span className="hidden sm:inline">{copied ? 'Copiado' : 'Copiar'}</span>
+                </button>
+              </div>
+              <a href={activeLink} target="_blank" rel="noreferrer" className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-4 text-sm font-semibold text-zinc-100 hover:bg-zinc-700">
+                Abrir link em outra aba <ExternalLink size={15} aria-hidden="true" />
               </a>
             </div>
-          </div>
+          </section>
         </div>
       )}
     </div>

@@ -162,6 +162,7 @@ const Cobrancas = () => {
           id_usuario: profile.id, valor: manualData.valor,
           categoria: manualData.categoria, tipo: 'despesa',
           status: 'pago', data_vencimento: manualData.data_vencimento,
+          data_pagamento: new Date(`${manualData.data_vencimento}T12:00:00`).toISOString(),
         });
         toast.success("Despesa registrada com sucesso!");
       } else if (manualData.tipo === 'receita' && manualData.destino === 'somar_fatura') {

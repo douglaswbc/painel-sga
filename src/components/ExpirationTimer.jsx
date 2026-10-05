@@ -1,51 +1,49 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { Clock3 } from 'lucide-react';
 
-// Este componente calcula o tempo restante até as 23:30 do dia do vencimento
-const ExpirationTimer = ({ dataVencimento, status }) => {
-  const [timeLeft, setTimeLeft] = useState("");
+const formatRemaining = (milliseconds) => {
+  const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+  return `${String(hours).padStart(2, '0')}h ${String(minutes).padStart(2, '0')}m ${String(remainingSeconds).padStart(2, '0')}s`;
+};
+
+const ExpirationTimer = ({ expiresAt }) => {
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    // Só mostramos o timer se a cobrança ainda estiver pendente ou atrasada
-    if (status !== 'pendente' && status !== 'atrasado') return;
+    if (!expiresAt || new Date(expiresAt).getTime() <= Date.now()) return undefined;
+    const timer = window.setInterval(() => {
+      const currentTime = Date.now();
+      setNow(currentTime);
+      if (new Date(expiresAt).getTime() <= currentTime) window.clearInterval(timer);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [expiresAt]);
 
-    const calculateTime = () => {
-      const agora = new Date();
-      // Criamos o alvo: Ano-Mês-Dia T 23:30:00
-      const alvo = new Date(`${dataVencimento}T23:30:00`);
-      const diff = alvo - agora;
+  if (!expiresAt) return null;
 
-      if (diff <= 0) {
-        setTimeLeft("Expirado");
-      } else {
-        const horas = Math.floor(diff / (1000 * 60 * 60));
-        const minutos = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-        const segundos = Math.floor((diff % (1000 * 60)) / 1000);
-        
-        // Formata para sempre ter dois dígitos (ex: 02h 05m 09s)
-        const h = String(horas).padStart(2, '0');
-        const m = String(minutos).padStart(2, '0');
-        const s = String(segundos).padStart(2, '0');
-        
-        setTimeLeft(`${h}h ${m}m ${s}s`);
-      }
-    };
+  const expiration = new Date(expiresAt).getTime();
+  if (!Number.isFinite(expiration)) return null;
 
-    calculateTime(); // Roda imediatamente
-    const timer = setInterval(calculateTime, 1000); // Atualiza a cada segundo
-
-    return () => clearInterval(timer);
-  }, [dataVencimento, status]);
-
-  if (status !== 'pendente' && status !== 'atrasado') return null;
+  const remaining = expiration - now;
+  const expired = remaining <= 0;
+  const urgent = !expired && remaining <= 30 * 60 * 1000;
 
   return (
-    <div className={`flex items-center gap-1 text-[10px] font-black uppercase mt-1 px-2 py-0.5 rounded-md w-fit ${
-      timeLeft === 'Expirado' 
-      ? 'bg-red-500/10 text-red-500 border border-red-500/20' 
-      : 'bg-amber-500/10 text-amber-500 border border-amber-500/20 animate-pulse'
-    }`}>
-      <span className="opacity-70">Expira em:</span>
-      <span className="font-mono">{timeLeft}</span>
+    <div
+      className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-semibold ${
+        expired
+          ? 'border-rose-500/25 bg-rose-500/10 text-rose-300'
+          : urgent
+            ? 'border-amber-500/25 bg-amber-500/10 text-amber-300'
+            : 'border-zinc-700 bg-zinc-950/70 text-zinc-300'
+      }`}
+      aria-label={expired ? 'O PIX expirou' : `PIX expira em ${formatRemaining(remaining)}`}
+    >
+      <Clock3 size={13} aria-hidden="true" />
+      <span>{expired ? 'PIX expirado' : formatRemaining(remaining)}</span>
     </div>
   );
 };

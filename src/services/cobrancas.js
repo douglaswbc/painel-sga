@@ -11,19 +11,70 @@ export const cobrancasService = {
     return data;
   },
 
-  listDashboard: async (userId) => {
-    const { data, error } = await supabase
-      .from('cobrancas')
-      .select(`
-        id, valor, status, tipo, categoria, data_vencimento,
-        payment_link, tentativas_envio, created_at,
-        locatario_cobranca:locatarios!cobrancas_locatario_mesmo_usuario_fkey (nome_completo, whatsapp),
-        contratos (id, status, locatarios (nome_completo), veiculos (placa))
-      `)
-      .eq('id_usuario', userId)
-      .order('created_at', { ascending: false });
+  getDashboardSummary: async () => {
+    const { data, error } = await supabase.rpc('get_dashboard_summary');
     if (error) throw error;
-    return data;
+    return Array.isArray(data) ? data[0] || null : data;
+  },
+
+  listDashboardCharges: async (userId, { page = 1, pageSize = 8, status = 'all' } = {}) => {
+    const statuses = ['atrasado', 'pendente'];
+    const counts = await Promise.all(statuses.map(async (chargeStatus) => {
+      const { count, error } = await supabase
+        .from('cobrancas')
+        .select('id', { count: 'exact', head: true })
+        .eq('id_usuario', userId)
+        .eq('tipo', 'receita')
+        .eq('status', chargeStatus);
+      if (error) throw error;
+      return [chargeStatus, count || 0];
+    }));
+    const statusCounts = Object.fromEntries(counts);
+    const total = status === 'all'
+      ? statusCounts.atrasado + statusCounts.pendente
+      : statusCounts[status] || 0;
+    const offset = (page - 1) * pageSize;
+    const selection = `
+      id, id_locatario, valor, status, tipo, categoria, data_vencimento,
+      payment_link, mercado_pago_id, tentativas_envio, created_at,
+      pix_expires_at, pix_expired_at,
+      locatario_cobranca:locatarios!cobrancas_locatario_mesmo_usuario_fkey (nome_completo, whatsapp),
+      contratos (id, locatarios (nome_completo), veiculos (placa))
+    `;
+    const queryStatus = async (chargeStatus, from, to, expiryFirst = false) => {
+      if (to < from) return [];
+      let query = supabase
+        .from('cobrancas')
+        .select(selection)
+        .eq('id_usuario', userId)
+        .eq('tipo', 'receita')
+        .eq('status', chargeStatus);
+      if (expiryFirst) query = query.order('pix_expires_at', { ascending: true, nullsFirst: false });
+      query = query.order('data_vencimento', { ascending: true }).range(from, to);
+      const { data, error } = await query;
+      if (error) throw error;
+      return data || [];
+    };
+
+    let items;
+    if (status === 'all') {
+      const overdueCount = statusCounts.atrasado;
+      const overdueStart = Math.min(offset, overdueCount);
+      const overdueEnd = Math.min(offset + pageSize, overdueCount) - 1;
+      const overdueItems = offset < overdueCount
+        ? await queryStatus('atrasado', overdueStart, overdueEnd)
+        : [];
+      const remaining = pageSize - overdueItems.length;
+      const pendingOffset = Math.max(0, offset - overdueCount);
+      const pendingItems = remaining > 0
+        ? await queryStatus('pendente', pendingOffset, pendingOffset + remaining - 1, true)
+        : [];
+      items = [...overdueItems, ...pendingItems];
+    } else {
+      items = await queryStatus(status, offset, offset + pageSize - 1, status === 'pendente');
+    }
+
+    return { items, total, statusCounts };
   },
 
   getPendingByContrato: async (contratoId) => {
