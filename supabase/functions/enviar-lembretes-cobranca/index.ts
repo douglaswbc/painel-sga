@@ -1,4 +1,5 @@
-﻿import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { isServiceRequest } from '../_shared/cron-auth.ts';
 
 type Result = { id: string; ownerId: string; status: string; detail?: string };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
@@ -8,7 +9,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Method not allowed.' }, 405);
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-  if (!serviceRoleKey || req.headers.get('Authorization') !== `Bearer ${serviceRoleKey}`) {
+  if (!isServiceRequest(req, serviceRoleKey)) {
     return json({ error: 'Cron authorization failed.' }, 401);
   }
 
@@ -16,7 +17,7 @@ Deno.serve(async (req) => {
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const now = new Date();
   const nowIso = now.toISOString();
-  await admin.from('cobrancas').update({
+  const { error: expiryError } = await admin.from('cobrancas').update({
     pix_expired_at: nowIso,
     next_reminder_at: null,
   })
@@ -25,6 +26,7 @@ Deno.serve(async (req) => {
     .not('pix_expires_at', 'is', null)
     .lte('pix_expires_at', nowIso)
     .is('pix_expired_at', null);
+  if (expiryError) console.error('Failed to mark expired PIX charges:', expiryError.message);
 
   const { data: charges, error } = await admin.from('cobrancas')
     .select('id,id_usuario,status,tipo,tentativas_envio')
@@ -34,8 +36,14 @@ Deno.serve(async (req) => {
     .gt('pix_expires_at', nowIso)
     .order('next_reminder_at')
     .limit(100);
-  if (error) return json({ error: 'Could not load due charges.' }, 500);
-  if (!charges?.length) return json({ processed: 0, results: [] });
+  if (error) {
+    console.error('Could not load due charges:', error.message);
+    return json({ error: 'Could not load due charges.' }, 500);
+  }
+  if (!charges?.length) {
+    console.log('No due reminders with active PIX.');
+    return json({ processed: 0, results: [] });
+  }
 
   const results: Result[] = [];
   for (const charge of charges) {
@@ -63,5 +71,6 @@ Deno.serve(async (req) => {
       results.push({ id: charge.id, ownerId: charge.id_usuario, status: 'failed', detail: error instanceof Error ? error.message.slice(0, 300) : 'Request failed.' });
     }
   }
+  console.log(`Reminder run completed: ${results.filter((item) => item.status === 'sent').length} sent, ${results.filter((item) => item.status === 'already_sent').length} already sent, ${results.filter((item) => item.status === 'failed').length} failed.`);
   return json({ processed: results.length, results });
 });

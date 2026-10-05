@@ -79,11 +79,12 @@ export function parseRecurrence(raw: unknown, dueDate: Date): RecurrenceConfig {
   }
 }
 
-export function reminderStartAt(now: Date, time: string): Date {
+export function reminderStartAt(now: Date, time: string, pixExpiresAt?: Date): Date {
   const localDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(now)
   // São Paulo currently uses UTC-03:00 year-round; all persisted values remain absolute UTC timestamps.
   const scheduled = new Date(`${localDate}T${time}:00-03:00`)
-  return scheduled.getTime() < now.getTime() ? now : scheduled
+  const firstReminderAt = scheduled.getTime() < now.getTime() ? now : scheduled
+  return pixExpiresAt && firstReminderAt.getTime() >= pixExpiresAt.getTime() ? now : firstReminderAt
 }
 
 function daysInUtcMonth(year: number, month: number): number {

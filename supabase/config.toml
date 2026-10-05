@@ -1,0 +1,11 @@
+# Cron service calls authenticate inside these handlers using the service key
+# from the `apikey` header. User initiated calls are still verified by the
+# handlers before any privileged database operation.
+[functions.faturamento-cobrancas]
+verify_jwt = false
+
+[functions.enviar-lembretes-cobranca]
+verify_jwt = false
+
+[functions.zernio-message-scheduler]
+verify_jwt = false

@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { billingDate, nextContractSchedule, parseRecurrence, paymentIdempotencyKey, reminderStartAt } from '../_shared/billing.ts'
+import { isServiceRequest } from '../_shared/cron-auth.ts'
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -19,7 +20,7 @@ Deno.serve(async (req) => {
     try {
         const authorization = req.headers.get('Authorization') || ''
         const bearerToken = authorization.replace(/^Bearer\s+/i, '')
-        const isServiceRole = bearerToken === supabaseKey
+        const isServiceRole = isServiceRequest(req, supabaseKey)
         let authenticatedUserId: string | undefined
 
         if (!isServiceRole) {
@@ -58,6 +59,7 @@ Deno.serve(async (req) => {
         const { data: contratos, error: fetchError } = await query
         if (fetchError) throw fetchError
         if (!contratos || contratos.length === 0) {
+            console.log('Faturamento concluído: nenhum contrato ativo vencido neste ciclo.')
             return new Response(
                 JSON.stringify({ message: 'Nada para faturar.' }),
                 { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -104,7 +106,7 @@ Deno.serve(async (req) => {
 
                 const createdAt = new Date()
                 const expirationDate = new Date(createdAt.getTime() + (config.expiracao || 4) * 60 * 60 * 1000)
-                const firstReminderAt = reminderStartAt(createdAt, config.horario_cobranca || '20:00')
+                const firstReminderAt = reminderStartAt(createdAt, config.horario_cobranca || '20:00', expirationDate)
 
                 const mpPayload = {
                     description: `Aluguel: ${locatarioNome}`,
@@ -174,6 +176,7 @@ Deno.serve(async (req) => {
             }
         }
 
+        console.log(`Faturamento concluído: ${results.filter((item) => item.status === 'ok').length} criada(s), ${results.filter((item) => item.status === 'skipped_duplicate').length} duplicada(s), ${results.filter((item) => item.status === 'error').length} erro(s).`)
         return new Response(
             JSON.stringify({ results }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { isServiceRequest } from '../_shared/cron-auth.ts';
 
 type JsonRecord = Record<string, any>;
 const encoder = new TextEncoder();
@@ -106,7 +107,7 @@ async function zernioSend(apiKey: string, body: JsonRecord, idempotencyKey: stri
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Método não permitido.' }, 405);
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-  if (!serviceRoleKey || req.headers.get('Authorization') !== `Bearer ${serviceRoleKey}`) {
+  if (!isServiceRequest(req, serviceRoleKey)) {
     return json({ error: 'Autorização de cron inválida.' }, 401);
   }
 

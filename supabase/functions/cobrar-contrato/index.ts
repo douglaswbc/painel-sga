@@ -107,7 +107,7 @@ Deno.serve(async (req) => {
 
         const createdAt = new Date()
         const expirationDate = new Date(createdAt.getTime() + (config.expiracao || 4) * 60 * 60 * 1000)
-        const firstReminderAt = reminderStartAt(createdAt, config.horario_cobranca || '20:00')
+        const firstReminderAt = reminderStartAt(createdAt, config.horario_cobranca || '20:00', expirationDate)
 
         const mpPayload = {
             description: `Aluguel: ${locatarioNome}`,

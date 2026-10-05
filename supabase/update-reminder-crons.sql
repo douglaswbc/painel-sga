@@ -13,7 +13,7 @@ select cron.schedule(
              || '/functions/v1/faturamento-cobrancas',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
-        'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'sga_service_role_key')
+        'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'sga_service_role_key')
       ),
       body := '{}'::jsonb
     ) as request_id;
@@ -29,7 +29,29 @@ select cron.schedule(
              || '/functions/v1/enviar-lembretes-cobranca',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
-        'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'sga_service_role_key')
+        'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'sga_service_role_key')
+      ),
+      body := '{}'::jsonb
+    ) as request_id;
+  $$
+);
+
+
+-- Recurring sends for Meta approved templates through Zernio.
+select cron.unschedule(jobid)
+from cron.job
+where jobname = 'sga-zernio-message-scheduler';
+
+select cron.schedule(
+  'sga-zernio-message-scheduler',
+  '*/5 * * * *',
+  $$
+    select net.http_post(
+      url := (select decrypted_secret from vault.decrypted_secrets where name = 'sga_project_url')
+             || '/functions/v1/zernio-message-scheduler',
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'sga_service_role_key')
       ),
       body := '{}'::jsonb
     ) as request_id;
