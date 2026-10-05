@@ -124,16 +124,29 @@
   --color-indigo-500: #0071e3;
   --color-indigo-600: #0066cc;
   --color-indigo-700: #005ab4;
+  --color-indigo-200: #004c99;
+  --color-indigo-300: #005ab4;
   --color-blue-50: #eff6ff;
   --color-blue-100: #dbeafe;
   --color-blue-200: #bfdbfe;
-  --color-blue-300: #93c5fd;
+  --color-blue-300: #005ab4;
   --color-blue-400: #0066cc;
   --color-blue-500: #0071e3;
   --color-blue-600: #0066cc;
   --color-blue-700: #005ab4;
   --color-blue-800: #004c99;
   --color-blue-900: #003d7a;
+  --color-emerald-200: #047857;
+  --color-emerald-300: #047857;
+  --color-amber-200: #92400e;
+  --color-amber-300: #92400e;
+  --color-orange-300: #9a3412;
+  --color-red-300: #b91c1c;
+  --color-rose-200: #be123c;
+  --color-rose-300: #be123c;
+  --color-sky-200: #0369a1;
+  --color-sky-300: #0369a1;
+  --color-violet-300: #6d28d9;
 
   --radius-3xl: 18px;
   --radius-2xl: 18px;
@@ -153,12 +166,26 @@
   font-weight: 600;
 }
 
-.sga-app :where(h1, h2, h3, h4, h5, h6, p, span, div, label, td, th).text-white {
+.sga-app :where(a, button, h1, h2, h3, h4, h5, h6, p, span, div, label, td, th).text-white {
   color: var(--sga-ink);
 }
 
 .sga-app :is(input, select, textarea).text-white {
   color: var(--sga-ink);
+}
+
+.sga-app :is(input, select, textarea) {
+  color-scheme: light;
+}
+
+.sga-app :is(input, textarea)::placeholder {
+  color: #7a7a7a;
+  opacity: 1;
+}
+
+.sga-app option {
+  color: var(--sga-ink);
+  background: var(--sga-canvas);
 }
 
 .sga-app [class*="bg-indigo-"].text-white,
@@ -186,7 +213,7 @@
 }
 
 .sga-app .apple-dark-sidebar .text-white,
-.sga-app .apple-dark-preview :where(h1, h2, h3, h4, h5, h6, p, span, div, label, td, th).text-white {
+.sga-app .apple-dark-preview :where(a, button, h1, h2, h3, h4, h5, h6, p, span, div, label, td, th).text-white {
   color: #ffffff;
 }
 
