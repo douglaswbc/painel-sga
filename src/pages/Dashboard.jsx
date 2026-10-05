@@ -203,12 +203,7 @@ const Dashboard = () => {
                             <div className="scale-90 origin-left"><ExpirationTimer dataVencimento={item.data_vencimento} status={item.status} /></div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1.5 mt-3">
-                          {[...Array(8)].map((_, i) => (
-                            <div key={i} className={`h-1.5 w-3 rounded-full ${i < (item.tentativas_envio || 0) ? 'bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]' : 'bg-zinc-800'}`} />
-                          ))}
-                          <span className="text-[9px] text-zinc-500 font-black ml-1.5">{item.tentativas_envio || 0}/8</span>
-                        </div>
+                        <div className="mt-3 text-[9px] font-black text-zinc-500">{item.tentativas_envio || 0} lembrete(s) enviado(s)</div>
                       </td>
                       <td className="p-6 hidden sm:table-cell">
                         <div className="text-zinc-300 font-mono text-xs mb-1">{new Date(item.data_vencimento + 'T00:00:00').toLocaleDateString('pt-BR')}</div>

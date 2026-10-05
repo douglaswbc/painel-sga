@@ -14,22 +14,26 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } });
-  const dateParts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).formatToParts(new Date()).reduce((result: Record<string, string>, part) => {
-    if (part.type !== 'literal') result[part.type] = part.value;
-    return result;
-  }, {});
-  const today = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
-
-  const { data: charges, error } = await admin.from('cobrancas')
-    .select('id,id_usuario,data_vencimento,status,tipo,ultimo_lembrete_at,created_at')
+  const now = new Date();
+  const nowIso = now.toISOString();
+  await admin.from('cobrancas').update({
+    pix_expired_at: nowIso,
+    next_reminder_at: null,
+  })
     .in('status', ['pendente', 'atrasado'])
     .neq('tipo', 'despesa')
-    .lte('data_vencimento', today)
-    .is('ultimo_lembrete_at', null)
-    .lte('created_at', new Date().toISOString())
-    .order('data_vencimento');
+    .not('pix_expires_at', 'is', null)
+    .lte('pix_expires_at', nowIso)
+    .is('pix_expired_at', null);
+
+  const { data: charges, error } = await admin.from('cobrancas')
+    .select('id,id_usuario,status,tipo,tentativas_envio')
+    .in('status', ['pendente', 'atrasado'])
+    .neq('tipo', 'despesa')
+    .lte('next_reminder_at', nowIso)
+    .gt('pix_expires_at', nowIso)
+    .order('next_reminder_at')
+    .limit(100);
   if (error) return json({ error: 'Could not load due charges.' }, 500);
   if (!charges?.length) return json({ processed: 0, results: [] });
 
@@ -42,7 +46,10 @@ Deno.serve(async (req) => {
           Authorization: `Bearer ${serviceRoleKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ action: 'send_charge', ownerId: charge.id_usuario, chargeId: charge.id }),
+        body: JSON.stringify({
+          action: 'send_charge', ownerId: charge.id_usuario, chargeId: charge.id,
+          reminderSequence: Number(charge.tentativas_envio || 0) + 1,
+        }),
         signal: AbortSignal.timeout(30000),
       });
       const payload = await response.json().catch(() => ({}));

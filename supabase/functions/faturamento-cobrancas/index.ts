@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { billingDate, nextContractSchedule, parseRecurrence, paymentIdempotencyKey } from '../_shared/billing.ts'
+import { billingDate, nextContractSchedule, parseRecurrence, paymentIdempotencyKey, reminderStartAt } from '../_shared/billing.ts'
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -102,8 +102,9 @@ Deno.serve(async (req) => {
                 // --- MERCADO PAGO PAYLOAD ---
                 const locatarioNome = contrato.locatarios.nome_completo?.split(' ').slice(0, 2).join(' ') ?? 'Locatário'
 
-                const expirationDate = new Date()
-                expirationDate.setHours(expirationDate.getHours() + (config.expiracao || 4))
+                const createdAt = new Date()
+                const expirationDate = new Date(createdAt.getTime() + (config.expiracao || 4) * 60 * 60 * 1000)
+                const firstReminderAt = reminderStartAt(createdAt, config.horario_cobranca || '20:00')
 
                 const mpPayload = {
                     description: `Aluguel: ${locatarioNome}`,
@@ -145,6 +146,9 @@ Deno.serve(async (req) => {
                     status: 'pendente',
                     mercado_pago_id: mpData.id.toString(),
                     payment_link: mpData.point_of_interaction?.transaction_data?.ticket_url ?? null,
+                    pix_expires_at: expirationDate.toISOString(),
+                    next_reminder_at: firstReminderAt.toISOString(),
+                    reminder_interval_minutes: config.intervalo_lembrete_minutos || 30,
                 })
                 if (insertError?.code === '23505') {
                     results.push({ id: contrato.id, status: 'skipped_duplicate' })

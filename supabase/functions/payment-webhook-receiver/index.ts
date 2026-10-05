@@ -171,7 +171,7 @@ serve(async (req) => {
     if (mpPayment.status === 'approved') {
       if (charge && charge.status !== 'pago') {
         const paidAt = new Date().toISOString()
-        const { data: updated } = await admin.from('cobrancas').update({ status: 'pago', data_pagamento: paidAt })
+        const { data: updated } = await admin.from('cobrancas').update({ status: 'pago', data_pagamento: paidAt, next_reminder_at: null })
           .eq('id', charge.id).neq('status', 'pago').select('id').maybeSingle()
         if (updated) await sendPaymentConfirmation(admin, owner.id, String(paymentId), charge.contratos?.locatarios, Number(charge.valor), paidAt, 'id_cobranca', charge.id)
       } else if (candidate && candidate.status !== 'Vaga Reservada') {

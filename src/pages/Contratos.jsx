@@ -26,8 +26,10 @@ const defaultForm = {
   data_inicio: '',
   id_locatario: '',
   id_veiculo: '',
-  horario_faturamento: '20:00',
-  expiracao_horas: 24,
+  horario_geracao: '19:50',
+  horario_cobranca: '20:00',
+  intervalo_lembrete_minutos: 30,
+  expiracao_horas: 4,
   recorrencia_config: { frequencia: 'weekly', intervalo: 1, dias: ['mon'], termina: { tipo: 'nunca', valor: null } },
 };
 
@@ -57,10 +59,15 @@ const Contratos = () => {
   };
 
   const openEdit = (item) => {
+    const scheduledTime = item.proxima_cobranca
+      ? new Date(item.proxima_cobranca).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })
+      : '19:50';
     let dataToSet = {
       ...item,
-      horario_faturamento: '20:00',
-      expiracao_horas: 24,
+      horario_geracao: scheduledTime,
+      horario_cobranca: scheduledTime,
+      intervalo_lembrete_minutos: 30,
+      expiracao_horas: 4,
       recorrencia_config: { frequencia: 'weekly', intervalo: 1, dias: ['mon'], termina: { tipo: 'nunca', valor: null } },
     };
     let isCustom = false;
@@ -68,10 +75,19 @@ const Contratos = () => {
       try {
         const config = JSON.parse(item.recorrencia);
         dataToSet.recorrencia_config = config;
-        dataToSet.horario_faturamento = config.horario || '20:00';
-        dataToSet.expiracao_horas = config.expiracao || 24;
+        const legacyTime = config.horario || '20:00';
+        dataToSet.horario_geracao = config.horario_geracao || legacyTime;
+        dataToSet.horario_cobranca = config.horario_cobranca || legacyTime;
+        dataToSet.intervalo_lembrete_minutos = config.intervalo_lembrete_minutos || 30;
+        dataToSet.expiracao_horas = config.expiracao || 4;
         isCustom = true;
       } catch {}
+    } else if (typeof item.recorrencia === 'string') {
+      const legacyMatch = item.recorrencia.match(/@([a-z]{3})@([0-2]\d:[0-5]\d)$/i);
+      if (legacyMatch) {
+        dataToSet.horario_geracao = legacyMatch[2];
+        dataToSet.horario_cobranca = legacyMatch[2];
+      }
     }
     setEditingContract(item);
     setFormData(dataToSet);
@@ -84,9 +100,10 @@ const Contratos = () => {
     try {
       let proximaCobrancaISO;
       if (editingContract && formData.proxima_cobranca) {
-        proximaCobrancaISO = formData.proxima_cobranca;
+        const localDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date(formData.proxima_cobranca));
+        proximaCobrancaISO = new Date(`${localDate}T${formData.horario_geracao || '19:50'}:00-03:00`).toISOString();
       } else {
-        const horario = formData.horario_faturamento || '20:00';
+        const horario = formData.horario_geracao || '19:50';
         let dataCalculada = new Date(`${formData.data_inicio}T${horario}:00`);
         if (showCustomRecurrence && formData.recorrencia_config.frequencia === 'weekly') {
           const dayMapIndex = { dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6, sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
@@ -99,9 +116,24 @@ const Contratos = () => {
         proximaCobrancaISO = dataCalculada.toISOString();
       }
 
-      const recorrenciaFinal = showCustomRecurrence
-        ? JSON.stringify({ ...formData.recorrencia_config, horario: formData.horario_faturamento, expiracao: formData.expiracao_horas })
-        : formData.recorrencia;
+      const legacyRecurrence = String(formData.recorrencia || 'semanal').toLowerCase();
+      const legacyDayCode = legacyRecurrence.match(/@([a-z]{3})@/)?.[1] || 'mon';
+      const legacyDay = ({ sun: 'dom', mon: 'seg', tue: 'ter', wed: 'qua', thu: 'qui', fri: 'sex', sat: 'sab' })[legacyDayCode] || legacyDayCode;
+      const legacyConfig = {
+        frequencia: legacyRecurrence.includes('diari') || legacyRecurrence.includes('daily') ? 'daily'
+          : legacyRecurrence.includes('anual') || legacyRecurrence.includes('yearly') ? 'yearly'
+            : legacyRecurrence.includes('mensal') || legacyRecurrence.includes('monthly') ? 'monthly' : 'weekly',
+        intervalo: legacyRecurrence.includes('quinzenal') || legacyRecurrence.includes('biweekly') ? 2 : 1,
+        dias: [legacyDay], termina: { tipo: 'nunca', valor: null },
+      };
+      const recurrenceBase = showCustomRecurrence ? formData.recorrencia_config : legacyConfig;
+      const recorrenciaFinal = JSON.stringify({
+        ...recurrenceBase,
+        horario_geracao: formData.horario_geracao || '19:50',
+        horario_cobranca: formData.horario_cobranca || '20:00',
+        intervalo_lembrete_minutos: Math.min(240, Math.max(5, Number(formData.intervalo_lembrete_minutos) || 30)),
+        expiracao: Math.min(24, Math.max(1, Number(formData.expiracao_horas) || 4)),
+      });
 
       const payload = {
         recorrencia: recorrenciaFinal,
@@ -283,11 +315,11 @@ const Contratos = () => {
                       <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Data de Início</label>
                       <p className="text-sm font-bold text-zinc-300">{formData.data_inicio ? new Date(formData.data_inicio + 'T00:00:00').toLocaleDateString('pt-BR') : '-'}</p>
                     </div>
-                    <Input icon={Calendar} label="Próximo Envio" type="date"
+                    <Input icon={Calendar} label="Próxima Cobrança" type="date"
                       value={formData.proxima_cobranca ? new Date(formData.proxima_cobranca + (formData.proxima_cobranca.includes('T') ? '' : 'T00:00:00')).toISOString().split('T')[0] : ''}
                       onChange={e => {
                         const newDate = e.target.value;
-                        const horario = formData.horario_faturamento || '20:00';
+                        const horario = formData.horario_geracao || '19:50';
                         setFormData({...formData, proxima_cobranca: new Date(`${newDate}T${horario}:00`).toISOString()});
                       }}
                     />
@@ -303,8 +335,12 @@ const Contratos = () => {
               <SectionHeader className="mb-4">Configuração de Cobrança</SectionHeader>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <Input label="Horário de Geração" type="time"
-                  value={formData.horario_faturamento} onChange={e => setFormData({...formData, horario_faturamento: e.target.value})} />
-                <Input label="Expiração (Horas)" type="number"
+                  value={formData.horario_geracao} onChange={e => setFormData({...formData, horario_geracao: e.target.value})} />
+                <Input label="Horário de Cobrança" type="time"
+                  value={formData.horario_cobranca} onChange={e => setFormData({...formData, horario_cobranca: e.target.value})} />
+                <Input label="Intervalo entre Lembretes (minutos)" type="number" min="5" max="240" step="5"
+                  value={formData.intervalo_lembrete_minutos} onChange={e => setFormData({...formData, intervalo_lembrete_minutos: Number(e.target.value)})} />
+                <Input label="Expiração do PIX (Horas)" type="number" min="1" max="24"
                   value={formData.expiracao_horas} onChange={e => setFormData({...formData, expiracao_horas: Number(e.target.value)})} />
               </div>
             </div>

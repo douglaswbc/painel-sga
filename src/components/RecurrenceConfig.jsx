@@ -10,7 +10,10 @@ export const getRecurrenceLabel = (rec) => {
       const config = JSON.parse(rec);
       const unitMap = { daily: 'dia(s)', weekly: 'semana(s)', monthly: 'mês(es)', yearly: 'ano(s)' };
       let label = `A cada ${config.intervalo} ${unitMap[config.frequencia] || 'vezes'}`;
-      if (config.horario) label += ` às ${config.horario}`;
+      const generationTime = config.horario_geracao || config.horario;
+      if (generationTime) label += ` · gera às ${generationTime}`;
+      if (config.horario_cobranca) label += ` · lembrete às ${config.horario_cobranca}`;
+      if (config.intervalo_lembrete_minutos) label += ` · repete a cada ${config.intervalo_lembrete_minutos} min`;
       if (config.frequencia === 'weekly' && config.dias?.length > 0) {
         const dayMap = { dom: 'Dom', sun: 'Dom', seg: 'Seg', mon: 'Seg', ter: 'Ter', tue: 'Ter', qua: 'Qua', wed: 'Qua', qui: 'Qui', thu: 'Qui', sex: 'Sex', fri: 'Sex', sab: 'Sáb', sat: 'Sáb' };
         const selectedDays = [...new Set(config.dias.map(d => dayMap[d.toLowerCase()]).filter(Boolean))];

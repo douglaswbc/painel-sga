@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle, CheckCircle2, FileText, Loader2, Plus, RefreshCw,
-  Send, Smartphone, X,
+  AlertCircle, ArrowDown, ArrowUp, CheckCircle2, FileText, Loader2, Plus, RefreshCw,
+  Send, Smartphone, Trash2, X,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../services/supabase';
@@ -522,13 +522,46 @@ const ZernioTemplatesCard = () => {
       setTemplates(data.templates || []);
       setSelection(null);
       setNotice(selection.purpose === 'charge'
-        ? 'Template aprovado selecionado para os lembretes de cobrança.'
+        ? 'Template adicionado à sequência de lembretes.'
         : 'Template aprovado selecionado para as confirmações de pagamento.');
     } catch (error) {
       setErrorMessage(error.message);
     } finally {
       setBusy(false);
     }
+  };
+
+  const chargeSequence = useMemo(() => templates
+    .map((template) => ({
+      template,
+      usage: template.usages?.find((usage) => usage.purpose === 'charge' && usage.is_default),
+    }))
+    .filter((item) => item.usage)
+    .sort((a, b) => Number(a.usage.reminder_order || 1) - Number(b.usage.reminder_order || 1)), [templates]);
+
+  const saveChargeSequence = async (templateIds) => {
+    setBusy(true);
+    setErrorMessage('');
+    setNotice('');
+    try {
+      const data = await invoke('save_charge_order', { templateIds });
+      setTemplates(data.templates || []);
+      setNotice(templateIds.length
+        ? 'Sequência de lembretes salva. Os templates serão enviados na ordem definida e a sequência se repetirá até o pagamento ou a expiração do PIX.'
+        : 'Todos os templates foram removidos da sequência de lembretes.');
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const moveChargeTemplate = (index, direction) => {
+    const next = [...chargeSequence];
+    const target = index + direction;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    saveChargeSequence(next.map((item) => item.template.id));
   };
 
   const cancelTemplate = () => {
@@ -557,13 +590,25 @@ const ZernioTemplatesCard = () => {
 
       {!showForm && <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 space-y-2">
         <h3 className="text-xs font-bold uppercase tracking-wide text-slate-300">Como funcionam os templates</h3>
-        <p className="text-xs text-slate-400">Após a aprovação, escolha o uso do template e associe cada variável aos dados que o SGA enviará.</p>
+        <p className="text-xs text-slate-400">Adicione vários templates aprovados aos lembretes, ordene a sequência e associe as variáveis aos dados do SGA. A sequência se repete até o pagamento ou a expiração do PIX.</p>
+      </div>}
+
+      {!showForm && <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4">
+        <div className="mb-3 flex items-center justify-between gap-3"><div><h3 className="text-xs font-bold uppercase tracking-wide text-indigo-200">Sequência de lembretes</h3><p className="mt-1 text-[11px] text-slate-400">Cada novo lembrete usa o próximo modelo. Depois do último, a sequência recomeça.</p></div><span className="rounded-full bg-indigo-500/10 px-2 py-1 text-[10px] font-bold text-indigo-200">{chargeSequence.length} selecionado(s)</span></div>
+        {chargeSequence.length ? <ol className="space-y-2">{chargeSequence.map(({ template }, index) => <li key={template.id} className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/70 p-2.5">
+          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-indigo-500/15 text-xs font-black text-indigo-200">{index + 1}</span>
+          <span className="min-w-0 flex-1 truncate text-xs font-semibold text-white">{template.name}<span className="ml-2 text-[10px] font-normal text-slate-500">{template.language}</span></span>
+          <button type="button" disabled={busy || index === 0} onClick={() => moveChargeTemplate(index, -1)} className="rounded p-1.5 text-slate-400 hover:bg-slate-800 disabled:opacity-30" title="Mover para cima" aria-label={`Mover ${template.name} para cima`}><ArrowUp size={14} /></button>
+          <button type="button" disabled={busy || index === chargeSequence.length - 1} onClick={() => moveChargeTemplate(index, 1)} className="rounded p-1.5 text-slate-400 hover:bg-slate-800 disabled:opacity-30" title="Mover para baixo" aria-label={`Mover ${template.name} para baixo`}><ArrowDown size={14} /></button>
+          <button type="button" disabled={busy} onClick={() => saveChargeSequence(chargeSequence.filter((item) => item.template.id !== template.id).map((item) => item.template.id))} className="rounded p-1.5 text-red-300 hover:bg-red-500/10 disabled:opacity-30" title="Remover da sequência" aria-label={`Remover ${template.name} da sequência`}><Trash2 size={14} /></button>
+        </li>)}</ol> : <p className="rounded-lg border border-dashed border-slate-700 px-3 py-4 text-center text-xs text-slate-500">Adicione templates aprovados usando o botão “Usar em lembretes”.</p>}
       </div>}
 
       {templates.length > 0 ? <div className="space-y-2">
         {templates.map((template) => {
           const status = String(template.status || 'PENDING').toUpperCase();
-          const isChargeTemplate = template.usages?.some((usage) => usage.purpose === 'charge' && usage.is_default) || false;
+          const chargeUsage = template.usages?.find((usage) => usage.purpose === 'charge' && usage.is_default);
+          const isChargeTemplate = Boolean(chargeUsage);
           const isPaymentTemplate = template.usages?.some((usage) => usage.purpose === 'payment_confirmation' && usage.is_default) || false;
           return <article key={template.id} className="flex flex-col md:flex-row md:items-center justify-between gap-3 rounded-lg border border-slate-800 p-3">
             <div className="min-w-0">
@@ -571,14 +616,14 @@ const ZernioTemplatesCard = () => {
                 <span className="text-sm font-semibold text-white">{template.name}</span>
                 <span className="text-[10px] text-slate-400 font-mono">{template.language}</span>
                 <span className={`text-[10px] uppercase font-bold border rounded-full px-2 py-0.5 ${statusStyles[status] || statusStyles.PENDING}`}>{status}</span>
-                {isChargeTemplate && <span className="inline-flex items-center rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-200">Lembrete de cobrança</span>}
+                {isChargeTemplate && <span className="inline-flex items-center rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-200">Lembrete {chargeUsage.reminder_order || 1}º</span>}
                 {isPaymentTemplate && <span className="inline-flex items-center rounded-full border border-sky-400/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-200">Confirmação de pagamento</span>}
               </div>
               <p className="text-[11px] text-slate-500 mt-1">{template.category}{template.rejection_reason ? ` · ${template.rejection_reason}` : ''}</p>
             </div>
             {status === 'APPROVED' && <div className="flex flex-wrap gap-2">
               <button type="button" onClick={() => configureDefault(template, 'charge')} disabled={busy} className={`shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 disabled:opacity-40 ${isChargeTemplate ? 'bg-emerald-600 text-white' : 'bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-300'}`}>
-                {isChargeTemplate && <CheckCircle2 size={14} />}{isChargeTemplate ? 'Lembrete selecionado' : 'Usar em lembretes'}
+                {isChargeTemplate && <CheckCircle2 size={14} />}{isChargeTemplate ? `Editar lembrete ${chargeUsage.reminder_order || 1}º` : 'Usar em lembretes'}
               </button>
               <button type="button" onClick={() => configureDefault(template, 'payment_confirmation')} disabled={busy} className={`shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 disabled:opacity-40 ${isPaymentTemplate ? 'bg-sky-600 text-white' : 'bg-sky-600/10 hover:bg-sky-600/20 text-sky-300'}`}>
                 {isPaymentTemplate && <CheckCircle2 size={14} />}{isPaymentTemplate ? 'Confirmação selecionada' : 'Usar em confirmações'}
@@ -610,7 +655,7 @@ const ZernioTemplatesCard = () => {
             </div>
             <TemplateAssociationPreview template={selection.template} />
           </div>
-          <p className="mt-4 text-[11px] text-slate-500">O template substituirá o padrão atual deste tipo de mensagem para este locador.</p>
+          <p className="mt-4 text-[11px] text-slate-500">{selection.purpose === 'charge' ? 'Este template será incluído na sequência de lembretes. Ajuste a ordem na lista acima.' : 'Este template será usado nas confirmações de pagamento deste locador.'}</p>
           <div className="mt-5 flex justify-end gap-2 border-t border-slate-800 pt-4">
             <button type="button" onClick={() => setSelection(null)} disabled={busy} className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800">Cancelar</button>
             <button type="submit" disabled={busy || variableMapping.some((item) => !item.field)} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-500 disabled:opacity-50">{busy ? 'Salvando...' : 'Salvar seleção'}</button>

@@ -9,6 +9,9 @@ export type RecurrenceConfig = {
   dias: string[]
   termina?: { tipo: string; valor?: number | string | null; unidade?: string }
   expiracao?: number
+  horario_geracao?: string
+  horario_cobranca?: string
+  intervalo_lembrete_minutos?: number
 }
 
 const defaults = (dueDate: Date): RecurrenceConfig => ({
@@ -42,6 +45,12 @@ export function parseRecurrence(raw: unknown, dueDate: Date): RecurrenceConfig {
     } else if (value.includes('anual') || value.includes('yearly')) {
       saved = { frequencia: 'yearly', intervalo: 1 }
     }
+    const legacyMatch = value.match(/@([a-z]{3})@([0-2]\d:[0-5]\d)$/i)
+    if (legacyMatch) {
+      saved.dias = [legacyMatch[1]]
+      saved.horario_geracao = legacyMatch[2]
+      saved.horario_cobranca = legacyMatch[2]
+    }
   }
 
   const frequency = saved.frequencia
@@ -64,7 +73,17 @@ export function parseRecurrence(raw: unknown, dueDate: Date): RecurrenceConfig {
       ? saved.termina as RecurrenceConfig['termina']
       : base.termina,
     expiracao: Number(saved.expiracao) > 0 ? Number(saved.expiracao) : base.expiracao,
+    horario_geracao: typeof saved.horario_geracao === 'string' ? saved.horario_geracao : typeof saved.horario === 'string' ? saved.horario : '20:00',
+    horario_cobranca: typeof saved.horario_cobranca === 'string' ? saved.horario_cobranca : typeof saved.horario === 'string' ? saved.horario : '20:00',
+    intervalo_lembrete_minutos: Number(saved.intervalo_lembrete_minutos) > 0 ? Number(saved.intervalo_lembrete_minutos) : 30,
   }
+}
+
+export function reminderStartAt(now: Date, time: string): Date {
+  const localDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(now)
+  // São Paulo currently uses UTC-03:00 year-round; all persisted values remain absolute UTC timestamps.
+  const scheduled = new Date(`${localDate}T${time}:00-03:00`)
+  return scheduled.getTime() < now.getTime() ? now : scheduled
 }
 
 function daysInUtcMonth(year: number, month: number): number {

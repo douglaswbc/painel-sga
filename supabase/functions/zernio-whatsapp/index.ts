@@ -158,9 +158,9 @@ async function syncTemplates(admin: any, apiKey: string, ownerId: string, accoun
     .eq('id_usuario', ownerId).eq('account_id', accountId).order('name').order('language');
   if (error) throw new Error('Não foi possível carregar os templates do SGA.');
   const { data: usages, error: usageError } = await admin.from('zernio_whatsapp_template_usages')
-    .select('template_id,purpose,variable_mapping,is_default')
+    .select('template_id,purpose,variable_mapping,is_default,reminder_order')
     .eq('id_usuario', ownerId).eq('account_id', accountId);
-  if (usageError) throw new Error('Não foi possível carregar os usos dos templates. Aplique a migration 013.');
+  if (usageError) throw new Error('Não foi possível carregar os usos dos templates. Aplique as migrations 013 e 015.');
   return (data ?? []).map((template: JsonRecord) => ({
     ...template,
     usages: (usages ?? []).filter((usage: JsonRecord) => usage.template_id === template.id),
@@ -247,6 +247,7 @@ async function generatePaymentLink(admin: any, ownerId: string, charge: JsonReco
   if (document.length === 11 || document.length === 14) {
     payer.identification = { type: document.length === 14 ? 'CNPJ' : 'CPF', number: document };
   }
+  const pixExpiresAt = new Date(Date.now() + 4 * 60 * 60 * 1000);
   let response: Response;
   try {
     response = await fetch('https://api.mercadopago.com/v1/payments', {
@@ -260,6 +261,7 @@ async function generatePaymentLink(admin: any, ownerId: string, charge: JsonReco
         transaction_amount: Number(charge.valor),
         description: `Aluguel - ${tenant.nome_completo}`,
         payment_method_id: 'pix',
+        date_of_expiration: pixExpiresAt.toISOString(),
         notification_url: Deno.env.get('MP_WEBHOOK_URL') || undefined,
         payer,
       }),
@@ -276,6 +278,7 @@ async function generatePaymentLink(admin: any, ownerId: string, charge: JsonReco
   }
   const { error } = await admin.from('cobrancas').update({
     mercado_pago_id: String(result.id), payment_link: paymentLink,
+    pix_expires_at: pixExpiresAt.toISOString(), pix_expired_at: null,
   }).eq('id', charge.id).eq('id_usuario', ownerId);
   if (error) throw new Error('O link PIX foi criado, mas não foi possível salvá-lo na cobrança.');
   return paymentLink;
@@ -555,17 +558,61 @@ Deno.serve(async (req) => {
         item.position !== index + 1 || item.index !== index || !allowedFields.has(item.field))) {
         return json({ error: 'Associe cada variável do template a um campo válido do SGA.' }, 400);
       }
-      const { error: clearError } = await admin.from('zernio_whatsapp_template_usages')
-        .update({ is_default: false, updated_at: new Date().toISOString() })
-        .eq('id_usuario', user.id).eq('account_id', accountId).eq('purpose', purpose).eq('is_default', true);
-      if (clearError) throw new Error('Não foi possível atualizar o template padrão.');
+      const { data: currentUsage } = await admin.from('zernio_whatsapp_template_usages')
+        .select('reminder_order,is_default').eq('template_id', selected.id).eq('purpose', purpose).maybeSingle();
+      let reminderOrder = 1;
+      if (purpose === 'charge') {
+        if (Number.isInteger(Number(body.reminderOrder)) && Number(body.reminderOrder) > 0) {
+          reminderOrder = Number(body.reminderOrder);
+        } else if (currentUsage?.is_default) {
+          reminderOrder = Number(currentUsage.reminder_order) || 1;
+        } else {
+          const { data: currentReminders } = await admin.from('zernio_whatsapp_template_usages')
+            .select('reminder_order').eq('id_usuario', user.id).eq('account_id', accountId)
+            .eq('purpose', 'charge').eq('is_default', true).order('reminder_order', { ascending: false }).limit(1);
+          reminderOrder = Number(currentReminders?.[0]?.reminder_order || 0) + 1;
+        }
+      } else {
+        const { error: clearError } = await admin.from('zernio_whatsapp_template_usages')
+          .update({ is_default: false, updated_at: new Date().toISOString() })
+          .eq('id_usuario', user.id).eq('account_id', accountId).eq('purpose', purpose).eq('is_default', true);
+        if (clearError) throw new Error('Não foi possível atualizar o template padrão.');
+      }
       const { data: saved, error: saveError } = await admin.from('zernio_whatsapp_template_usages')
         .upsert({
           template_id: selected.id, id_usuario: user.id, account_id: accountId, purpose,
           variable_mapping: variableMapping.map(({ position, field }: JsonRecord) => ({ position, field })),
-          is_default: true, updated_at: new Date().toISOString(),
+          is_default: true, reminder_order: reminderOrder, updated_at: new Date().toISOString(),
         }, { onConflict: 'template_id,purpose' }).select('id').maybeSingle();
       if (saveError || !saved) throw new Error('Não foi possível selecionar o template padrão.');
+      return json({ success: true, templates: await syncTemplates(admin, apiKey, user.id, accountId) });
+    }
+
+    if (action === 'save_charge_order') {
+      const templateIds = Array.isArray(body.templateIds) ? body.templateIds.map(String) : [];
+      if (new Set(templateIds).size !== templateIds.length) return json({ error: 'A sequência contém templates duplicados.' }, 400);
+      const templates = await syncTemplates(admin, apiKey, user.id, accountId);
+      const selected = templateIds.map((templateId: string) => templates.find((item: JsonRecord) => item.id === templateId));
+      if (selected.some((template: JsonRecord | undefined) => !template || template.status !== 'APPROVED')) {
+        return json({ error: 'Todos os templates da sequência precisam estar aprovados neste canal.' }, 409);
+      }
+      const { data: selectedUsages, error: usageReadError } = templateIds.length
+        ? await admin.from('zernio_whatsapp_template_usages').select('template_id,purpose')
+          .eq('id_usuario', user.id).eq('account_id', accountId).eq('purpose', 'charge').in('template_id', templateIds)
+        : { data: [], error: null };
+      if (usageReadError || (selectedUsages || []).length !== templateIds.length) {
+        return json({ error: 'Configure primeiro as variáveis de cada template de lembrete.' }, 409);
+      }
+      const { error: clearError } = await admin.from('zernio_whatsapp_template_usages')
+        .update({ is_default: false, updated_at: new Date().toISOString() })
+        .eq('id_usuario', user.id).eq('account_id', accountId).eq('purpose', 'charge').eq('is_default', true);
+      if (clearError) throw new Error('Não foi possível atualizar a sequência de lembretes.');
+      for (const [index, templateId] of templateIds.entries()) {
+        const { error: orderError } = await admin.from('zernio_whatsapp_template_usages')
+          .update({ is_default: true, reminder_order: index + 1, updated_at: new Date().toISOString() })
+          .eq('id_usuario', user.id).eq('account_id', accountId).eq('purpose', 'charge').eq('template_id', templateId);
+        if (orderError) throw new Error('Não foi possível salvar a ordem dos templates de lembrete.');
+      }
       return json({ success: true, templates: await syncTemplates(admin, apiKey, user.id, accountId) });
     }
 
@@ -659,11 +706,15 @@ Deno.serve(async (req) => {
       const chargeId = body.chargeId;
       if (typeof chargeId !== 'string' || !/^[0-9a-f-]{36}$/i.test(chargeId)) return json({ error: 'Identificador da cobrança inválido.' }, 400);
       const { data: charge, error: chargeError } = await admin.from('cobrancas')
-        .select('id,id_usuario,id_locatario,id_contrato,valor,data_vencimento,status,tipo,payment_link,mercado_pago_id,tentativas_envio')
+        .select('id,id_usuario,id_locatario,id_contrato,valor,data_vencimento,status,tipo,payment_link,mercado_pago_id,tentativas_envio,created_at,pix_expires_at,pix_expired_at,reminder_interval_minutes')
         .eq('id', chargeId).eq('id_usuario', user.id).maybeSingle();
       if (chargeError || !charge) return json({ error: 'Cobrança não encontrada para este locador.' }, 404);
       if (!['pendente', 'atrasado'].includes(charge.status) || charge.tipo === 'despesa') {
         return json({ error: 'Somente cobranças de receita pendentes ou atrasadas podem ser enviadas.' }, 409);
+      }
+      const storedPixExpiry = charge.pix_expires_at || new Date(new Date(charge.created_at).getTime() + 4 * 60 * 60 * 1000).toISOString();
+      if (charge.pix_expired_at || new Date(storedPixExpiry).getTime() <= Date.now()) {
+        return json({ error: 'O PIX desta cobrança expirou. Gere um novo PIX antes de enviar outro lembrete.' }, 409);
       }
       if (!Number.isFinite(Number(charge.valor)) || Number(charge.valor) <= 0) {
         return json({ error: 'O valor desta cobrança precisa ser maior que zero.' }, 409);
@@ -679,7 +730,7 @@ Deno.serve(async (req) => {
             if (paymentResponse.ok) {
               const payment = await paymentResponse.json();
               if (payment.status === 'approved') {
-                await admin.from('cobrancas').update({ status: 'pago', data_pagamento: new Date().toISOString() })
+                await admin.from('cobrancas').update({ status: 'pago', data_pagamento: new Date().toISOString(), next_reminder_at: null })
                   .eq('id', charge.id).eq('id_usuario', user.id);
                 return json({ error: 'O Mercado Pago já confirmou esta cobrança como paga.' }, 409);
               }
@@ -696,10 +747,18 @@ Deno.serve(async (req) => {
       const { data: tenant, error: tenantError } = await admin.from('locatarios')
         .select('id,nome_completo,whatsapp,email,cpf').eq('id', charge.id_locatario).eq('id_usuario', user.id).maybeSingle();
       if (tenantError || !tenant || !tenant.whatsapp) return json({ error: 'O locatário não possui WhatsApp válido cadastrado.' }, 409);
-      const { data: selectedUsage, error: usageError } = await admin.from('zernio_whatsapp_template_usages')
-        .select('template_id,variable_mapping').eq('id_usuario', user.id).eq('account_id', accountId)
-        .eq('is_default', true).eq('purpose', 'charge').maybeSingle();
-      if (usageError || !selectedUsage) return json({ error: 'Selecione um template aprovado para lembretes na aba Templates Meta de /mensagens.' }, 409);
+      const requestedSequence = serviceCall && Number.isInteger(Number(body.reminderSequence)) && Number(body.reminderSequence) > 0
+        ? Number(body.reminderSequence) : Number(charge.tentativas_envio || 0) + 1;
+      const { data: lastSentReminder, error: sentSequenceError } = await admin.from('zernio_whatsapp_deliveries')
+        .select('sequence_no').eq('id_usuario', user.id).eq('id_cobranca', charge.id)
+        .eq('status', 'sent').order('sequence_no', { ascending: false }).limit(1).maybeSingle();
+      if (sentSequenceError) throw new Error('Não foi possível determinar a ordem do próximo lembrete.');
+      const reminderSequence = Math.max(requestedSequence, Number(lastSentReminder?.sequence_no || 0) + 1);
+      const { data: reminderUsages, error: usageError } = await admin.from('zernio_whatsapp_template_usages')
+        .select('template_id,variable_mapping,reminder_order').eq('id_usuario', user.id).eq('account_id', accountId)
+        .eq('is_default', true).eq('purpose', 'charge').order('reminder_order');
+      if (usageError || !reminderUsages?.length) return json({ error: 'Selecione um ou mais templates aprovados para lembretes na aba Templates Meta de /mensagens.' }, 409);
+      const selectedUsage = reminderUsages[(reminderSequence - 1) % reminderUsages.length];
       const { data: selectedTemplate, error: templateError } = await admin.from('zernio_whatsapp_templates')
         .select('*').eq('id', selectedUsage.template_id).eq('id_usuario', user.id).eq('account_id', accountId).maybeSingle();
       if (templateError || !selectedTemplate) return json({ error: 'O template padrão de cobrança não foi encontrado neste canal.' }, 409);
@@ -711,49 +770,37 @@ Deno.serve(async (req) => {
       }
 
       const paymentLink = charge.payment_link || await generatePaymentLink(admin, user.id, charge, tenant);
+      const pixExpiresAt = charge.pix_expires_at || storedPixExpiry;
       const participantId = phoneForWhatsApp(tenant.whatsapp);
       const params = billingTemplateParams(selectedTemplate, selectedUsage.variable_mapping || [], tenant.nome_completo, Number(charge.valor), charge.data_vencimento, paymentLink);
-      const { data: priorDeliveries, error: priorError } = await admin.from('zernio_whatsapp_deliveries')
-        .select('id,status,message_id,updated_at').eq('id_usuario', user.id).eq('id_cobranca', charge.id)
-        .in('status', ['sending', 'sent']).order('created_at', { ascending: false }).limit(1);
-      if (priorError) throw new Error('Não foi possível verificar o histórico de envio desta cobrança.');
-      const priorDelivery = priorDeliveries?.[0];
-      if (priorDelivery?.status === 'sent') {
-        return json({ success: true, alreadySent: true, message: 'Esta cobrança já foi enviada pelo WhatsApp.', messageId: priorDelivery.message_id });
-      }
-      if (priorDelivery?.status === 'sending' && new Date(priorDelivery.updated_at).getTime() > Date.now() - 120000) {
-        return json({ error: 'O envio desta cobrança já está em processamento. Aguarde alguns instantes.' }, 409);
+      const { data: existing, error: existingError } = await admin.from('zernio_whatsapp_deliveries')
+        .select('*').eq('id_usuario', user.id).eq('id_cobranca', charge.id).eq('sequence_no', reminderSequence).maybeSingle();
+      if (existingError) throw new Error('Não foi possível verificar o histórico de envio desta cobrança.');
+      if (existing?.status === 'sent') return json({ success: true, alreadySent: true, messageId: existing.message_id });
+      if (existing?.status === 'sending' && new Date(existing.updated_at).getTime() > Date.now() - 120000) {
+        return json({ error: 'O envio deste lembrete já está em processamento. Aguarde alguns instantes.' }, 409);
       }
       let delivery: JsonRecord | null = null;
-      const { data: inserted, error: insertError } = await admin.from('zernio_whatsapp_deliveries').insert({
-        id_usuario: user.id, id_cobranca: charge.id, template_id: selectedTemplate.id, account_id: accountId,
-        idempotency_key: crypto.randomUUID(), status: 'sending', meta_template_id: selectedTemplate.meta_template_id,
-        template_name: selectedTemplate.name, template_language: selectedTemplate.language,
-      }).select('*').maybeSingle();
-      if (!insertError && inserted) delivery = inserted;
-      else {
-        const { data: existing, error: existingError } = await admin.from('zernio_whatsapp_deliveries')
-          .select('*').eq('id_usuario', user.id).eq('id_cobranca', charge.id).eq('template_id', selectedTemplate.id).maybeSingle();
-        if (existingError) throw new Error('Não foi possível consultar o histórico de envio.');
-        if (!existing) {
-          const { data: activeLog } = await admin.from('zernio_whatsapp_deliveries')
-            .select('status').eq('id_usuario', user.id).eq('id_cobranca', charge.id)
-            .in('status', ['sending', 'sent']).maybeSingle();
-          if (activeLog?.status === 'sent') return json({ success: true, alreadySent: true, message: 'Esta cobrança já foi enviada pelo WhatsApp.' });
-          if (activeLog?.status === 'sending') return json({ error: 'O envio desta cobrança já está em processamento. Aguarde alguns instantes.' }, 409);
-          throw new Error('Não foi possível registrar a tentativa de envio.');
-        }
-        if (existing.status === 'sent') return json({ success: true, alreadySent: true, message: 'Este template já foi enviado para esta cobrança.', messageId: existing.message_id });
-        if (existing.status === 'sending' && new Date(existing.updated_at).getTime() > Date.now() - 120000) {
-          return json({ error: 'O envio desta cobrança já está em processamento. Aguarde alguns instantes.' }, 409);
-        }
+      if (existing) {
         const claimQuery = admin.from('zernio_whatsapp_deliveries').update({
-          status: 'sending', safe_error: null, error_code: null, updated_at: new Date().toISOString(),
+          status: 'sending', template_id: selectedTemplate.id, account_id: accountId,
+          meta_template_id: selectedTemplate.meta_template_id, template_name: selectedTemplate.name,
+          template_language: selectedTemplate.language, safe_error: null, error_code: null,
+          updated_at: new Date().toISOString(),
         }).eq('id', existing.id).eq('status', existing.status);
         if (existing.status === 'sending') claimQuery.lt('updated_at', new Date(Date.now() - 120000).toISOString());
         const { data: claimed, error: claimError } = await claimQuery.select('*').maybeSingle();
         if (claimError || !claimed) return json({ error: 'O envio está sendo processado por outra solicitação. Aguarde e atualize a tela.' }, 409);
         delivery = claimed;
+      } else {
+        const { data: inserted, error: insertError } = await admin.from('zernio_whatsapp_deliveries').insert({
+          id_usuario: user.id, id_cobranca: charge.id, template_id: selectedTemplate.id, account_id: accountId,
+          idempotency_key: `sga-charge-${charge.id}-${reminderSequence}`, sequence_no: reminderSequence,
+          status: 'sending', meta_template_id: selectedTemplate.meta_template_id,
+          template_name: selectedTemplate.name, template_language: selectedTemplate.language,
+        }).select('*').maybeSingle();
+        if (insertError || !inserted) return json({ error: 'Não foi possível reservar este lembrete. Atualize e tente novamente.' }, 409);
+        delivery = inserted;
       }
       if (!delivery) throw new Error('Não foi possível registrar a tentativa de envio.');
       claimedDeliveryId = delivery.id;
@@ -780,9 +827,13 @@ Deno.serve(async (req) => {
       }).eq('id', delivery.id).eq('status', 'sending');
       if (finishError) throw new Error('A Zernio enviou a mensagem, mas o SGA não conseguiu concluir a auditoria. Atualize a tela antes de tentar novamente.');
       claimedDeliveryId = null;
+      const nextReminderAt = new Date(new Date(sentAt).getTime() + Number(charge.reminder_interval_minutes || 30) * 60000);
+      const nextReminder = nextReminderAt.getTime() < new Date(pixExpiresAt).getTime()
+        ? nextReminderAt.toISOString() : null;
       await admin.from('cobrancas').update({
-        tentativas_envio: Number(charge.tentativas_envio || 0) + 1, ultimo_lembrete_at: sentAt,
-      }).eq('id', charge.id).eq('id_usuario', user.id);
+        tentativas_envio: reminderSequence, ultimo_lembrete_at: sentAt, next_reminder_at: nextReminder,
+        pix_expires_at: pixExpiresAt,
+      }).eq('id', charge.id).eq('id_usuario', user.id).in('status', ['pendente', 'atrasado']);
       return json({ success: true, message: 'Link PIX enviado por um template aprovado da Meta.', messageId, paymentLink });
     }
 
