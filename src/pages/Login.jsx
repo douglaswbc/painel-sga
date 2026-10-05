@@ -59,20 +59,24 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#121829] p-4">
-      <div className="w-full max-w-md bg-[#1e293b] rounded-xl shadow-2xl p-8 border border-slate-700/50">
+    <main className="flex min-h-screen items-center justify-center bg-[#f5f5f7] p-4 sm:p-6">
+      <section className="w-full max-w-md rounded-[18px] border border-black/10 bg-white p-6 sm:p-8">
         <div className="text-center mb-8">
-          <h2 className="text-3xl font-bold text-white mb-2">Acessar Painel</h2>
-          <p className="text-slate-400">Bem-vindo de volta! Faça login para continuar.</p>
+          <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-[#0066cc] text-white"><span className="text-lg font-semibold">SGA</span></div>
+          <h1 className="mb-2 text-2xl font-semibold tracking-tight text-[#1d1d1f]">Acessar painel</h1>
+          <p className="text-sm leading-5 text-[#7a7a7a]">Bem-vindo de volta. Entre para continuar.</p>
         </div>
 
-        <form onSubmit={handleLogin} className="space-y-6">
+        <form onSubmit={handleLogin} className="space-y-4">
           <div className="relative">
-            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 w-5 h-5" />
+            <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#7a7a7a]" size={18} aria-hidden="true" />
+            <label htmlFor="login-email" className="sr-only">E-mail</label>
             <input
+              id="login-email"
               type="email"
               placeholder="Seu e-mail"
-              className="w-full bg-[#2d3748] border border-slate-600 rounded-lg py-3 pl-11 pr-4 text-white focus:outline-none focus:border-indigo-500 transition-all"
+              autoComplete="username"
+              className="min-h-12 w-full rounded-lg border border-[#e0e0e0] bg-white py-3 pl-11 pr-4 text-sm text-[#1d1d1f] outline-none transition placeholder:text-[#7a7a7a] focus:border-[#0066cc] focus:ring-2 focus:ring-[#0066cc]/15"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -80,11 +84,14 @@ const Login = () => {
           </div>
 
           <div className="relative">
-            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 w-5 h-5" />
+            <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#7a7a7a]" size={18} aria-hidden="true" />
+            <label htmlFor="login-password" className="sr-only">Senha</label>
             <input
+              id="login-password"
               type="password"
               placeholder="Sua senha"
-              className="w-full bg-[#2d3748] border border-slate-600 rounded-lg py-3 pl-11 pr-4 text-white focus:outline-none focus:border-indigo-500 transition-all"
+              autoComplete="current-password"
+              className="min-h-12 w-full rounded-lg border border-[#e0e0e0] bg-white py-3 pl-11 pr-4 text-sm text-[#1d1d1f] outline-none transition placeholder:text-[#7a7a7a] focus:border-[#0066cc] focus:ring-2 focus:ring-[#0066cc]/15"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
@@ -94,13 +101,13 @@ const Login = () => {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-lg flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+            className="flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-[#0066cc] px-6 py-3 text-[17px] font-normal text-white transition-transform hover:bg-[#005ab4] active:scale-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0071e3] disabled:cursor-wait disabled:opacity-50"
           >
             {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Entrar'}
           </button>
         </form>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 };
 

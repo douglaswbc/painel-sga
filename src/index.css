@@ -1,13 +1,48 @@
 @import "tailwindcss"; /* */
 
 @theme {
-  /* Definindo suas cores personalizadas direto no tema v4 */
-  --color-dark: #121829;
-  --color-card: #1e293b;
-  --color-input: #2d3748;
-  --color-accent: #6366f1;
-  
-  --font-sans: "Poppins", ui-sans-serif, system-ui, sans-serif;
+  --color-dark: #f5f5f7;
+  --color-card: #ffffff;
+  --color-input: #f5f5f7;
+  --color-accent: #0066cc;
+  --color-indigo-50: #eff6ff;
+  --color-indigo-100: #dbeafe;
+  --color-indigo-200: #bfdbfe;
+  --color-indigo-300: #60a5fa;
+  --color-indigo-400: #0066cc;
+  --color-indigo-500: #0071e3;
+  --color-indigo-600: #0066cc;
+  --color-indigo-700: #005ab4;
+  --color-indigo-800: #004c99;
+  --color-indigo-900: #003d7a;
+  --color-blue-50: #eff6ff;
+  --color-blue-100: #dbeafe;
+  --color-blue-200: #bfdbfe;
+  --color-blue-300: #93c5fd;
+  --color-blue-400: #0066cc;
+  --color-blue-500: #0071e3;
+  --color-blue-600: #0066cc;
+  --color-blue-700: #005ab4;
+  --color-blue-800: #004c99;
+  --color-blue-900: #003d7a;
+  --color-emerald-400: #047857;
+  --color-emerald-500: #047857;
+  --color-emerald-600: #047857;
+  --color-emerald-700: #065f46;
+  --color-emerald-800: #064e3b;
+  --color-amber-400: #92400e;
+  --color-amber-500: #92400e;
+  --color-amber-600: #92400e;
+  --color-amber-700: #78350f;
+  --color-amber-800: #78350f;
+  --color-rose-400: #be123c;
+  --color-rose-500: #be123c;
+  --color-rose-600: #be123c;
+  --color-red-400: #b91c1c;
+  --color-red-500: #b91c1c;
+  --color-red-600: #b91c1c;
+
+  --font-sans: "SF Pro Text", "SF Pro Display", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 
   --animate-fade-in: fade-in 0.6s ease-out;
   --animate-slide-up: slide-up 0.8s ease-out;
@@ -31,9 +66,17 @@
 
 @layer base {
   body {
-    /* Aplica o fundo escuro e a cor de texto do seu sistema original */
-    @apply bg-dark text-[#f0f0f0] min-h-screen antialiased;
+    @apply bg-dark text-[#1d1d1f] min-h-screen antialiased font-sans;
     margin: 0;
+  }
+
+  button, input, select, textarea {
+    font: inherit;
+  }
+
+  :focus-visible {
+    outline: 2px solid #0071e3;
+    outline-offset: 2px;
   }
 }
 
@@ -41,4 +84,125 @@
   width: 100%;
   margin: 0;
   padding: 0;
+}
+
+/* Apple-inspired SGA palette. Existing zinc/slate utilities map to semantic,
+   light surfaces inside the authenticated application shell. */
+.sga-app {
+  --sga-primary: #0066cc;
+  --sga-primary-focus: #0071e3;
+  --sga-ink: #1d1d1f;
+  --sga-ink-muted: #7a7a7a;
+  --sga-canvas: #ffffff;
+  --sga-parchment: #f5f5f7;
+  --sga-pearl: #fafafc;
+  --sga-hairline: #e0e0e0;
+  --sga-divider: #f0f0f0;
+
+  --color-zinc-950: var(--sga-parchment);
+  --color-zinc-50: var(--sga-ink);
+  --color-zinc-900: var(--sga-canvas);
+  --color-zinc-800: var(--sga-parchment);
+  --color-zinc-700: var(--sga-hairline);
+  --color-zinc-600: #7a7a7a;
+  --color-zinc-500: var(--sga-ink-muted);
+  --color-zinc-400: #66666a;
+  --color-zinc-300: #4b4b4d;
+  --color-zinc-200: #333333;
+  --color-zinc-100: var(--sga-ink);
+  --color-slate-950: var(--sga-parchment);
+  --color-slate-50: var(--sga-ink);
+  --color-slate-900: var(--sga-canvas);
+  --color-slate-800: var(--sga-parchment);
+  --color-slate-700: var(--sga-hairline);
+  --color-slate-600: #7a7a7a;
+  --color-slate-500: var(--sga-ink-muted);
+  --color-slate-400: #66666a;
+  --color-slate-300: #4b4b4d;
+  --color-slate-200: #333333;
+  --color-indigo-400: #0066cc;
+  --color-indigo-500: #0071e3;
+  --color-indigo-600: #0066cc;
+  --color-indigo-700: #005ab4;
+  --color-blue-50: #eff6ff;
+  --color-blue-100: #dbeafe;
+  --color-blue-200: #bfdbfe;
+  --color-blue-300: #93c5fd;
+  --color-blue-400: #0066cc;
+  --color-blue-500: #0071e3;
+  --color-blue-600: #0066cc;
+  --color-blue-700: #005ab4;
+  --color-blue-800: #004c99;
+  --color-blue-900: #003d7a;
+
+  --radius-3xl: 18px;
+  --radius-2xl: 18px;
+  --radius-xl: 8px;
+  --radius-lg: 8px;
+  --radius-md: 8px;
+  --radius-sm: 5px;
+}
+
+.sga-app [class*="shadow-"] {
+  box-shadow: none !important;
+}
+
+.sga-app .font-black,
+.sga-app .font-extrabold,
+.sga-app .font-bold {
+  font-weight: 600;
+}
+
+.sga-app :where(h1, h2, h3, h4, h5, h6, p, span, div, label, td, th).text-white {
+  color: var(--sga-ink);
+}
+
+.sga-app :is(input, select, textarea).text-white {
+  color: var(--sga-ink);
+}
+
+.sga-app [class*="bg-indigo-"].text-white,
+.sga-app [class*="bg-blue-"].text-white,
+.sga-app [class*="bg-emerald-600"].text-white,
+.sga-app [class*="bg-red-600"].text-white,
+.sga-app [class*="bg-sky-600"].text-white {
+  color: #ffffff;
+}
+
+.sga-app [class*="bg-indigo-"] .text-white,
+.sga-app [class*="bg-blue-"] .text-white,
+.sga-app [class*="bg-emerald-600"] .text-white,
+.sga-app [class*="bg-red-600"] .text-white,
+.sga-app [class*="bg-sky-600"] .text-white {
+  color: #ffffff;
+}
+
+.sga-app .apple-dark-sidebar {
+  --color-slate-900: #0b0b0c;
+  --color-slate-800: #272729;
+  --color-slate-700: #3a3a3c;
+  --color-slate-500: #8e8e93;
+  --color-slate-400: #a1a1a6;
+}
+
+.sga-app .apple-dark-sidebar .text-white,
+.sga-app .apple-dark-preview :where(h1, h2, h3, h4, h5, h6, p, span, div, label, td, th).text-white {
+  color: #ffffff;
+}
+
+.sga-app .apple-dark-preview {
+  --color-slate-950: #09090b;
+  --color-slate-50: #fafafa;
+  --color-slate-900: #18181b;
+  --color-slate-800: #27272a;
+  --color-slate-700: #3f3f46;
+  --color-slate-500: #71717a;
+  --color-slate-400: #a1a1aa;
+  --color-slate-300: #d4d4d8;
+  --color-slate-200: #e4e4e7;
+  --color-white: #ffffff;
+}
+
+.sga-app [class*="bg-gradient-"] {
+  background-image: none !important;
 }

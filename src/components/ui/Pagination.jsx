@@ -5,22 +5,24 @@ export function Pagination({ currentPage, totalPages, onPrev, onNext, label }) {
   if (totalPages <= 1) return null;
 
   return (
-    <div className="p-4 flex items-center justify-between">
-      <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">
+    <div className="flex items-center justify-between gap-3 p-4">
+      <span className="text-sm text-zinc-500">
         {label || `Página ${currentPage} / ${totalPages}`}
       </span>
       <div className="flex gap-2">
         <button
           onClick={onPrev}
           disabled={currentPage === 1}
-          className="p-2.5 bg-zinc-900 hover:bg-zinc-800 disabled:opacity-20 disabled:cursor-not-allowed rounded-xl text-zinc-300 transition-all border border-zinc-800 shadow-lg"
+          aria-label="Página anterior"
+          className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-zinc-700 bg-white text-zinc-300 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
         >
           <ChevronLeft size={18} />
         </button>
         <button
           onClick={onNext}
           disabled={currentPage === totalPages}
-          className="p-2.5 bg-zinc-900 hover:bg-zinc-800 disabled:opacity-20 disabled:cursor-not-allowed rounded-xl text-zinc-300 transition-all border border-zinc-800 shadow-lg"
+          aria-label="Próxima página"
+          className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-zinc-700 bg-white text-zinc-300 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
         >
           <ChevronRight size={18} />
         </button>

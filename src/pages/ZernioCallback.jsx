@@ -73,8 +73,8 @@ const ZernioCallback = () => {
   const isLoading = result.status === 'loading';
 
   return (
-    <main className="min-h-screen bg-[#121829] flex items-center justify-center p-4">
-      <section className="w-full max-w-lg bg-card border border-slate-700 rounded-xl p-8 shadow-lg text-center space-y-5">
+    <main className="flex min-h-screen items-center justify-center bg-[#f5f5f7] p-4 sm:p-6">
+      <section className="w-full max-w-lg space-y-5 rounded-[18px] border border-black/10 bg-white p-6 text-center sm:p-8">
         <div className="flex justify-center">
           {isLoading ? <Loader2 className="animate-spin text-indigo-400" size={38} /> : (
             isSuccess
@@ -85,15 +85,15 @@ const ZernioCallback = () => {
           )}
         </div>
         <div>
-          <h1 className="text-xl font-bold text-white">
+          <h1 className="text-xl font-semibold tracking-tight text-[#1d1d1f]">
             {isLoading ? 'Finalizando conexão' : isSuccess ? 'WhatsApp conectado' : result.status === 'cancelled' ? 'Conexão cancelada' : 'Não foi possível conectar'}
           </h1>
-          <p className="text-sm text-slate-300 mt-2">{result.message}</p>
+          <p className="mt-2 text-sm leading-6 text-[#66666a]">{result.message}</p>
         </div>
         {!isLoading && (
           <Link
             to="/configuracoes"
-            className="inline-flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg font-semibold"
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[#0066cc] px-5 text-sm font-normal text-white transition-transform hover:bg-[#005ab4] active:scale-95"
           >
             Voltar às Configurações
           </Link>

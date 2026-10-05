@@ -23,13 +23,12 @@ const Sidebar = ({ isOpen, toggleSidebar }) => {
   ];
 
   return (
-    <aside className={`
-      fixed inset-y-0 left-0 z-50 w-64 bg-[#1e293b] transform transition-transform duration-300 ease-in-out
+    <aside className={`apple-dark-sidebar fixed inset-y-0 left-0 z-50 w-64 transform bg-black text-white transition-transform duration-300 ease-in-out
       ${isOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 md:static md:inset-0
     `}>
-      <div className="flex flex-col h-full border-r border-slate-700">
-        <div className="p-6 border-b border-slate-700">
-          <h3 className="text-xl font-bold text-white">Painel SGA</h3>
+      <div className="flex h-full flex-col border-r border-white/10">
+        <div className="border-b border-white/10 px-5 py-5">
+          <h3 className="text-lg font-semibold tracking-tight text-white">Painel SGA</h3>
         </div>
 
         <nav className="flex-1 overflow-y-auto py-4">
@@ -40,8 +39,8 @@ const Sidebar = ({ isOpen, toggleSidebar }) => {
                   to={item.path}
                   onClick={() => window.innerWidth < 768 && toggleSidebar()}
                   className={({ isActive }) => `
-                    flex items-center gap-3 px-4 py-3 rounded-lg transition-colors
-                    ${isActive ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}
+                    flex min-h-11 items-center gap-3 rounded-full px-4 py-2.5 text-sm transition-colors
+                    ${isActive ? 'bg-[#0066cc] text-white' : 'text-slate-400 hover:bg-white/10 hover:text-white'}
                   `}
                 >
                   <item.icon size={20} />
@@ -51,12 +50,12 @@ const Sidebar = ({ isOpen, toggleSidebar }) => {
             ))}
 
             {profile?.role === 'admin' && (
-              <li className="mt-4 pt-4 border-t border-slate-700">
+              <li className="mt-4 border-t border-white/10 pt-4">
                 <NavLink
                   to="/admin"
                   className={({ isActive }) => `
-                    flex items-center gap-3 px-4 py-3 rounded-lg text-amber-400 hover:bg-slate-800 transition-colors
-                    ${isActive ? 'bg-slate-800 ring-1 ring-amber-400/50' : ''}
+                    flex min-h-11 items-center gap-3 rounded-full px-4 py-2.5 text-sm text-amber-300 transition-colors hover:bg-white/10
+                    ${isActive ? 'bg-white/10' : ''}
                   `}
                 >
                   <ShieldAlert size={20} /> {/* Atualizado aqui também */}
@@ -67,15 +66,15 @@ const Sidebar = ({ isOpen, toggleSidebar }) => {
           </ul>
         </nav>
 
-        <div className="p-4 border-t border-slate-700 bg-slate-900/50">
+        <div className="border-t border-white/10 bg-white/5 p-4">
           <div className="flex items-center justify-between mb-4">
             <div className="flex flex-col overflow-hidden">
-              <span className="text-sm font-medium text-white truncate">{profile?.nome_completo || 'Usuário'}</span>
-              <span className="text-xs text-slate-500 truncate">{profile?.email}</span>
+              <span className="truncate text-sm font-semibold text-white">{profile?.nome_completo || 'Usuário'}</span>
+              <span className="truncate text-xs text-slate-400">{profile?.email}</span>
             </div>
             <button 
               onClick={signOut}
-              className="p-2 text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-full text-red-300 transition-colors hover:bg-red-400/10"
               title="Sair"
             >
               <LogOut size={20} />

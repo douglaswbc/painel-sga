@@ -27,7 +27,7 @@ function App() {
   return (
     <AuthProvider>
       <Router>
-        <div className="min-h-screen bg-[#121829]">
+        <div className="min-h-screen bg-[#f5f5f7]">
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/zernio/callback" element={<ZernioCallback />} />
@@ -50,7 +50,7 @@ function App() {
             <Route path="/" element={<Landing />} />
           </Routes>
           
-          <ToastContainer theme="dark" position="top-right" autoClose={3000} />
+          <ToastContainer theme="light" position="top-right" autoClose={3000} />
         </div>
       </Router>
     </AuthProvider>

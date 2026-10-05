@@ -131,8 +131,8 @@ function TemplateAssociationPreview({ template }) {
   return (
     <aside className="rounded-xl border border-slate-700 bg-slate-900/70 p-4">
       <div className="mb-3 flex items-center gap-2 text-xs font-bold text-slate-300"><Smartphone size={15} className="text-emerald-400" />Prévia do template</div>
-      <div className="mx-auto max-w-sm rounded-[1.5rem] border border-slate-700 bg-[#e5ddd5] p-3 shadow-inner">
-        <div className="mb-3 flex items-center gap-2 rounded-xl bg-emerald-800 px-3 py-2 text-xs font-semibold text-white"><span className="grid h-7 w-7 place-items-center rounded-full bg-emerald-600">WA</span>WhatsApp</div>
+      <div className="apple-dark-preview mx-auto max-w-sm rounded-[1.5rem] border border-slate-700 bg-[#e5ddd5] p-3 shadow-inner">
+        <div className="mb-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800"><span className="grid h-7 w-7 place-items-center rounded-full bg-emerald-100 text-emerald-800">WA</span>WhatsApp</div>
         <div className="max-w-[92%] rounded-xl rounded-tl-sm bg-white p-3 text-sm leading-relaxed text-slate-800 shadow-sm">
           {header && <div className="mb-2 font-semibold">{header.text ? highlightTemplateVariables(header.text) : <span className="text-slate-500">[{mediaLabel || 'Cabeçalho de mídia'}]</span>}</div>}
           <div className="whitespace-pre-wrap">{body?.text ? highlightTemplateVariables(body.text) : <span className="text-slate-500">O corpo do template aparecerá aqui.</span>}</div>
@@ -399,7 +399,7 @@ function TemplateForm({ busy, storageKey, onCancel, onSubmit }) {
         </div>
       </div>
 
-      <aside className="xl:sticky xl:top-4 h-fit">
+      <aside className="apple-dark-preview h-fit xl:sticky xl:top-4">
         <div className="mx-auto max-w-[290px] rounded-[2rem] border-[7px] border-slate-700 bg-slate-950 p-2 shadow-2xl">
           <div className="mx-auto mb-3 h-4 w-20 rounded-full bg-slate-700" />
           <div className="overflow-hidden rounded-[1.25rem] bg-[#efeae2] min-h-[420px]">

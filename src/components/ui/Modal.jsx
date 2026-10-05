@@ -5,20 +5,20 @@ export function Modal({ isOpen, onClose, title, subtitle, badge, children, size 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-zinc-950/90 backdrop-blur-sm animate-in fade-in duration-200 py-10 px-4">
-      <div className={`bg-zinc-900 border border-zinc-800 rounded-3xl w-full ${size} shadow-2xl overflow-hidden ring-1 ring-white/10 mx-auto`}>
-        <div className="p-6 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/45 backdrop-blur-sm animate-in fade-in duration-200 px-4 py-8 sm:py-10">
+      <div className={`mx-auto w-full ${size} overflow-hidden rounded-[18px] border border-black/10 bg-white`}>
+        <div className="flex items-center justify-between border-b border-black/10 bg-[#f5f5f7] p-4 sm:p-6">
           <div className="flex items-center gap-3">
             <div>
-              <h3 className="text-xl font-bold text-white">{title}</h3>
+              <h3 className="text-lg font-semibold tracking-tight text-[#1d1d1f] sm:text-xl">{title}</h3>
               {subtitle && (
-                <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-0.5">{subtitle}</p>
+                <p className="mt-1 text-sm text-[#7a7a7a]">{subtitle}</p>
               )}
             </div>
             {badge}
           </div>
-          <button onClick={onClose} className="text-zinc-500 hover:text-white transition-colors">
-            <X size={24} />
+          <button onClick={onClose} className="inline-flex h-11 w-11 items-center justify-center rounded-full text-[#66666a] transition hover:bg-black/5 hover:text-[#1d1d1f]" aria-label="Fechar janela">
+            <X size={20} />
           </button>
         </div>
         {children}
@@ -28,12 +28,12 @@ export function Modal({ isOpen, onClose, title, subtitle, badge, children, size 
 }
 
 export function ModalBody({ children, className = '' }) {
-  return <div className={`p-8 space-y-6 ${className}`}>{children}</div>;
+  return <div className={`space-y-5 p-4 sm:p-6 ${className}`}>{children}</div>;
 }
 
 export function ModalFooter({ children, className = '' }) {
   return (
-    <div className={`pt-8 border-t border-zinc-800 flex justify-end gap-4 ${className}`}>
+    <div className={`flex flex-col-reverse justify-end gap-3 border-t border-black/10 pt-5 sm:flex-row ${className}`}>
       {children}
     </div>
   );

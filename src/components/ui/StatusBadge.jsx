@@ -1,23 +1,23 @@
 import React from 'react';
 
 const statusColors = {
-  ativo: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
-  pausado: 'bg-amber-500/10 text-amber-500 border-amber-500/20',
-  pendente: 'bg-amber-500/10 text-amber-500 border-amber-500/20',
-  pago: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
-  cancelado: 'bg-zinc-500/10 text-zinc-500 border-zinc-500/20',
-  atrasado: 'bg-rose-500/10 text-rose-500 border-rose-500/20',
-  despesa: 'bg-red-500/10 text-red-500 border-red-500/20',
-  receita: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
-  disponivel: 'bg-emerald-400/10 text-emerald-400 border-emerald-400/20',
-  alugado: 'bg-amber-400/10 text-amber-400 border-amber-400/20',
-  indisponivel: 'bg-red-400/10 text-red-400 border-red-400/20',
+  ativo: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  pausado: 'bg-amber-50 text-amber-800 border-amber-200',
+  pendente: 'bg-amber-50 text-amber-800 border-amber-200',
+  pago: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  cancelado: 'bg-zinc-100 text-zinc-700 border-zinc-200',
+  atrasado: 'bg-rose-50 text-rose-800 border-rose-200',
+  despesa: 'bg-red-50 text-red-800 border-red-200',
+  receita: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  disponivel: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  alugado: 'bg-amber-50 text-amber-800 border-amber-200',
+  indisponivel: 'bg-red-50 text-red-800 border-red-200',
 };
 
 export function StatusBadge({ status, children, className = '' }) {
   const color = statusColors[status?.toLowerCase()] || 'bg-zinc-800 text-zinc-400';
   return (
-    <span className={`px-2.5 py-1 rounded-xl text-[9px] font-black uppercase tracking-[0.15em] border ${color} ${className}`}>
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${color} ${className}`}>
       {children || status}
     </span>
   );

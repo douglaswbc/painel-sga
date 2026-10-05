@@ -1,48 +1,61 @@
-import React from 'react';
+import React, { useId } from 'react';
 
 export function Input({ icon: Icon, label, error, className = '', ...props }) {
+  const generatedId = useId();
+  const controlId = props.id || generatedId;
+
   return (
     <div className="space-y-2">
       {label && (
-        <label className="text-xs font-black text-zinc-500 uppercase tracking-widest">{label}</label>
+        <label htmlFor={controlId} className="text-sm font-semibold text-[#333333]">{label}</label>
       )}
       <div className="relative">
         {Icon && (
-          <Icon className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+          <Icon className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#7a7a7a]" size={18} />
         )}
         <input
-          className={`w-full bg-zinc-950 border rounded-xl px-4 py-3 text-zinc-100 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all ${
-            error ? 'border-red-500 ring-1 ring-red-500' : 'border-zinc-800'
-          } ${Icon ? 'pl-12' : ''} ${className}`}
+          id={controlId}
+          className={`min-h-11 w-full rounded-lg border border-[#e0e0e0] bg-white px-3.5 py-2.5 text-sm text-[#1d1d1f] outline-none transition focus:border-[#0066cc] focus:ring-2 focus:ring-[#0066cc]/15 ${
+            error ? 'border-red-500 ring-2 ring-red-500/15' : ''
+          } ${Icon ? 'pl-11' : ''} ${className}`}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? `${controlId}-error` : undefined}
           {...props}
         />
       </div>
       {error && (
-        <p className="text-[10px] text-red-500 font-bold flex items-center gap-1 uppercase mt-1">{error}</p>
+        <p id={`${controlId}-error`} className="mt-1 flex items-center gap-1 text-sm font-medium text-red-700">{error}</p>
       )}
     </div>
   );
 }
 
 export function Select({ icon: Icon, label, error, children, className = '', ...props }) {
+  const generatedId = useId();
+  const controlId = props.id || generatedId;
+
   return (
     <div className="space-y-2">
       {label && (
-        <label className="text-xs font-black text-zinc-500 uppercase tracking-widest">{label}</label>
+        <label htmlFor={controlId} className="text-sm font-semibold text-[#333333]">{label}</label>
       )}
       <div className="relative">
         {Icon && (
-          <Icon className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+          <Icon className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#7a7a7a]" size={18} />
         )}
         <select
-          className={`w-full bg-zinc-950 border rounded-xl px-4 py-3 text-zinc-100 outline-none focus:border-indigo-500 appearance-none transition-all ${
-            error ? 'border-red-500' : 'border-zinc-800'
-          } ${Icon ? 'pl-12' : ''} ${className}`}
+          id={controlId}
+          className={`min-h-11 w-full appearance-none rounded-lg border border-[#e0e0e0] bg-white px-3.5 py-2.5 text-sm text-[#1d1d1f] outline-none transition focus:border-[#0066cc] focus:ring-2 focus:ring-[#0066cc]/15 ${
+            error ? 'border-red-500' : ''
+          } ${Icon ? 'pl-11' : ''} ${className}`}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? `${controlId}-error` : undefined}
           {...props}
         >
           {children}
         </select>
       </div>
+      {error && <p id={`${controlId}-error`} className="mt-1 text-sm font-medium text-red-700">{error}</p>}
     </div>
   );
 }
