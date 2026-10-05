@@ -26,6 +26,26 @@ async function decrypt(ciphertext: string, ownerId: string): Promise<string> {
   return new TextDecoder().decode(clear)
 }
 
+function templateParameterCount(components: any[] = []): number {
+  const ordered = [
+    ...components.filter((component) => String(component.type).toUpperCase() === 'HEADER'),
+    ...components.filter((component) => String(component.type).toUpperCase() === 'BODY'),
+    ...components.filter((component) => String(component.type).toUpperCase() === 'BUTTONS'),
+  ]
+  let count = 0
+  for (const component of ordered) {
+    const texts = String(component.type).toUpperCase() === 'BUTTONS'
+      ? (Array.isArray(component.buttons) ? component.buttons : []).map((button: any) => button.url)
+      : [component.text]
+    for (const text of texts) {
+      const variables = [...new Set([...String(text ?? '').matchAll(/\{\{(\d+)\}\}/g)].map((match) => Number(match[1])))].sort((a, b) => a - b)
+      if (variables.some((value, index) => value !== index + 1)) return -1
+      count += variables.length
+    }
+  }
+  return count
+}
+
 async function sendPaymentConfirmation(admin: any, ownerId: string, paymentId: string, target: any, amountValue: number, paidAt: string, targetColumn: 'id_cobranca' | 'id_candidato', targetId: string) {
   const phoneValue = target?.whatsapp ?? target?.telefone
   if (!phoneValue) return
@@ -34,10 +54,15 @@ async function sendPaymentConfirmation(admin: any, ownerId: string, paymentId: s
     .eq('id_usuario', ownerId).maybeSingle()
   if (!integration?.api_key_ciphertext || integration.key_status !== 'valid' || !integration.whatsapp_account_id) return
 
-  const { data: template } = await admin.from('zernio_whatsapp_templates')
-    .select('name,language,variable_mapping,account_id')
+  const { data: templateUsage } = await admin.from('zernio_whatsapp_template_usages')
+    .select('template_id,variable_mapping')
     .eq('id_usuario', ownerId).eq('account_id', integration.whatsapp_account_id)
-    .eq('purpose', 'payment_confirmation').eq('is_default', true).eq('status', 'APPROVED').maybeSingle()
+    .eq('purpose', 'payment_confirmation').eq('is_default', true).maybeSingle()
+  if (!templateUsage) return
+  const { data: template } = await admin.from('zernio_whatsapp_templates')
+    .select('name,language,account_id,components,status')
+    .eq('id', templateUsage.template_id).eq('id_usuario', ownerId).eq('account_id', integration.whatsapp_account_id)
+    .eq('status', 'APPROVED').maybeSingle()
   if (!template) return
 
   const { data: notification } = await admin.from('zernio_payment_notifications').insert({
@@ -65,8 +90,10 @@ async function sendPaymentConfirmation(admin: any, ownerId: string, paymentId: s
     amount,
     paid_at: new Date(paidAt).toLocaleDateString('pt-BR'),
   }
-  const mapping = [...(template.variable_mapping || [])].sort((a: any, b: any) => a.position - b.position)
-  if (mapping.length !== 3 || mapping.some((item: any, index: number) => item.position !== index + 1 || !values[item.field])) {
+  const mapping = [...(templateUsage.variable_mapping || [])].sort((a: any, b: any) => a.position - b.position)
+  const expectedCount = templateParameterCount(Array.isArray(template.components) ? template.components : [])
+  if (mapping.length !== expectedCount || mapping.some((item: any, index: number) =>
+    item.position !== index + 1 || !Object.hasOwn(values, item.field) || !values[item.field])) {
     await admin.from('zernio_payment_notifications').update({ status: 'failed', safe_error: 'invalid_template_mapping', updated_at: new Date().toISOString() }).eq('id', attempt.id)
     return
   }

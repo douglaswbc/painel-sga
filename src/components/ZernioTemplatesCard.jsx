@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle, CheckCircle2, Circle, FileText, Loader2, Plus, RefreshCw,
+  AlertCircle, CheckCircle2, FileText, Loader2, Plus, RefreshCw,
   Send, Smartphone, X,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -42,7 +42,6 @@ const initialDraft = () => ({
   body: '', examples: {}, footer: '', buttonMode: 'none',
   quickReplies: [''], ctaTypes: [], phoneLabel: '', countryCode: '+55', phoneNumber: '',
   websiteLabel: '', websiteMode: 'static', websiteUrl: '', websiteExample: '',
-  useForCharges: false, useForPaymentConfirmations: false,
 });
 
 const getVariables = (text) => [...new Set([...text.matchAll(/\{\{(\d+)\}\}/g)].map((match) => Number(match[1])))].sort((a, b) => a - b);
@@ -51,6 +50,40 @@ const hasUnsupportedVariableSyntax = (text) => {
   return textWithoutVariables.includes('{{') || textWithoutVariables.includes('}}');
 };
 const isSequential = (variables) => variables.every((value, index) => value === index + 1);
+
+const getTemplateParameterSlots = (components = []) => {
+  const ordered = [
+    ...components.filter((component) => String(component.type).toUpperCase() === 'HEADER'),
+    ...components.filter((component) => String(component.type).toUpperCase() === 'BODY'),
+    ...components.filter((component) => String(component.type).toUpperCase() === 'BUTTONS'),
+  ];
+  const slots = [];
+  for (const component of ordered) {
+    const type = String(component.type).toUpperCase();
+    const texts = type === 'BUTTONS'
+      ? (component.buttons || []).map((button, index) => ({ text: button.url, label: `Botão de site ${index + 1}` }))
+      : [{ text: component.text, label: type === 'HEADER' ? 'Cabeçalho' : 'Corpo' }];
+    for (const item of texts) {
+      const variables = [...new Set([...(String(item.text || '').matchAll(/\{\{(\d+)\}\}/g))].map((match) => Number(match[1])))].sort((a, b) => a - b);
+      for (const variable of variables) slots.push({ position: slots.length + 1, variable, label: `${item.label} · variável {{${variable}}}` });
+    }
+  }
+  return slots;
+};
+
+const usageFields = {
+  charge: [
+    ['tenant_first_name', 'Primeiro nome do locatário'],
+    ['amount', 'Valor da cobrança'],
+    ['due_date', 'Data de vencimento'],
+    ['payment_link', 'Link PIX da cobrança'],
+  ],
+  payment_confirmation: [
+    ['tenant_first_name', 'Primeiro nome do locatário'],
+    ['amount', 'Valor pago'],
+    ['paid_at', 'Data do pagamento'],
+  ],
+};
 
 const hasSavedDraft = (storageKey) => {
   if (!storageKey) return false;
@@ -153,18 +186,6 @@ function TemplateForm({ busy, storageKey, onCancel, onSubmit }) {
         if (draft.ctaTypes.length === 0) result.cta = 'Selecione ao menos um tipo de botão CTA.';
       }
     }
-    if (draft.useForCharges) {
-      if (draft.category !== 'UTILITY') result.charge = 'Templates de cobrança precisam usar a categoria UTILITY.';
-      if (variables.length !== 4 || variables.some((value, index) => value !== index + 1)) result.charge = 'Para cobranças, o corpo precisa ter {{1}}, {{2}}, {{3}} e {{4}} nessa ordem.';
-      if (draft.headerType === 'text' && /\{\{\d+\}\}/.test(draft.headerText)) result.charge = 'Templates de cobrança não podem ter variáveis no cabeçalho.';
-      if (draft.buttonMode === 'cta' && draft.ctaTypes.includes('website') && draft.websiteMode === 'dynamic') result.charge = 'Para cobrança, use botão de site com URL estática.';
-    }
-    if (draft.useForPaymentConfirmations) {
-      if (draft.category !== 'UTILITY') result.payment = 'Templates de confirmação de pagamento precisam usar a categoria UTILITY.';
-      if (variables.length !== 3 || variables.some((value, index) => value !== index + 1)) result.payment = 'Para confirmação, o corpo precisa ter {{1}} nome, {{2}} valor e {{3}} data do pagamento, nessa ordem.';
-      if (draft.headerType === 'text' && /\{\{\d+\}\}/.test(draft.headerText)) result.payment = 'Templates de confirmação não podem ter variáveis no cabeçalho.';
-      if (draft.buttonMode === 'cta' && draft.ctaTypes.includes('website') && draft.websiteMode === 'dynamic') result.payment = 'Para confirmação, use botão de site com URL estática.';
-    }
     return result;
   }, [draft, variables]);
 
@@ -206,17 +227,9 @@ function TemplateForm({ busy, storageKey, onCancel, onSubmit }) {
     event.preventDefault();
     setAttempted(true);
     if (!formIsValid || busy) return;
-    const variableMapping = draft.useForCharges
-      ? [
-        { position: 1, field: 'tenant_first_name' }, { position: 2, field: 'amount' },
-        { position: 3, field: 'due_date' }, { position: 4, field: 'payment_link' },
-      ]
-      : draft.useForPaymentConfirmations
-        ? [{ position: 1, field: 'tenant_first_name' }, { position: 2, field: 'amount' }, { position: 3, field: 'paid_at' }]
-        : [];
     onSubmit({
       name: draft.name.trim(), category: draft.category, language: draft.language,
-      components: buildComponents(), purpose: draft.useForCharges ? 'charge' : draft.useForPaymentConfirmations ? 'payment_confirmation' : 'general', variableMapping,
+      components: buildComponents(),
     });
   };
 
@@ -297,8 +310,6 @@ function TemplateForm({ busy, storageKey, onCancel, onSubmit }) {
             </div>
             {shownError('examples')}
           </div>}
-          {draft.useForCharges && errors.charge && attempted && <p className="text-[11px] text-red-400">{errors.charge}</p>}
-          {draft.useForPaymentConfirmations && errors.payment && attempted && <p className="text-[11px] text-red-400">{errors.payment}</p>}
         </section>
 
         <div>
@@ -344,14 +355,7 @@ function TemplateForm({ busy, storageKey, onCancel, onSubmit }) {
           </div>}
         </section>
 
-        <label className="flex items-start gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 cursor-pointer">
-          <input type="checkbox" checked={draft.useForCharges} onChange={(event) => { update('useForCharges', event.target.checked); if (event.target.checked) update('useForPaymentConfirmations', false); }} className="mt-0.5" />
-          <span><span className="block text-xs font-bold text-emerald-200">Usar este template nas cobranças do SGA</span><span className="block mt-1 text-[11px] text-slate-400">Requer categoria UTILITY e as variáveis {'{{1}}'} nome, {'{{2}}'} valor, {'{{3}}'} vencimento e {'{{4}}'} link PIX, nessa ordem.</span>{draft.useForCharges && errors.charge && attempted && <span className="block mt-1 text-[11px] text-red-400">{errors.charge}</span>}</span>
-        </label>
-        <label className="flex items-start gap-3 rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 cursor-pointer">
-          <input type="checkbox" checked={draft.useForPaymentConfirmations} onChange={(event) => { update('useForPaymentConfirmations', event.target.checked); if (event.target.checked) update('useForCharges', false); }} className="mt-0.5" />
-          <span><span className="block text-xs font-bold text-sky-200">Usar este template para confirmar pagamentos</span><span className="block mt-1 text-[11px] text-slate-400">Requer categoria UTILITY e as variáveis {'{{1}}'} nome, {'{{2}}'} valor e {'{{3}}'} data do pagamento, nessa ordem.</span>{draft.useForPaymentConfirmations && errors.payment && attempted && <span className="block mt-1 text-[11px] text-red-400">{errors.payment}</span>}</span>
-        </label>
+        <p className="rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-[11px] text-slate-400">Depois que a Meta aprovar o template, você poderá selecioná-lo para lembretes de cobrança ou confirmações de pagamento e associar cada variável aos dados correspondentes.</p>
 
         <div className="flex flex-wrap justify-end gap-2 border-t border-slate-800 pt-4">
           {!formIsValid && <p className="mr-auto self-center text-[11px] text-slate-500">Preencha os campos obrigatórios e corrija os limites para enviar.</p>}
@@ -380,7 +384,6 @@ function TemplateForm({ busy, storageKey, onCancel, onSubmit }) {
             </div>
           </div>
         </div>
-        {draft.useForCharges && <p className="mx-auto mt-3 max-w-[290px] text-center text-[11px] text-emerald-300">Será marcado como template de cobrança após a Meta receber o pedido.</p>}
       </aside>
     </form>
   );
@@ -394,6 +397,8 @@ const ZernioTemplatesCard = () => {
   const [showForm, setShowForm] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [notice, setNotice] = useState('');
+  const [selection, setSelection] = useState(null);
+  const [variableMapping, setVariableMapping] = useState([]);
   const draftStorageKey = profile?.id ? `sga-zernio-template-draft-${profile.id}` : null;
 
   useEffect(() => {
@@ -451,14 +456,39 @@ const ZernioTemplatesCard = () => {
     }
   };
 
-  const setDefault = async (template) => {
+  const configureDefault = (template, purpose) => {
+    const slots = getTemplateParameterSlots(template.components || []);
+    const availableFields = usageFields[purpose];
+    const existing = template.usages?.find((usage) => usage.purpose === purpose)?.variable_mapping || [];
+    const mapping = slots.map((slot, index) => {
+      const savedField = existing.find((item) => Number(item.position) === slot.position)?.field;
+      const field = availableFields.some(([value]) => value === savedField)
+        ? savedField
+        : availableFields[index % availableFields.length][0];
+      return { position: slot.position, field };
+    });
+    setSelection({ template, purpose, slots });
+    setVariableMapping(mapping);
+    setErrorMessage('');
+    setNotice('');
+  };
+
+  const setDefault = async () => {
+    if (!selection) return;
     setBusy(true);
     setErrorMessage('');
     setNotice('');
     try {
-      const data = await invoke('set_default', { templateId: template.id });
+      const data = await invoke('set_default', {
+        templateId: selection.template.id,
+        purpose: selection.purpose,
+        variableMapping,
+      });
       setTemplates(data.templates || []);
-      setNotice('Template aprovado selecionado para o envio das cobranças.');
+      setSelection(null);
+      setNotice(selection.purpose === 'charge'
+        ? 'Template aprovado selecionado para os lembretes de cobrança.'
+        : 'Template aprovado selecionado para as confirmações de pagamento.');
     } catch (error) {
       setErrorMessage(error.message);
     } finally {
@@ -480,7 +510,7 @@ const ZernioTemplatesCard = () => {
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
         <div>
           <h2 className="text-sm font-bold text-slate-200 uppercase tracking-widest flex items-center gap-2"><FileText size={17} className="text-indigo-400" /> Templates Meta para WhatsApp</h2>
-          <p className="text-xs text-slate-400 mt-2">Crie os modelos nesta tela, acompanhe a análise da Meta e selecione um template Utility aprovado para cobranças.</p>
+          <p className="text-xs text-slate-400 mt-2">Crie os modelos, acompanhe a análise da Meta e escolha templates aprovados para cobranças e confirmações de pagamento.</p>
         </div>
         <div className="flex shrink-0 gap-2">
           <button type="button" onClick={() => refresh(true)} disabled={busy} className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 text-xs font-semibold flex items-center gap-2"><RefreshCw size={15} className={busy ? 'animate-spin' : ''} />Atualizar</button>
@@ -492,33 +522,60 @@ const ZernioTemplatesCard = () => {
 
       {!showForm && <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 space-y-2">
         <h3 className="text-xs font-bold uppercase tracking-wide text-slate-300">Como funcionam os templates</h3>
-        <p className="text-xs text-slate-400">Cada template enviado fica pendente até a Meta concluir a análise. Templates de cobrança precisam ser da categoria Utility e usar as quatro variáveis exigidas pelo SGA.</p>
+        <p className="text-xs text-slate-400">Após a aprovação, escolha o uso do template e associe cada variável aos dados que o SGA enviará.</p>
       </div>}
 
       {templates.length > 0 ? <div className="space-y-2">
         {templates.map((template) => {
           const status = String(template.status || 'PENDING').toUpperCase();
-          const isChargeTemplate = template.purpose === 'charge';
-          const isPaymentTemplate = template.purpose === 'payment_confirmation';
+          const isChargeTemplate = template.usages?.some((usage) => usage.purpose === 'charge' && usage.is_default) || false;
+          const isPaymentTemplate = template.usages?.some((usage) => usage.purpose === 'payment_confirmation' && usage.is_default) || false;
           return <article key={template.id} className="flex flex-col md:flex-row md:items-center justify-between gap-3 rounded-lg border border-slate-800 p-3">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-semibold text-white">{template.name}</span>
                 <span className="text-[10px] text-slate-400 font-mono">{template.language}</span>
                 <span className={`text-[10px] uppercase font-bold border rounded-full px-2 py-0.5 ${statusStyles[status] || statusStyles.PENDING}`}>{status}</span>
-                {template.is_default && <span className="text-[10px] text-emerald-300 font-bold">PADRÃO</span>}
                 {isChargeTemplate && <span className="text-[10px] text-indigo-300">COBRANÇAS</span>}
                 {isPaymentTemplate && <span className="text-[10px] text-sky-300">CONFIRMAÇÃO DE PAGAMENTO</span>}
-                {!isChargeTemplate && !isPaymentTemplate && <span className="text-[10px] text-slate-500">GERAL</span>}
               </div>
               <p className="text-[11px] text-slate-500 mt-1">{template.category}{template.rejection_reason ? ` · ${template.rejection_reason}` : ''}</p>
             </div>
-            {(isChargeTemplate || isPaymentTemplate) && <button type="button" onClick={() => setDefault(template)} disabled={busy || status !== 'APPROVED' || template.is_default} className="shrink-0 px-3 py-2 rounded-lg bg-emerald-600/10 hover:bg-emerald-600/20 disabled:opacity-40 text-emerald-300 text-xs font-semibold flex items-center gap-2">
-              {template.is_default ? <CheckCircle2 size={15} /> : <Circle size={15} />}{template.is_default ? 'Selecionado' : isChargeTemplate ? 'Usar nas cobranças' : 'Usar nas confirmações'}
-            </button>}
+            {status === 'APPROVED' && <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => configureDefault(template, 'charge')} disabled={busy} className={`shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 disabled:opacity-40 ${isChargeTemplate ? 'bg-emerald-600 text-white' : 'bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-300'}`}>
+                {isChargeTemplate && <CheckCircle2 size={14} />}{isChargeTemplate ? 'Lembrete selecionado' : 'Usar em lembretes'}
+              </button>
+              <button type="button" onClick={() => configureDefault(template, 'payment_confirmation')} disabled={busy} className={`shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 disabled:opacity-40 ${isPaymentTemplate ? 'bg-sky-600 text-white' : 'bg-sky-600/10 hover:bg-sky-600/20 text-sky-300'}`}>
+                {isPaymentTemplate && <CheckCircle2 size={14} />}{isPaymentTemplate ? 'Confirmação selecionada' : 'Usar em confirmações'}
+              </button>
+            </div>}
           </article>;
         })}
       </div> : <div className="flex items-start gap-3 text-xs text-slate-500 bg-slate-900/40 border border-slate-800 rounded-lg p-3"><AlertCircle size={16} className="shrink-0" />Nenhum template encontrado neste canal. Clique em “Novo Template” para criar o primeiro.</div>}
+
+      {selection && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setSelection(null); }}>
+        <form onSubmit={(event) => { event.preventDefault(); setDefault(); }} className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-700 bg-slate-950 p-5 shadow-2xl">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-base font-bold text-white">Configurar uso do template</h3>
+              <p className="mt-1 text-xs text-slate-400">{selection.template.name} · {selection.purpose === 'charge' ? 'Lembrete de cobrança' : 'Confirmação de pagamento'}</p>
+            </div>
+            <button type="button" onClick={() => setSelection(null)} disabled={busy} className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white" aria-label="Fechar"><X size={18} /></button>
+          </div>
+          <p className="mt-4 text-xs text-slate-400">Associe cada variável do template a uma informação do SGA. O mapeamento define os valores enviados em cada mensagem.</p>
+          {selection.slots.length ? <div className="mt-4 space-y-3">{selection.slots.map((slot, index) => <label key={`${slot.position}-${slot.label}`} className="grid grid-cols-1 gap-1.5 sm:grid-cols-[1fr_1.2fr] sm:items-center">
+            <span className="text-xs font-semibold text-slate-300">{slot.position}. {slot.label}</span>
+            <select value={variableMapping[index]?.field || ''} onChange={(event) => setVariableMapping((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, field: event.target.value } : item))} className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white">
+              {usageFields[selection.purpose].map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </label>)}</div> : <p className="mt-4 rounded-lg border border-slate-800 bg-slate-900 p-3 text-xs text-slate-300">Este template não tem variáveis. Ele será enviado sem parâmetros dinâmicos.</p>}
+          <p className="mt-4 text-[11px] text-slate-500">O template substituirá o padrão atual deste tipo de mensagem para este locador.</p>
+          <div className="mt-5 flex justify-end gap-2 border-t border-slate-800 pt-4">
+            <button type="button" onClick={() => setSelection(null)} disabled={busy} className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800">Cancelar</button>
+            <button type="submit" disabled={busy || variableMapping.some((item) => !item.field)} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-500 disabled:opacity-50">{busy ? 'Salvando...' : 'Salvar seleção'}</button>
+          </div>
+        </form>
+      </div>}
 
       {(errorMessage || notice) && <p className={`text-xs rounded-lg p-3 ${errorMessage ? 'text-red-300 bg-red-500/10 border border-red-500/20' : 'text-emerald-300 bg-emerald-500/10 border border-emerald-500/20'}`}>{errorMessage || notice}</p>}
     </section>

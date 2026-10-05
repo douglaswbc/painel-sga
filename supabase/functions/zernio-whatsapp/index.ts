@@ -157,7 +157,14 @@ async function syncTemplates(admin: any, apiKey: string, ownerId: string, accoun
     .select('id,meta_template_id,name,language,category,status,rejection_reason,components,variable_mapping,purpose,is_default,last_synced_at')
     .eq('id_usuario', ownerId).eq('account_id', accountId).order('name').order('language');
   if (error) throw new Error('Não foi possível carregar os templates do SGA.');
-  return data ?? [];
+  const { data: usages, error: usageError } = await admin.from('zernio_whatsapp_template_usages')
+    .select('template_id,purpose,variable_mapping,is_default')
+    .eq('id_usuario', ownerId).eq('account_id', accountId);
+  if (usageError) throw new Error('Não foi possível carregar os usos dos templates. Aplique a migration 013.');
+  return (data ?? []).map((template: JsonRecord) => ({
+    ...template,
+    usages: (usages ?? []).filter((usage: JsonRecord) => usage.template_id === template.id),
+  }));
 }
 
 function safeZernioError(error: ZernioError): PublicError {
@@ -191,21 +198,40 @@ function dueDatePtBr(value: string): string {
   return `${match[3]}/${match[2]}/${match[1]}`;
 }
 
-function billingTemplateParams(template: JsonRecord, tenantName: string, amount: number, dueDate: string, paymentLink: string): string[] {
-  if (template.purpose !== 'charge' || !Array.isArray(template.variable_mapping)) {
-    throw new PublicError('Este template não está configurado para cobrança no SGA.', 400);
+function templateParameterCount(components: JsonRecord[] = []): number {
+  const ordered = [
+    ...components.filter((item) => String(item.type).toUpperCase() === 'HEADER'),
+    ...components.filter((item) => String(item.type).toUpperCase() === 'BODY'),
+    ...components.filter((item) => String(item.type).toUpperCase() === 'BUTTONS'),
+  ];
+  let count = 0;
+  for (const component of ordered) {
+    const texts = String(component.type).toUpperCase() === 'BUTTONS'
+      ? (Array.isArray(component.buttons) ? component.buttons : []).map((button: JsonRecord) => button.url)
+      : [component.text];
+    for (const text of texts) {
+      const variables = [...new Set([...String(text ?? '').matchAll(/\{\{(\d+)\}\}/g)].map((match) => Number(match[1])))].sort((a, b) => a - b);
+      if (variables.some((value, index) => value !== index + 1)) throw new PublicError('As variáveis do template precisam ser sequenciais em cada componente.', 409);
+      count += variables.length;
+    }
   }
+  return count;
+}
+
+function billingTemplateParams(template: JsonRecord, mapping: JsonRecord[], tenantName: string, amount: number, dueDate: string, paymentLink: string): string[] {
   const values: Record<string, string> = {
     tenant_first_name: tenantName.trim().split(/\s+/)[0],
     amount: new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(amount),
     due_date: dueDatePtBr(dueDate),
     payment_link: paymentLink,
   };
-  const mapping = [...template.variable_mapping].sort((a: JsonRecord, b: JsonRecord) => a.position - b.position);
-  if (mapping.length !== 4 || mapping.some((item: JsonRecord, index: number) => item.position !== index + 1 || !values[item.field])) {
-    throw new PublicError('O mapeamento deste template de cobrança está incompleto. Sincronize ou recrie o template.', 409);
+  const orderedMapping = [...mapping].sort((a: JsonRecord, b: JsonRecord) => a.position - b.position);
+  const expectedCount = templateParameterCount(Array.isArray(template.components) ? template.components : []);
+  if (orderedMapping.length !== expectedCount || orderedMapping.some((item: JsonRecord, index: number) =>
+    item.position !== index + 1 || !Object.hasOwn(values, item.field))) {
+    throw new PublicError('O mapeamento das variáveis deste template de cobrança está incompleto. Configure novamente na aba Templates Meta.', 409);
   }
-  return mapping.map((item: JsonRecord) => values[item.field]);
+  return orderedMapping.map((item: JsonRecord) => values[item.field]);
 }
 
 async function generatePaymentLink(admin: any, ownerId: string, charge: JsonRecord, tenant: JsonRecord): Promise<string> {
@@ -389,7 +415,9 @@ Deno.serve(async (req) => {
       const language = typeof body.language === 'string' ? body.language.trim() : '';
       const category = typeof body.category === 'string' ? body.category.trim().toUpperCase() : '';
       const components = Array.isArray(body.components) ? body.components : [];
-      const purpose = ['charge', 'payment_confirmation'].includes(body.purpose) ? body.purpose : 'general';
+      // Templates only become transactional defaults after the Meta approves them
+      // and the owner explicitly maps their variables in set_default.
+      const purpose = 'general';
       if (!/^[a-z][a-z0-9_]{0,511}$/.test(name)) {
         return json({ error: 'O nome precisa começar com letra e conter somente letras minúsculas, números e sublinhado.' }, 400);
       }
@@ -485,18 +513,6 @@ Deno.serve(async (req) => {
       if (invalidCta) {
         return json({ error: 'Confira o número de telefone ou informe uma URL HTTPS válida com exemplo quando dinâmica.' }, 400);
       }
-      if (purpose === 'charge' && (category !== 'UTILITY' || bodyVariables.length !== 4
-        || bodyVariables.some((value: number, index: number) => value !== index + 1)
-        || (String(header?.format).toUpperCase() === 'TEXT' && /\{\{\d+\}\}/.test(header.text))
-        || buttons.some((item: JsonRecord) => String(item.type).toUpperCase() === 'URL' && /\{\{\d+\}\}/.test(String(item.url))))) {
-        return json({ error: 'Para cobrança, use categoria UTILITY, as quatro variáveis do SGA no corpo e URL estática.' }, 400);
-      }
-      if (purpose === 'payment_confirmation' && (category !== 'UTILITY' || bodyVariables.length !== 3
-        || bodyVariables.some((value: number, index: number) => value !== index + 1)
-        || (String(header?.format).toUpperCase() === 'TEXT' && /\{\{\d+\}\}/.test(header.text))
-        || buttons.some((item: JsonRecord) => String(item.type).toUpperCase() === 'URL' && /\{\{\d+\}\}/.test(String(item.url))))) {
-        return json({ error: 'Para confirmação, use categoria UTILITY, {{1}}, {{2}} e {{3}} nessa ordem no corpo, sem variáveis fora dele.' }, 400);
-      }
       const createPayload = await zernioRequest('/whatsapp/templates', apiKey, {
         method: 'POST',
         body: { accountId, name, category, language, components },
@@ -505,16 +521,7 @@ Deno.serve(async (req) => {
       if (!remoteTemplate || typeof remoteTemplate.id !== 'string') {
         throw new PublicError('A Meta recebeu o pedido, mas a Zernio não retornou os dados do template. Atualize a lista.', 502);
       }
-      const mapping = purpose === 'charge' ? [
-        { position: 1, field: 'tenant_first_name' },
-        { position: 2, field: 'amount' },
-        { position: 3, field: 'due_date' },
-        { position: 4, field: 'payment_link' },
-      ] : purpose === 'payment_confirmation' ? [
-        { position: 1, field: 'tenant_first_name' },
-        { position: 2, field: 'amount' },
-        { position: 3, field: 'paid_at' },
-      ] : [];
+      const mapping: JsonRecord[] = [];
       const row = mapTemplate(remoteTemplate, accountId, user.id, {
         purpose, variable_mapping: mapping, is_default: false,
       });
@@ -531,15 +538,33 @@ Deno.serve(async (req) => {
 
     if (action === 'set_default') {
       const templates = await syncTemplates(admin, apiKey, user.id, accountId);
-      const selected = templates.find((item: JsonRecord) => item.id === body.templateId && ['charge', 'payment_confirmation'].includes(item.purpose));
-      if (!selected) return json({ error: 'Selecione um template transacional deste canal.' }, 404);
+      const purpose = body.purpose === 'payment_confirmation' ? 'payment_confirmation' : body.purpose === 'charge' ? 'charge' : '';
+      if (!purpose) return json({ error: 'Informe se o template será usado em lembretes ou confirmações de pagamento.' }, 400);
+      const selected = templates.find((item: JsonRecord) => item.id === body.templateId);
+      if (!selected) return json({ error: 'Selecione um template deste canal.' }, 404);
       if (selected.status !== 'APPROVED') return json({ error: 'A Meta só permite usar templates com status APPROVED.' }, 409);
-      const { error: clearError } = await admin.from('zernio_whatsapp_templates')
-        .update({ is_default: false, updated_at: new Date().toISOString() }).eq('id_usuario', user.id).eq('purpose', selected.purpose).eq('is_default', true);
+      const expectedCount = templateParameterCount(Array.isArray(selected.components) ? selected.components : []);
+      const allowedFields = purpose === 'charge'
+        ? new Set(['tenant_first_name', 'amount', 'due_date', 'payment_link'])
+        : new Set(['tenant_first_name', 'amount', 'paid_at']);
+      const requestedMapping = Array.isArray(body.variableMapping) ? body.variableMapping : [];
+      const variableMapping = requestedMapping.map((item: JsonRecord, index: number) => ({
+        position: Number(item.position), field: String(item.field ?? ''), index,
+      }));
+      if (variableMapping.length !== expectedCount || variableMapping.some((item: JsonRecord, index: number) =>
+        item.position !== index + 1 || item.index !== index || !allowedFields.has(item.field))) {
+        return json({ error: 'Associe cada variável do template a um campo válido do SGA.' }, 400);
+      }
+      const { error: clearError } = await admin.from('zernio_whatsapp_template_usages')
+        .update({ is_default: false, updated_at: new Date().toISOString() })
+        .eq('id_usuario', user.id).eq('account_id', accountId).eq('purpose', purpose).eq('is_default', true);
       if (clearError) throw new Error('Não foi possível atualizar o template padrão.');
-      const { data: saved, error: saveError } = await admin.from('zernio_whatsapp_templates')
-        .update({ is_default: true, updated_at: new Date().toISOString() })
-        .eq('id', selected.id).eq('id_usuario', user.id).eq('account_id', accountId).select('id').maybeSingle();
+      const { data: saved, error: saveError } = await admin.from('zernio_whatsapp_template_usages')
+        .upsert({
+          template_id: selected.id, id_usuario: user.id, account_id: accountId, purpose,
+          variable_mapping: variableMapping.map(({ position, field }: JsonRecord) => ({ position, field })),
+          is_default: true, updated_at: new Date().toISOString(),
+        }, { onConflict: 'template_id,purpose' }).select('id').maybeSingle();
       if (saveError || !saved) throw new Error('Não foi possível selecionar o template padrão.');
       return json({ success: true, templates: await syncTemplates(admin, apiKey, user.id, accountId) });
     }
@@ -671,9 +696,13 @@ Deno.serve(async (req) => {
       const { data: tenant, error: tenantError } = await admin.from('locatarios')
         .select('id,nome_completo,whatsapp,email,cpf').eq('id', charge.id_locatario).eq('id_usuario', user.id).maybeSingle();
       if (tenantError || !tenant || !tenant.whatsapp) return json({ error: 'O locatário não possui WhatsApp válido cadastrado.' }, 409);
+      const { data: selectedUsage, error: usageError } = await admin.from('zernio_whatsapp_template_usages')
+        .select('template_id,variable_mapping').eq('id_usuario', user.id).eq('account_id', accountId)
+        .eq('is_default', true).eq('purpose', 'charge').maybeSingle();
+      if (usageError || !selectedUsage) return json({ error: 'Selecione um template aprovado para lembretes na aba Templates Meta de /mensagens.' }, 409);
       const { data: selectedTemplate, error: templateError } = await admin.from('zernio_whatsapp_templates')
-        .select('*').eq('id_usuario', user.id).eq('account_id', accountId).eq('is_default', true).eq('purpose', 'charge').maybeSingle();
-      if (templateError || !selectedTemplate) return json({ error: 'Crie e aprove um template de cobrança na aba Templates Meta de /mensagens e selecione-o como padrão.' }, 409);
+        .select('*').eq('id', selectedUsage.template_id).eq('id_usuario', user.id).eq('account_id', accountId).maybeSingle();
+      if (templateError || !selectedTemplate) return json({ error: 'O template padrão de cobrança não foi encontrado neste canal.' }, 409);
 
       const liveTemplates = await syncTemplates(admin, apiKey, user.id, accountId);
       const liveTemplate = liveTemplates.find((item: JsonRecord) => item.name === selectedTemplate.name && item.language === selectedTemplate.language);
@@ -683,7 +712,7 @@ Deno.serve(async (req) => {
 
       const paymentLink = charge.payment_link || await generatePaymentLink(admin, user.id, charge, tenant);
       const participantId = phoneForWhatsApp(tenant.whatsapp);
-      const params = billingTemplateParams(selectedTemplate, tenant.nome_completo, Number(charge.valor), charge.data_vencimento, paymentLink);
+      const params = billingTemplateParams(selectedTemplate, selectedUsage.variable_mapping || [], tenant.nome_completo, Number(charge.valor), charge.data_vencimento, paymentLink);
       const { data: priorDeliveries, error: priorError } = await admin.from('zernio_whatsapp_deliveries')
         .select('id,status,message_id,updated_at').eq('id_usuario', user.id).eq('id_cobranca', charge.id)
         .in('status', ['sending', 'sent']).order('created_at', { ascending: false }).limit(1);
