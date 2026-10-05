@@ -9,7 +9,7 @@ Um sistema completo e moderno para gestão de frotas, contratos de aluguel e cob
 - **Frontend**: [React 19](https://react.dev/) + [Vite](https://vitejs.dev/)
 - **Estilização**: Tailwind CSS (Design Premium / Glassmorphism)
 - **Backend / DB**: [Supabase](https://supabase.com/) (PostgreSQL, Edge Functions, Auth, Storage)
-- **Mensagens**: [RyzeAPI](https://ryzeapi.cloud/) (WhatsApp Business API)
+- **Mensagens**: [Zernio](https://zernio.com/) com a API oficial do WhatsApp da Meta
 - **Pagamentos**: [Mercado Pago](https://www.mercadopago.com.br/) (PIX Automático)
 - **Ícones**: [Lucide React](https://lucide.dev/)
 
@@ -28,8 +28,9 @@ Um sistema completo e moderno para gestão de frotas, contratos de aluguel e cob
 - **Fluxo de Caixa**: Visão agrupada por locatário com status de pagamento em tempo real.
 
 ### 💬 Comunicação Inteligente
-- **Régua de Cobrança**: Disparo automático de lembretes baseados no tempo de expiração do PIX.
-- **Templates Avulsos**: Envio manual de modelos pré-definidos (Boas-vindas, Manutenção, etc) em um clique.
+- **Régua de Cobrança**: Envio por templates Meta aprovados, usando a integração Zernio individual de cada locador.
+- **Templates Meta**: Criação e acompanhamento da aprovação, envio manual e agendamentos pela rota `/mensagens`.
+- **Conexão WhatsApp**: Cada locador informa sua própria chave de API Zernio, seleciona o canal WhatsApp e conclui o onboarding Meta em Configurações.
 - **Portal do Locatário**: Link exclusivo para o cliente acompanhar faturas e realizar pagamentos.
 
 ---
@@ -39,7 +40,7 @@ Um sistema completo e moderno para gestão de frotas, contratos de aluguel e cob
 ### Pré-requisitos
 - Node.js (v18+)
 - Conta no Supabase
-- Conta e instância na RyzeAPI
+- Conta Zernio com acesso à API do WhatsApp da Meta
 
 ### Passo a Passo
 1. **Clonar o repositório**
@@ -60,9 +61,11 @@ Um sistema completo e moderno para gestão de frotas, contratos de aluguel e cob
    VITE_SUPABASE_ANON_KEY=sua_chave_anon
    ```
 
-4. **Banco de Dados & Crons**
-   - Execute o script contido em `supabase/sql_banco.txt` no SQL Editor do Supabase.
-   - Configure os agendamentos automáticos seguindo as orientações em `supabase/cron-example.txt`.
+4. **Banco de Dados, secrets e crons**
+   - Aplique as migrations `001`–`011` em ordem. Aplique a `012` somente depois de confirmar os fluxos Zernio em produção.
+   - Configure `ZERNIO_ENCRYPTION_KEY`, `ZERNIO_REDIRECT_BASE_URL` e `MP_WEBHOOK_URL` como secrets das Edge Functions no Supabase. Gere uma chave hexadecimal de 32 bytes para `ZERNIO_ENCRYPTION_KEY`.
+   - Configure os crons seguindo `supabase/cron-example.txt`.
+   - Cada locador cadastra sua chave Zernio na própria conta; essa chave fica cifrada no banco e não deve ser adicionada ao `.env` do Vite.
 
 5. **Rodar em Desenvolvimento**
    ```bash

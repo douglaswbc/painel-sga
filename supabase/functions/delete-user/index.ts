@@ -40,35 +40,6 @@ serve(async (req) => {
             Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
         );
 
-        const { data: userToDelete, error: userError } = await supabaseAdmin
-            .from('usuarios')
-            .select('ryze_instance')
-            .eq('id', userId)
-            .single();
-
-        if (userError) {
-            console.warn(`Aviso: Usuário ${userId} não encontrado na tabela 'usuarios', mas a exclusão do Auth prosseguirá.`);
-        }
-
-        const EVOLUTION_URL = Deno.env.get('EVOLUTION_API_URL');
-        const API_KEY = Deno.env.get('EVOLUTION_API_KEY');
-        if (userToDelete && userToDelete.ryze_instance && API_KEY && EVOLUTION_URL) {
-            try {
-                const evolutionResponse = await fetch(`${EVOLUTION_URL}/instance/delete/${userToDelete.ryze_instance}`, {
-                    method: 'DELETE',
-                    headers: { 'apikey': API_KEY }
-                });
-                if (evolutionResponse.ok) {
-                    console.log(`Instância ${userToDelete.ryze_instance} da Evolution API foi deletada.`);
-                } else {
-                    const errText = await evolutionResponse.text();
-                    console.error(`Falha ao deletar instância Evolution API: ${errText}`);
-                }
-            } catch (evolutionError) {
-                console.error(`Falha ao deletar a instância da Evolution API para o usuário ${userId}:`, evolutionError.message);
-            }
-        }
-
         const { error: profileError } = await supabaseAdmin
             .from('usuarios')
             .delete()
@@ -85,7 +56,7 @@ serve(async (req) => {
 
         return new Response(JSON.stringify({
             success: true,
-            message: "Usuário, instância e todos os dados associados foram excluídos com sucesso."
+            message: "Usuário e dados associados excluídos com sucesso."
         }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             status: 200

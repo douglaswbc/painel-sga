@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Loader2, User, Key, Mail, Shield, Smartphone, Zap } from 'lucide-react';
+import { X, Loader2, User, Key, Shield, Smartphone } from 'lucide-react';
 import { supabase } from '../services/supabase';
 import { toast } from 'react-toastify';
 import { formatWhatsAppToAPI } from '../utils/formatters';
@@ -12,16 +12,14 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
     whatsapp: '',
     role: 'locatario',
     ativo: true,
-    password: '',
-    instance_base: ''
+    password: ''
   });
 
   useEffect(() => {
     if (userToEdit) {
       setFormData({
         ...userToEdit,
-        password: '',
-        instance_base: userToEdit.ryze_instance || ''
+        password: ''
       });
     } else {
       setFormData({ 
@@ -30,13 +28,10 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
         whatsapp: '', 
         role: 'locatario', 
         ativo: true, 
-        password: '',
-        instance_base: ''
+        password: ''
       });
     }
   }, [userToEdit, isOpen]);
-
-  const generateRandomSuffix = () => Math.random().toString(36).substring(2, 10);
 
   const handleWhatsAppBlur = () => {
     const formatted = formatWhatsAppToAPI(formData.whatsapp);
@@ -49,12 +44,6 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
 
     const cleanWhatsApp = formatWhatsAppToAPI(formData.whatsapp);
     
-    let finalInstanceName = null;
-    if (formData.role === 'locador' && formData.instance_base) {
-      const cleanBase = formData.instance_base.toLowerCase().replace(/\s+/g, '_');
-      finalInstanceName = `${cleanBase}_${generateRandomSuffix()}`;
-    }
-
     try {
       if (userToEdit?.id) {
         const { error: err } = await supabase.rpc('admin_update_usuario', {
@@ -73,20 +62,13 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
         }
 
         const { data, error: funcError } = await supabase.functions.invoke('admin-create-user', {
-          body: { 
-            ...formData,
-            whatsapp: cleanWhatsApp,
-            instanceName: finalInstanceName
-          }
+          body: { ...formData, whatsapp: cleanWhatsApp }
         });
 
         if (funcError) throw funcError;
         if (data?.error) throw new Error(data.error);
 
-        toast.success(formData.role === 'locador' 
-          ? `Locador criado com instância: ${finalInstanceName}` 
-          : "Acesso criado com sucesso!"
-        );
+        toast.success('Acesso criado com sucesso!');
       }
 
       onSuccess();
@@ -177,25 +159,6 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
               <option value="admin">Administrador do Sistema</option>
             </select>
           </div>
-
-          {formData.role === 'locador' && !userToEdit && (
-            <div className="animate-in slide-in-from-top-2 duration-300">
-              <label className="block text-xs font-bold text-emerald-500 uppercase mb-1 flex items-center gap-1">
-                <Zap size={12} /> Identificador da Instância (WhatsApp)
-              </label>
-              <div className="flex items-center gap-2 bg-input border border-emerald-500/20 rounded-lg px-4 py-2">
-                <input
-                  required
-                  placeholder="ex: matriz"
-                  className="bg-transparent w-full text-white outline-none font-mono text-sm"
-                  value={formData.instance_base}
-                  onChange={e => setFormData({...formData, instance_base: e.target.value.toLowerCase()})}
-                />
-                <span className="text-slate-500 font-mono text-xs">_********</span>
-              </div>
-              <p className="text-[10px] text-slate-500 mt-1 italic">O sistema adicionará um código único ao final.</p>
-            </div>
-          )}
 
           <div className="flex items-center gap-2 pt-2">
             <input

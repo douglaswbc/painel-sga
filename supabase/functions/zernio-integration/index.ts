@@ -99,6 +99,53 @@ async function zernioGet(path: string, apiKey: string): Promise<JsonRecord> {
   }
 }
 
+async function zernioWrite(path: string, apiKey: string, method: 'POST' | 'PUT', body: JsonRecord): Promise<JsonRecord> {
+  let response: Response;
+  try {
+    response = await fetch(`${ZERNIO_API}${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch {
+    throw new Error('Não foi possível configurar o webhook Zernio agora.');
+  }
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new ZernioRequestError(response.status);
+  return payload;
+}
+
+function newWebhookSecret(): string {
+  return base64(crypto.getRandomValues(new Uint8Array(32))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+async function provisionLockWebhook(admin: any, integration: JsonRecord, apiKey: string, ownerId: string, accountId: string) {
+  const secret = newWebhookSecret();
+  const url = `${(Deno.env.get('SUPABASE_URL') ?? '').replace(/\/$/, '')}/functions/v1/webhook-fechadura`;
+  const body: JsonRecord = {
+    name: `SGA lock access ${ownerId}`,
+    url,
+    secret,
+    events: ['message.received'],
+    accountIds: [accountId],
+  };
+  const method = integration.webhook_id ? 'PUT' : 'POST';
+  if (integration.webhook_id) body.webhookId = integration.webhook_id;
+  const payload = await zernioWrite('/webhooks/settings', apiKey, method, body);
+  const webhook = payload.webhook ?? payload.data?.webhook;
+  const webhookId = webhook?._id ?? webhook?.id ?? integration.webhook_id;
+  if (typeof webhookId !== 'string' || !webhookId) throw new Error('A Zernio não retornou a identificação do webhook.');
+  const ciphertext = await encryptApiKey(secret, ownerId);
+  const { error } = await admin.from('zernio_integracoes').update({
+    webhook_id: webhookId,
+    webhook_secret_ciphertext: ciphertext,
+    webhook_account_id: accountId,
+    updated_at: new Date().toISOString(),
+  }).eq('id_usuario', ownerId);
+  if (error) throw new Error('O webhook foi criado na Zernio, mas não foi possível salvar sua configuração no SGA.');
+}
+
 function arrayAt(payload: JsonRecord, key: string): JsonRecord[] {
   if (Array.isArray(payload?.[key])) return payload[key];
   if (Array.isArray(payload?.data?.[key])) return payload.data[key];
@@ -294,7 +341,15 @@ Deno.serve(async (req) => {
         .select('*')
         .single();
       if (error) throw new Error('Não foi possível salvar o canal selecionado.');
-      return json({ integration: publicIntegration(updated) });
+      let webhookWarning: string | null = null;
+      try {
+        await provisionLockWebhook(admin, integration, savedApiKey, user.id, selectedAccount.id);
+      } catch (webhookError) {
+        webhookWarning = webhookError instanceof Error
+          ? `Canal salvo; o webhook das fechaduras ainda não foi configurado: ${webhookError.message}`
+          : 'Canal salvo; o webhook das fechaduras ainda não foi configurado.';
+      }
+      return json({ integration: publicIntegration(updated), webhookWarning });
     }
 
     return json({ error: 'Ação não reconhecida.' }, 400);

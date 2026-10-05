@@ -14,8 +14,6 @@ CREATE TABLE public.usuarios (
   empresa_nome text,
   ativo boolean NOT NULL DEFAULT true,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
-  ryze_instance text,
-  ryze_token text,
   access_token_mercado_pago text,
   mp_notification_url text DEFAULT 'https://stenyo-n8n.1vjhve.easypanel.host/webhook/mercado-pago-webhook'::text,
   CONSTRAINT usuarios_pkey PRIMARY KEY (id)

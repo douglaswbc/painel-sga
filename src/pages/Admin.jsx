@@ -44,7 +44,7 @@ const Admin = () => {
   };
 
   const deleteUser = async (id, nome) => {
-    if (!window.confirm(`⚠️ ATENÇÃO: Deseja realmente excluir o usuário "${nome}"? \n\nEsta ação é IRREVERSÍVEL e apagará todos os contratos, locatários, veículos, cobranças e instâncias vinculadas a este locador.`)) return;
+    if (!window.confirm(`⚠️ ATENÇÃO: Deseja realmente excluir o usuário "${nome}"? \n\nEsta ação é IRREVERSÍVEL e apagará os dados vinculados a esta conta, incluindo contratos, locatários, veículos e cobranças.`)) return;
 
     try {
       setLoading(true);

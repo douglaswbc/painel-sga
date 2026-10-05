@@ -1,169 +1,167 @@
-
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+const ZERNIO_API = 'https://api.zernio.com/v1'
+const encoder = new TextEncoder()
 
-const EVOLUTION_URL = () => Deno.env.get('EVOLUTION_API_URL') || ''
-const API_KEY = () => Deno.env.get('EVOLUTION_API_KEY') || ''
+function fromBase64(value: string): Uint8Array {
+  const binary = atob(value)
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0))
+}
+
+async function decrypt(ciphertext: string, ownerId: string): Promise<string> {
+  const secret = Deno.env.get('ZERNIO_ENCRYPTION_KEY') ?? ''
+  if (!/^[a-fA-F0-9]{64}$/.test(secret)) throw new Error('Zernio encryption key is not configured')
+  const [version, encodedIv, encodedCiphertext] = ciphertext.split('.')
+  if (version !== 'v1' || !encodedIv || !encodedCiphertext) throw new Error('Invalid encrypted Zernio credential')
+  const keyBytes = Uint8Array.from(secret.match(/.{2}/g)!, (pair) => Number.parseInt(pair, 16))
+  const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['decrypt'])
+  const clear = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: fromBase64(encodedIv), additionalData: encoder.encode(ownerId) }, key, fromBase64(encodedCiphertext),
+  )
+  return new TextDecoder().decode(clear)
+}
+
+async function sendPaymentConfirmation(admin: any, ownerId: string, paymentId: string, target: any, amountValue: number, paidAt: string, targetColumn: 'id_cobranca' | 'id_candidato', targetId: string) {
+  const phoneValue = target?.whatsapp ?? target?.telefone
+  if (!phoneValue) return
+  const { data: integration } = await admin.from('zernio_integracoes')
+    .select('api_key_ciphertext,whatsapp_account_id,key_status')
+    .eq('id_usuario', ownerId).maybeSingle()
+  if (!integration?.api_key_ciphertext || integration.key_status !== 'valid' || !integration.whatsapp_account_id) return
+
+  const { data: template } = await admin.from('zernio_whatsapp_templates')
+    .select('name,language,variable_mapping,account_id')
+    .eq('id_usuario', ownerId).eq('account_id', integration.whatsapp_account_id)
+    .eq('purpose', 'payment_confirmation').eq('is_default', true).eq('status', 'APPROVED').maybeSingle()
+  if (!template) return
+
+  const { data: notification } = await admin.from('zernio_payment_notifications').insert({
+    mercado_pago_id: paymentId,
+    [targetColumn]: targetId,
+    id_usuario: ownerId,
+    idempotency_key: `sga-payment-${paymentId}`,
+    status: 'sending',
+  }).select('id,idempotency_key').maybeSingle()
+  let attempt = notification
+  if (!attempt) {
+    const { data: existing } = await admin.from('zernio_payment_notifications').select('*').eq('mercado_pago_id', paymentId).maybeSingle()
+    if (!existing || existing.status === 'sent' || existing.status === 'sending') return
+    const { data: claimed } = await admin.from('zernio_payment_notifications').update({
+      status: 'sending', attempts: existing.attempts + 1, safe_error: null, updated_at: new Date().toISOString(),
+    }).eq('id', existing.id).eq('status', 'failed').select('id,idempotency_key').maybeSingle()
+    attempt = claimed
+  }
+  if (!attempt) return
+
+  const firstName = String(target.nome_completo ?? target.nome ?? '').trim().split(/\s+/)[0] || 'Olá'
+  const amount = Number(amountValue).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+  const values: Record<string, string> = {
+    tenant_first_name: firstName,
+    amount,
+    paid_at: new Date(paidAt).toLocaleDateString('pt-BR'),
+  }
+  const mapping = [...(template.variable_mapping || [])].sort((a: any, b: any) => a.position - b.position)
+  if (mapping.length !== 3 || mapping.some((item: any, index: number) => item.position !== index + 1 || !values[item.field])) {
+    await admin.from('zernio_payment_notifications').update({ status: 'failed', safe_error: 'invalid_template_mapping', updated_at: new Date().toISOString() }).eq('id', attempt.id)
+    return
+  }
+  const apiKey = await decrypt(integration.api_key_ciphertext, ownerId)
+  const phone = String(phoneValue).replace(/\D/g, '')
+  const participantId = phone.startsWith('55') ? phone : `55${phone}`
+  try {
+    const response = await fetch(`${ZERNIO_API}/inbox/conversations`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'Idempotency-Key': attempt.idempotency_key,
+      },
+      body: JSON.stringify({
+        accountId: integration.whatsapp_account_id,
+        participantId,
+        templateName: template.name,
+        templateLanguage: template.language,
+        templateParams: mapping.map((item: any) => values[item.field]),
+      }),
+      signal: AbortSignal.timeout(20000),
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(`zernio_http_${response.status}`)
+    await admin.from('zernio_payment_notifications').update({
+      status: 'sent', message_id: result.message?.id ?? result.data?.message?.id ?? result.id ?? null,
+      safe_error: null, updated_at: new Date().toISOString(),
+    }).eq('id', attempt.id)
+  } catch (error) {
+    console.error('Zernio payment confirmation failed:', error)
+    await admin.from('zernio_payment_notifications').update({
+      status: 'failed', safe_error: error instanceof Error ? error.message.slice(0, 160) : 'send_failed',
+      updated_at: new Date().toISOString(),
+    }).eq('id', attempt.id)
+  }
+}
 
 serve(async (req) => {
-    console.log(`[payment-webhook-receiver] >>> ${req.method} ${req.url}`);
-
-    if (req.method === 'OPTIONS') {
-        console.log('[payment-webhook-receiver] OPTIONS (CORS) → 200');
-        return new Response('ok', { headers: corsHeaders });
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  try {
+    const payload = await req.json()
+    if (payload.action !== 'payment.updated' && payload.type !== 'payment' && payload.topic !== 'payment') {
+      return json({ success: true, ignored: true })
     }
 
-    try {
-        const payload = await req.json();
-        console.log('[payment-webhook-receiver] payload:', JSON.stringify(payload));
-        console.log('[payment-webhook-receiver] headers:', JSON.stringify({
-            'content-type': req.headers.get('content-type'),
-            'user-agent': req.headers.get('user-agent'),
-            'x-signature': req.headers.get('x-signature'),
-            'x-request-id': req.headers.get('x-request-id'),
-        }));
+    const resourceId = typeof payload.resource === 'string'
+      ? payload.resource.split('/').filter(Boolean).pop()
+      : (payload.resource ?? '')
+    const paymentId = payload.data?.id || resourceId || new URL(req.url).searchParams.get('id') || ''
+    if (!paymentId) return json({ error: 'paymentId não encontrado no payload' }, 400)
 
-        if (payload.action === 'payment.updated' || payload.type === 'payment' || payload.topic === 'payment') {
-            console.log(`[payment-webhook-receiver] notificação de pagamento detectada (action=${payload.action}, type=${payload.type}, topic=${payload.topic})`);
+    const admin = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')
+    const { data: charge } = await admin.from('cobrancas')
+      .select('*,contratos(usuarios(*),locatarios(*))')
+      .eq('mercado_pago_id', String(paymentId)).maybeSingle()
+    const { data: candidate } = !charge
+      ? await admin.from('candidatos').select('*,usuarios(*)').eq('pagamento_id', String(paymentId)).maybeSingle()
+      : { data: null }
+    if (!charge && !candidate) return json({ error: `Pagamento ${paymentId} não localizado no sistema` }, 404)
 
-            const resourceId = typeof payload.resource === 'string'
-                ? payload.resource.split('/').filter(Boolean).pop()
-                : (payload.resource ?? '');
-            const queryId = new URL(req.url).searchParams.get('id') ?? '';
-            const paymentId = payload.data?.id || resourceId || queryId;
-            if (!paymentId) {
-                console.log('[payment-webhook-receiver] ERRO: não foi possível extrair o paymentId do payload → 400');
-                return new Response(JSON.stringify({ error: 'paymentId não encontrado no payload' }), {
-                    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-                    status: 400
-                });
-            }
-            console.log(`[payment-webhook-receiver] paymentId extraído: ${paymentId}`);
+    const owner = charge ? charge.contratos?.usuarios : candidate.usuarios
+    if (!owner) throw new Error('Locador do pagamento não encontrado')
+    const { data: storedToken } = await admin.rpc('get_user_mp_token', { p_user_id: owner.id })
+    const accessToken = storedToken || owner.access_token_mercado_pago || ''
+    if (!accessToken) throw new Error('Locador sem Access Token configurado.')
 
-            const supabaseAdmin = createClient(
-                Deno.env.get('SUPABASE_URL') ?? '',
-                Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-            );
+    const mpResponse = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+    const mpPayment = await mpResponse.json()
+    if (!mpResponse.ok) throw new Error(`Mercado Pago retornou HTTP ${mpResponse.status}`)
 
-            let { data: cobranca } = await supabaseAdmin
-                .from('cobrancas')
-                .select('*, contratos(usuarios(*), locatarios(*))')
-                .eq('mercado_pago_id', paymentId.toString())
-                .single();
-
-            console.log(`[payment-webhook-receiver] cobrança localizada? ${cobranca ? `SIM (id=${cobranca.id}, status=${cobranca.status}, valor=${cobranca.valor})` : 'NÃO'}`);
-
-            let { data: candidato } = !cobranca ? await supabaseAdmin
-                .from('candidatos')
-                .select('*, usuarios(*)')
-                .eq('pagamento_id', paymentId.toString())
-                .single() : { data: null };
-
-            console.log(`[payment-webhook-receiver] candidato localizado? ${candidato ? `SIM (id=${candidato.id}, status=${candidato.status})` : 'NÃO'}`);
-
-            if (!cobranca && !candidato) {
-                console.log(`[payment-webhook-receiver] pagamento ${paymentId} NÃO localizado no sistema → 404`);
-                return new Response(JSON.stringify({ error: `Pagamento ${paymentId} não localizado no sistema` }), {
-                    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-                    status: 404
-                });
-            }
-
-            const locador = cobranca ? cobranca.contratos.usuarios : candidato.usuarios;
-            console.log(`[payment-webhook-receiver] locador: nome=${locador?.nome_completo || locador?.empresa_nome || '?'} (id=${locador?.id}, ryze_instance=${locador?.ryze_instance || ''})`);
-
-            const { data: mpToken } = await supabaseAdmin.rpc('get_user_mp_token', { p_user_id: locador.id });
-            const accessToken = mpToken || locador.access_token_mercado_pago || '';
-
-            if (!accessToken) {
-                console.log('[payment-webhook-receiver] ERRO: locador sem Access Token configurado');
-                throw new Error("Locador sem Access Token configurado.");
-            }
-            console.log(`[payment-webhook-receiver] token MP obtido (tamanho=${accessToken.length})`);
-
-            const mpResponse = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
-                headers: { 'Authorization': `Bearer ${accessToken}` }
-            });
-            const mpPayment = await mpResponse.json();
-
-            if (!mpResponse.ok) {
-                console.log(`[payment-webhook-receiver] ERRO ao consultar MP (HTTP ${mpResponse.status}): ${JSON.stringify(mpPayment)}`);
-                throw new Error(`Mercado Pago retornou HTTP ${mpResponse.status} ao consultar o pagamento`);
-            }
-
-            console.log(`[payment-webhook-receiver] consulta MP payment ${paymentId}: payment.status=${mpPayment.status}`);
-
-            if (mpPayment.status === 'approved') {
-                console.log('[payment-webhook-receiver] pagamento APROVADO → atualizando registros');
-
-                if (cobranca && cobranca.status !== 'pago') {
-                    await supabaseAdmin.from('cobrancas').update({
-                        status: 'pago',
-                        data_pagamento: new Date().toISOString()
-                    }).eq('id', cobranca.id);
-                    console.log(`[payment-webhook-receiver] cobrança ${cobranca.id} marcada como PAGO`);
-
-                    await sendWhatsApp(supabaseAdmin, locador, cobranca.contratos.locatarios.whatsapp,
-                        `✅ Pagamento Confirmado!\nRecebemos o valor de R$ ${cobranca.valor} referente ao seu aluguel. Obrigado!`);
-                } else if (cobranca) {
-                    console.log(`[payment-webhook-receiver] cobrança ${cobranca.id} já estava paga (status=${cobranca.status}), ignorando`);
-                }
-
-                if (candidato && candidato.status !== 'Vaga Reservada') {
-                    await supabaseAdmin.from('candidatos').update({
-                        status: 'Vaga Reservada',
-                        pagamento_status: 'Confirmado',
-                        reserva_confirmada_em: new Date().toISOString()
-                    }).eq('id', candidato.id);
-                    console.log(`[payment-webhook-receiver] candidato ${candidato.id} → Vaga Reservada`);
-
-                    await sendWhatsApp(supabaseAdmin, locador, candidato.telefone,
-                        `🚗⚡ Reserva Confirmada!\nOlá ${candidato.nome}, sua vaga está garantida. Em breve entraremos em contato.`);
-                } else if (candidato) {
-                    console.log(`[payment-webhook-receiver] candidato ${candidato.id} já reservado (status=${candidato.status}), ignorando`);
-                }
-            } else {
-                console.log(`[payment-webhook-receiver] status "${mpPayment.status}" não é "approved", nada a fazer`);
-            }
-        } else {
-            console.log(`[payment-webhook-receiver] payload ignorado (não é notificação de pagamento): action=${payload.action}, type=${payload.type}`);
-        }
-
-        return new Response(JSON.stringify({ success: true }), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            status: 200
-        });
-
-    } catch (error) {
-        console.error('[payment-webhook-receiver] ERRO capturado:', error.message, error.stack || '');
-        return new Response(JSON.stringify({ error: error.message }), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            status: 400
-        });
+    if (mpPayment.status === 'approved') {
+      if (charge && charge.status !== 'pago') {
+        const paidAt = new Date().toISOString()
+        const { data: updated } = await admin.from('cobrancas').update({ status: 'pago', data_pagamento: paidAt })
+          .eq('id', charge.id).neq('status', 'pago').select('id').maybeSingle()
+        if (updated) await sendPaymentConfirmation(admin, owner.id, String(paymentId), charge.contratos?.locatarios, Number(charge.valor), paidAt, 'id_cobranca', charge.id)
+      } else if (candidate && candidate.status !== 'Vaga Reservada') {
+        const paidAt = new Date().toISOString()
+        const { data: updatedCandidate } = await admin.from('candidatos').update({
+          status: 'Vaga Reservada', pagamento_status: 'Confirmado', reserva_confirmada_em: paidAt,
+        }).eq('id', candidate.id).neq('status', 'Vaga Reservada').select('id').maybeSingle()
+        if (updatedCandidate) await sendPaymentConfirmation(admin, owner.id, String(paymentId), candidate, Number(mpPayment.transaction_amount ?? 0), paidAt, 'id_candidato', candidate.id)
+      }
     }
-});
+    return json({ success: true })
+  } catch (error) {
+    console.error('[payment-webhook-receiver] error:', error)
+    return json({ error: error instanceof Error ? error.message : 'Erro ao processar o pagamento.' }, 400)
+  }
+})
 
-async function sendWhatsApp(supabaseAdmin: any, locador: any, numero: string, texto: string) {
-    const ryze_instance = locador.ryze_instance || '';
-    if (!ryze_instance) {
-        console.log('[payment-webhook-receiver] sendWhatsApp: locador sem ryze_instance, mensagem não enviada');
-        return;
-    }
-
-    const hasLink = /https?:\/\/\S+/i.test(texto);
-    try {
-        const resp = await fetch(`${EVOLUTION_URL()}/message/sendText/${ryze_instance}`, {
-            method: 'POST',
-            headers: { 'apikey': API_KEY(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ number: numero, text: texto, delay: 1200, linkPreview: hasLink })
-        });
-        console.log(`[payment-webhook-receiver] sendWhatsApp para ${numero} (instância ${ryze_instance}): HTTP=${resp.status}`);
-    } catch (err) {
-        console.error(`[payment-webhook-receiver] sendWhatsApp falhou para ${numero}:`, err.message);
-    }
+function json(payload: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(payload), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
 }

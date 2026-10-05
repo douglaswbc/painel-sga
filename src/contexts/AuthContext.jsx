@@ -11,7 +11,7 @@ export const AuthProvider = ({ children }) => {
   const fetchProfile = async (userId) => {
     const { data } = await supabase
       .from('usuarios')
-      .select('id, nome_completo, whatsapp, email, role, empresa_nome, ativo, created_at, ryze_instance, mp_notification_url')
+      .select('id, nome_completo, whatsapp, email, role, empresa_nome, ativo, created_at, mp_notification_url')
       .eq('id', userId)
       .single();
     setProfile(data);

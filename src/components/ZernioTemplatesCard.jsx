@@ -42,7 +42,7 @@ const initialDraft = () => ({
   body: '', examples: {}, footer: '', buttonMode: 'none',
   quickReplies: [''], ctaTypes: [], phoneLabel: '', countryCode: '+55', phoneNumber: '',
   websiteLabel: '', websiteMode: 'static', websiteUrl: '', websiteExample: '',
-  useForCharges: false,
+  useForCharges: false, useForPaymentConfirmations: false,
 });
 
 const getVariables = (text) => [...new Set([...text.matchAll(/\{\{(\d+)\}\}/g)].map((match) => Number(match[1])))].sort((a, b) => a - b);
@@ -159,6 +159,12 @@ function TemplateForm({ busy, storageKey, onCancel, onSubmit }) {
       if (draft.headerType === 'text' && /\{\{\d+\}\}/.test(draft.headerText)) result.charge = 'Templates de cobrança não podem ter variáveis no cabeçalho.';
       if (draft.buttonMode === 'cta' && draft.ctaTypes.includes('website') && draft.websiteMode === 'dynamic') result.charge = 'Para cobrança, use botão de site com URL estática.';
     }
+    if (draft.useForPaymentConfirmations) {
+      if (draft.category !== 'UTILITY') result.payment = 'Templates de confirmação de pagamento precisam usar a categoria UTILITY.';
+      if (variables.length !== 3 || variables.some((value, index) => value !== index + 1)) result.payment = 'Para confirmação, o corpo precisa ter {{1}} nome, {{2}} valor e {{3}} data do pagamento, nessa ordem.';
+      if (draft.headerType === 'text' && /\{\{\d+\}\}/.test(draft.headerText)) result.payment = 'Templates de confirmação não podem ter variáveis no cabeçalho.';
+      if (draft.buttonMode === 'cta' && draft.ctaTypes.includes('website') && draft.websiteMode === 'dynamic') result.payment = 'Para confirmação, use botão de site com URL estática.';
+    }
     return result;
   }, [draft, variables]);
 
@@ -205,10 +211,12 @@ function TemplateForm({ busy, storageKey, onCancel, onSubmit }) {
         { position: 1, field: 'tenant_first_name' }, { position: 2, field: 'amount' },
         { position: 3, field: 'due_date' }, { position: 4, field: 'payment_link' },
       ]
-      : [];
+      : draft.useForPaymentConfirmations
+        ? [{ position: 1, field: 'tenant_first_name' }, { position: 2, field: 'amount' }, { position: 3, field: 'paid_at' }]
+        : [];
     onSubmit({
       name: draft.name.trim(), category: draft.category, language: draft.language,
-      components: buildComponents(), purpose: draft.useForCharges ? 'charge' : 'general', variableMapping,
+      components: buildComponents(), purpose: draft.useForCharges ? 'charge' : draft.useForPaymentConfirmations ? 'payment_confirmation' : 'general', variableMapping,
     });
   };
 
@@ -290,6 +298,7 @@ function TemplateForm({ busy, storageKey, onCancel, onSubmit }) {
             {shownError('examples')}
           </div>}
           {draft.useForCharges && errors.charge && attempted && <p className="text-[11px] text-red-400">{errors.charge}</p>}
+          {draft.useForPaymentConfirmations && errors.payment && attempted && <p className="text-[11px] text-red-400">{errors.payment}</p>}
         </section>
 
         <div>
@@ -336,8 +345,12 @@ function TemplateForm({ busy, storageKey, onCancel, onSubmit }) {
         </section>
 
         <label className="flex items-start gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 cursor-pointer">
-          <input type="checkbox" checked={draft.useForCharges} onChange={(event) => update('useForCharges', event.target.checked)} className="mt-0.5" />
+          <input type="checkbox" checked={draft.useForCharges} onChange={(event) => { update('useForCharges', event.target.checked); if (event.target.checked) update('useForPaymentConfirmations', false); }} className="mt-0.5" />
           <span><span className="block text-xs font-bold text-emerald-200">Usar este template nas cobranças do SGA</span><span className="block mt-1 text-[11px] text-slate-400">Requer categoria UTILITY e as variáveis {'{{1}}'} nome, {'{{2}}'} valor, {'{{3}}'} vencimento e {'{{4}}'} link PIX, nessa ordem.</span>{draft.useForCharges && errors.charge && attempted && <span className="block mt-1 text-[11px] text-red-400">{errors.charge}</span>}</span>
+        </label>
+        <label className="flex items-start gap-3 rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 cursor-pointer">
+          <input type="checkbox" checked={draft.useForPaymentConfirmations} onChange={(event) => { update('useForPaymentConfirmations', event.target.checked); if (event.target.checked) update('useForCharges', false); }} className="mt-0.5" />
+          <span><span className="block text-xs font-bold text-sky-200">Usar este template para confirmar pagamentos</span><span className="block mt-1 text-[11px] text-slate-400">Requer categoria UTILITY e as variáveis {'{{1}}'} nome, {'{{2}}'} valor e {'{{3}}'} data do pagamento, nessa ordem.</span>{draft.useForPaymentConfirmations && errors.payment && attempted && <span className="block mt-1 text-[11px] text-red-400">{errors.payment}</span>}</span>
         </label>
 
         <div className="flex flex-wrap justify-end gap-2 border-t border-slate-800 pt-4">
@@ -486,6 +499,7 @@ const ZernioTemplatesCard = () => {
         {templates.map((template) => {
           const status = String(template.status || 'PENDING').toUpperCase();
           const isChargeTemplate = template.purpose === 'charge';
+          const isPaymentTemplate = template.purpose === 'payment_confirmation';
           return <article key={template.id} className="flex flex-col md:flex-row md:items-center justify-between gap-3 rounded-lg border border-slate-800 p-3">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -494,12 +508,13 @@ const ZernioTemplatesCard = () => {
                 <span className={`text-[10px] uppercase font-bold border rounded-full px-2 py-0.5 ${statusStyles[status] || statusStyles.PENDING}`}>{status}</span>
                 {template.is_default && <span className="text-[10px] text-emerald-300 font-bold">PADRÃO</span>}
                 {isChargeTemplate && <span className="text-[10px] text-indigo-300">COBRANÇAS</span>}
-                {!isChargeTemplate && <span className="text-[10px] text-slate-500">GERAL</span>}
+                {isPaymentTemplate && <span className="text-[10px] text-sky-300">CONFIRMAÇÃO DE PAGAMENTO</span>}
+                {!isChargeTemplate && !isPaymentTemplate && <span className="text-[10px] text-slate-500">GERAL</span>}
               </div>
               <p className="text-[11px] text-slate-500 mt-1">{template.category}{template.rejection_reason ? ` · ${template.rejection_reason}` : ''}</p>
             </div>
-            {isChargeTemplate && <button type="button" onClick={() => setDefault(template)} disabled={busy || status !== 'APPROVED' || template.is_default} className="shrink-0 px-3 py-2 rounded-lg bg-emerald-600/10 hover:bg-emerald-600/20 disabled:opacity-40 text-emerald-300 text-xs font-semibold flex items-center gap-2">
-              {template.is_default ? <CheckCircle2 size={15} /> : <Circle size={15} />}{template.is_default ? 'Selecionado' : 'Usar nas cobranças'}
+            {(isChargeTemplate || isPaymentTemplate) && <button type="button" onClick={() => setDefault(template)} disabled={busy || status !== 'APPROVED' || template.is_default} className="shrink-0 px-3 py-2 rounded-lg bg-emerald-600/10 hover:bg-emerald-600/20 disabled:opacity-40 text-emerald-300 text-xs font-semibold flex items-center gap-2">
+              {template.is_default ? <CheckCircle2 size={15} /> : <Circle size={15} />}{template.is_default ? 'Selecionado' : isChargeTemplate ? 'Usar nas cobranças' : 'Usar nas confirmações'}
             </button>}
           </article>;
         })}

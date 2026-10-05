@@ -91,7 +91,7 @@
 - [x] Centralizar criacao e gestao dos templates Meta na rota `/mensagens`, remover a criacao manual de modelos legados e manter os registros existentes para os agendamentos ainda em uso.
 - [x] Adicionar formulário guiado com categorias, idiomas, componentes Meta, exemplos de variáveis, limites, botões interativos e prévia de WhatsApp; permitir classificar templates UTILITY compatíveis para cobranças do SGA.
 
-**Estado:** codigo pronto localmente. Aplicar `006_zernio_templates_and_deliveries.sql`, publicar `zernio-whatsapp` e o frontend. Os cron/lembretes e os outros fluxos que ainda usam Evolution/RyzeAPI permanecem para a migracao da fase 6.
+**Estado:** implementação local concluída. Os fluxos de cobrança e mensagem foram migrados na fase 6; a ativação de banco, Edge Functions e interface em produção está listada na fase 7.
 
 ### Criterios de conclusao
 
@@ -106,16 +106,31 @@
 - [x] Listar e permitir pausar, reativar ou excluir agendamentos; identificar os registros antigos como legados.
 - [x] Adicionar envio recorrente idempotente por Zernio e registrar tentativas/erros.
 
-**Estado:** implementação local pronta. Aplicar `007_zernio_message_scheduling.sql`, publicar `zernio-whatsapp` e a nova Edge Function `zernio-message-scheduler`, e instalar o cron descrito em `supabase/cron-example.txt`. O cron legado continua atendendo somente aos agendamentos antigos.
+**Estado:** implementação local pronta. Aplicar `007_zernio_message_scheduling.sql`, publicar `zernio-whatsapp` e `zernio-message-scheduler`, e instalar os crons de `supabase/cron-example.txt`. A migration 009 pausa os agendamentos antigos de texto livre.
 
 ## Fase 6 — Substituir Evolution e RyzeAPI
 
-- [ ] Migrar `reenvio-cobranca`, `gerar-cobranca-pix`, `enviar-lembretes-cobranca` e `agendador-mensagens-avulsas` para o serviço Zernio.
-- [ ] Migrar `ryze-proxy`, `instance-status`, `create-instance`, `admin-create-user` e `delete-user`; remover criação/estado de instâncias da Evolution onde deixar de ser necessário.
-- [ ] Migrar `payment-webhook-receiver` para localizar a integração/canal e template do locador antes de enviar a confirmação.
-- [ ] Migrar `webhook-fechadura` se o envio de mensagens da fechadura continuar sendo requisito; preservar OTP, autorização e auditoria.
-- [ ] Atualizar Configurações, telas de mensagens, onboarding de usuários, README, dependências e nomes visíveis que ainda indiquem Evolution/RyzeAPI.
-- [ ] Remover código, segredos e colunas antigas `ryze_instance`/`ryze_token` apenas depois da migração e confirmação de que nenhuma função em produção depende deles.
+- [x] Migrar `reenvio-cobranca`, `gerar-cobranca-pix`, `enviar-lembretes-cobranca` e `agendador-mensagens-avulsas` para o serviço Zernio ou desativar as rotas antigas sem deixar chamadas Evolution ativas.
+- [x] Migrar `ryze-proxy`, `instance-status`, `create-instance`, `admin-create-user` e `delete-user`; remover criação/estado de instâncias da Evolution da interface e do cadastro.
+- [x] Migrar `payment-webhook-receiver` para localizar a integração/canal e o template de confirmação aprovado por locador.
+- [x] Migrar `webhook-fechadura` para webhook assinado Zernio, preservando OTP, autorização, auditoria e deduplicação.
+- [x] Atualizar Configurações, telas de mensagens, onboarding de usuários e nomes ativos da interface que indicavam Evolution/RyzeAPI.
+- [x] Remover localmente código e documentação operacional de Evolution/RyzeAPI; deixar colunas antigas para remoção controlada pela migration 012 após validação em produção.
+
+### Progresso de implementação local
+
+- [x] Remover da tela Configurações o estado, QR Code e gerenciamento de instâncias Evolution; a conexão passa pelo cartão Zernio.
+- [x] Remover criação automática de instância ao cadastrar locador e chamada à Evolution ao excluir usuário.
+- [x] Trocar o envio avulso por seleção de templates gerais aprovados da Meta e envio pelo canal Zernio.
+- [x] Migrar o cron de lembretes vencidos para `zernio-whatsapp` com o template de cobrança aprovado e idempotência por cobrança.
+- [x] Remover os diretórios locais das Edge Functions legadas sem chamadas ativas; suas versões já implantadas precisam ser apagadas no Supabase após publicar as funções novas.
+- [ ] Aplicar `009_disable_evolution_message_schedules.sql`; ele pausa agendamentos antigos de texto livre que não podem ser convertidos automaticamente em templates aprovados.
+- [x] Migrar as mensagens de confirmação de pagamento para template UTILITY aprovado, configurado por locador na aba Templates Meta.
+- [x] Migrar o webhook de fechaduras para webhooks assinados Zernio, preservando deduplicação e fluxo OTP.
+- [ ] Aplicar `010_zernio_lock_webhooks.sql` e `011_zernio_payment_confirmation_templates.sql` antes de publicar as funções correspondentes.
+- [ ] Depois de validar os fluxos em produção, aplicar `012_remove_ryze_credentials.sql`, excluir no Supabase as funções implantadas sem uso e remover secrets Evolution antigos.
+
+**Estado:** migração local concluída. A ativação em produção ainda exige aplicar `009`, `010` e `011`, publicar as Edge Functions e o frontend atualizados, configurar o webhook Zernio no cartão de integração e validar OTP/callback de pagamento. Depois da validação, aplicar `012`, excluir as antigas funções já implantadas e retirar secrets Evolution do Supabase.
 
 ### Critérios de conclusão
 
@@ -125,11 +140,14 @@
 
 ## Fase 7 — Operação e implantação
 
-- [ ] Atualizar documentação de configuração, cron, Edge Functions e secrets do Supabase. A chave Zernio por locador não deve ser adicionada ao `.env` do Vite.
-- [ ] Definir retenção e acesso aos logs; ocultar tokens, chaves, telefone completo e dados PIX desnecessários.
-- [ ] Implantar primeiro banco/RLS e Edge Functions; depois interface/onboarding; por último desativar os provedores antigos.
-- [ ] Fazer uma validação ponta a ponta em ambiente controlado: salvar chave, conectar número, criar e aprovar template, faturar um contrato de teste, enviar template, receber callback e confirmar o isolamento entre dois locadores.
-- [ ] Só eliminar os secrets e campos antigos após confirmar que a implantação nova está ativa e monitorada.
+- [x] Atualizar README, exemplo de secrets, cron e esquema base para Zernio; a chave Zernio de cada locador fica cifrada no banco, não no `.env` do Vite.
+- [x] Remover o exemplo de secrets Evolution e corrigir o esquema-base para não incluir `ryze_instance`/`ryze_token`.
+- [x] Remover do repositório as Edge Functions legadas sem chamadas ativas e criar migration `012_remove_ryze_credentials.sql` para a limpeza do banco após validação.
+- [ ] Aplicar migrations `009`–`011`, publicar Edge Functions/frontend/crons Zernio e validar integração, OTP, templates, cobrança e callback em produção.
+- [ ] Fazer uma validação ponta a ponta em ambiente controlado, incluindo isolamento entre dois locadores e revisão dos logs sem exposição de tokens ou dados pessoais completos.
+- [ ] Só após validar os fluxos, aplicar migration `012`, remover no Supabase as funções já implantadas `agendador-mensagens-avulsas`, `create-instance`, `gerar-cobranca-pix`, `instance-status`, `reenvio-cobranca` e `ryze-proxy`, e excluir `EVOLUTION_API_URL`/`EVOLUTION_API_KEY` dos secrets do projeto.
+
+Para apagar uma função já implantada, use `supabase functions delete <nome> --project-ref <project-ref>` para cada função listada acima. Não use `--prune`, pois isso também removeria quaisquer outras funções remotas sem pasta local.
 
 ## Inventário inicial verificado
 
@@ -139,7 +157,7 @@
 - Exemplo de cron com endpoint antigo e `userId` fixo: `supabase/cron-example.txt`.
 - Esquema base revisado: `supabase/sql_banco.txt`.
 - Migração de criptografia revisada: `supabase/migrations/001_encrypt.sql`.
-- Integrações Evolution/Ryze identificadas principalmente em `supabase/functions/` e `src/pages/Configuracoes.jsx`.
+- Integrações legadas Evolution/Ryze removidas do código ativo; migration `003` preservada como histórico de implantação.
 
 ## Ordem recomendada
 

@@ -51,7 +51,7 @@ select cron.schedule(
   $$
 );
 
--- Manter a régua atual de lembretes ativa até a migração WhatsApp da fase 6.
+-- This endpoint now uses each owner's approved default UTILITY template through Zernio.
 select cron.unschedule(jobid)
 from cron.job
 where jobname = 'enviar-lembretes-whatsapp';
@@ -77,5 +77,6 @@ select cron.schedule(
 -- select * from cron.job_run_details order by start_time desc limit 20;
 -- select cron.unschedule('sga-faturamento-cobrancas');
 
--- O cron de lembretes continua atendendo aos agendamentos legados.
--- Novos agendamentos com templates Meta usam sga-zernio-message-scheduler.
+-- Agendamentos antigos de texto livre são pausados pela migration 009.
+-- Agendamentos Meta permanecem ativos e usam sga-zernio-message-scheduler.
+-- O endpoint de lembretes usa o template UTILITY aprovado do locador via Zernio.

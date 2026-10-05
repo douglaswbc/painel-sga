@@ -13,6 +13,7 @@ const ZernioIntegrationCard = () => {
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
   const [notice, setNotice] = useState('');
+  const [channelStatus, setChannelStatus] = useState('checking');
 
   const selectedProfile = profiles.find((item) => item.id === selectedProfileId);
   const accounts = useMemo(() => selectedProfile?.accounts || [], [selectedProfile]);
@@ -41,6 +42,28 @@ const ZernioIntegrationCard = () => {
         setIntegration(current);
         setSelectedProfileId(current?.profile?.id || '');
         setSelectedAccountId(current?.account?.id || '');
+        if (!current?.hasApiKey) {
+          setChannelStatus('no-key');
+          return null;
+        }
+        if (current.keyStatus !== 'valid') {
+          setChannelStatus('unverified');
+          return null;
+        }
+        return invoke('refresh').then(({ integration: checked, profiles: currentProfiles }) => {
+          if (!active) return;
+          setIntegration(checked);
+          setProfiles(currentProfiles || []);
+          setSelectedProfileId(checked?.profile?.id || '');
+          setSelectedAccountId(checked?.account?.id || '');
+          const channelFound = Boolean(checked?.profile?.id && checked?.account?.id && (currentProfiles || []).some((item) =>
+            item.id === checked.profile.id && (item.accounts || []).some((account) => account.id === checked.account.id)));
+          setChannelStatus(channelFound ? 'connected' : 'missing');
+        }).catch((error) => {
+          if (!active) return;
+          setChannelStatus('unverified');
+          setErrorMessage(`Não foi possível verificar o canal WhatsApp na Zernio: ${error.message}`);
+        });
       })
       .catch((error) => {
         if (active) setErrorMessage(error.message);
@@ -59,6 +82,9 @@ const ZernioIntegrationCard = () => {
       const result = await invoke('refresh');
       setIntegration(result.integration);
       setProfiles(result.profiles || []);
+      const channelFound = Boolean(result.integration?.profile?.id && result.integration?.account?.id && (result.profiles || []).some((item) =>
+        item.id === result.integration.profile.id && (item.accounts || []).some((account) => account.id === result.integration.account.id)));
+      setChannelStatus(channelFound ? 'connected' : 'missing');
       setSelectedProfileId(result.integration?.profile?.id || '');
       setSelectedAccountId(result.integration?.account?.id || '');
       setNotice('Perfis e canais atualizados.');
@@ -80,6 +106,7 @@ const ZernioIntegrationCard = () => {
       setProfiles(result.profiles || []);
       setSelectedProfileId('');
       setSelectedAccountId('');
+      setChannelStatus('missing');
       setApiKey('');
       setNotice('Chave validada e salva com segurança. Agora selecione o perfil e o canal WhatsApp.');
     } catch (error) {
@@ -99,7 +126,9 @@ const ZernioIntegrationCard = () => {
         accountId: selectedAccountId,
       });
       setIntegration(result.integration);
-      setNotice('Perfil e canal WhatsApp vinculados a este locador.');
+      setChannelStatus('connected');
+      if (result.webhookWarning) setErrorMessage(result.webhookWarning);
+      else setNotice('Perfil e canal WhatsApp vinculados a este locador.');
     } catch (error) {
       setErrorMessage(error.message);
     } finally {
@@ -118,6 +147,7 @@ const ZernioIntegrationCard = () => {
       setProfiles([]);
       setSelectedProfileId('');
       setSelectedAccountId('');
+      setChannelStatus('no-key');
       setApiKey('');
       setNotice('Chave e canal removidos.');
     } catch (error) {
@@ -182,6 +212,7 @@ const ZernioIntegrationCard = () => {
       if (data?.error) throw new Error(data.error);
       setIntegration(data.integration);
       setSelectedAccountId('');
+      setChannelStatus('missing');
       setNotice('Canal desconectado da Zernio. A chave e o perfil foram mantidos.');
     } catch (error) {
       setErrorMessage(error.message);
@@ -200,6 +231,15 @@ const ZernioIntegrationCard = () => {
 
   const hasKey = integration?.hasApiKey;
   const keyValid = integration?.keyStatus === 'valid';
+  const connectionLabel = channelStatus === 'connected'
+    ? 'WhatsApp conectado à Zernio'
+    : channelStatus === 'checking'
+      ? 'Verificando canal WhatsApp…'
+      : channelStatus === 'unverified'
+        ? 'Não foi possível verificar o canal'
+        : hasKey && integration?.account
+          ? 'Canal WhatsApp não encontrado na Zernio'
+          : 'WhatsApp ainda não conectado';
 
   return (
     <section className="bg-card border border-slate-700 rounded-xl p-6 shadow-lg space-y-5">
@@ -218,6 +258,20 @@ const ZernioIntegrationCard = () => {
             {keyValid ? 'Chave válida' : 'Precisa validar'}
           </span>
         )}
+      </div>
+
+      <div className={`flex items-center gap-3 rounded-xl border p-4 ${channelStatus === 'connected' ? 'border-emerald-500/30 bg-emerald-500/10' : channelStatus === 'unverified' ? 'border-amber-500/30 bg-amber-500/10' : 'border-slate-700 bg-slate-900/50'}`}>
+        {channelStatus === 'connected'
+          ? <CheckCircle2 className="shrink-0 text-emerald-400" size={22} />
+          : channelStatus === 'checking'
+            ? <Loader2 className="shrink-0 animate-spin text-slate-400" size={22} />
+            : <XCircle className="shrink-0 text-amber-400" size={22} />}
+        <div className="min-w-0">
+          <p className={`text-sm font-bold ${channelStatus === 'connected' ? 'text-emerald-300' : channelStatus === 'unverified' ? 'text-amber-300' : 'text-slate-200'}`}>{connectionLabel}</p>
+          {channelStatus === 'connected' && <p className="mt-1 truncate text-xs text-slate-300">{integration.profile?.name} · {integration.account?.name}{integration.account?.phoneNumber ? ` · ${integration.account.phoneNumber}` : ''}</p>}
+          {channelStatus === 'missing' && <p className="mt-1 text-xs text-slate-400">Selecione um canal disponível ou conclua o onboarding da Meta para conectar o número.</p>}
+          {channelStatus === 'unverified' && <p className="mt-1 text-xs text-slate-400">Use “Atualizar lista” para verificar novamente a conexão.</p>}
+        </div>
       </div>
 
       <form onSubmit={validateAndSaveKey} className="space-y-3">

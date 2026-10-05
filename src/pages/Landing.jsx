@@ -121,7 +121,7 @@ const Landing = () => {
             <TechItem label="Tailwind CSS" />
             <TechItem label="Supabase" />
             <TechItem label="Mercado Pago" />
-            <TechItem label="RyzeAPI" />
+            <TechItem label="Zernio · WhatsApp API oficial" />
           </div>
         </div>
       </section>
