@@ -15,7 +15,7 @@ CREATE TABLE public.usuarios (
   ativo boolean NOT NULL DEFAULT true,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   access_token_mercado_pago text,
-  mp_notification_url text DEFAULT 'https://stenyo-n8n.1vjhve.easypanel.host/webhook/mercado-pago-webhook'::text,
+  mp_notification_url text DEFAULT '=https://<project-ref>.supabase.co/functions/v1/payment-webhook-receiver'::text,
   CONSTRAINT usuarios_pkey PRIMARY KEY (id)
 );
 

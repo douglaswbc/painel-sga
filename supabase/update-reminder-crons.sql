@@ -1,5 +1,16 @@
 -- Re-schedule charge generation and WhatsApp reminders to honor contract times.
--- Requires sga_project_url and sga_service_role_key in Supabase Vault.
+-- Requires sga_project_url and the rotated default Secret API Key stored as
+-- sga_cron_api_key in Supabase Vault.
+do $$
+begin
+  if not exists (select 1 from vault.decrypted_secrets where name = 'sga_project_url' and nullif(decrypted_secret, '') is not null) then
+    raise exception 'Vault secret sga_project_url is missing or empty.';
+  end if;
+  if not exists (select 1 from vault.decrypted_secrets where name = 'sga_cron_api_key' and nullif(decrypted_secret, '') is not null) then
+    raise exception 'Vault secret sga_cron_api_key is missing or empty.';
+  end if;
+end;
+$$;
 select cron.unschedule(jobid)
 from cron.job
 where jobname in ('sga-faturamento-cobrancas', 'enviar-lembretes-whatsapp');
@@ -13,7 +24,7 @@ select cron.schedule(
              || '/functions/v1/faturamento-cobrancas',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
-        'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'sga_service_role_key')
+        'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'sga_cron_api_key')
       ),
       body := '{}'::jsonb
     ) as request_id;
@@ -29,7 +40,7 @@ select cron.schedule(
              || '/functions/v1/enviar-lembretes-cobranca',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
-        'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'sga_service_role_key')
+        'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'sga_cron_api_key')
       ),
       body := '{}'::jsonb
     ) as request_id;
@@ -51,7 +62,7 @@ select cron.schedule(
              || '/functions/v1/zernio-message-scheduler',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
-        'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'sga_service_role_key')
+        'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'sga_cron_api_key')
       ),
       body := '{}'::jsonb
     ) as request_id;

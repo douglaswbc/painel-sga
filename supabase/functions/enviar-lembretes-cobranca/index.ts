@@ -41,8 +41,22 @@ Deno.serve(async (req) => {
     return json({ error: 'Could not load due charges.' }, 500);
   }
   if (!charges?.length) {
-    console.log('No due reminders with active PIX.');
-    return json({ processed: 0, results: [] });
+    const { count: waitingCount, error: waitingError } = await admin.from('cobrancas')
+      .select('id', { count: 'exact', head: true })
+      .in('status', ['pendente', 'atrasado'])
+      .neq('tipo', 'despesa')
+      .gt('pix_expires_at', nowIso)
+      .gt('next_reminder_at', nowIso);
+    const { count: unscheduledCount, error: unscheduledError } = await admin.from('cobrancas')
+      .select('id', { count: 'exact', head: true })
+      .in('status', ['pendente', 'atrasado'])
+      .neq('tipo', 'despesa')
+      .gt('pix_expires_at', nowIso)
+      .is('next_reminder_at', null);
+    if (waitingError) console.error('Could not count upcoming reminders:', waitingError.message);
+    if (unscheduledError) console.error('Could not count unscheduled reminders:', unscheduledError.message);
+    console.log(`No due reminders with active PIX. Waiting for interval: ${waitingCount || 0}; missing reminder schedule: ${unscheduledCount || 0}.`);
+    return json({ processed: 0, results: [], waitingForInterval: waitingCount || 0, missingReminderSchedule: unscheduledCount || 0 });
   }
 
   const results: Result[] = [];

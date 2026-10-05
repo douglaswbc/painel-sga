@@ -1,6 +1,6 @@
-# Cron service calls authenticate inside these handlers using the service key
-# from the `apikey` header. User initiated calls are still verified by the
-# handlers before any privileged database operation.
+# Cron calls authenticate using the service-role key or the default secret API
+# key in `apikey`. User initiated billing calls validate their session
+# inside the handler before any privileged database operation.
 [functions.faturamento-cobrancas]
 verify_jwt = false
 

@@ -3,8 +3,23 @@
 -- Guarde valores reais no Vault; não coloque service_role em arquivos versionados.
 
 -- Execute uma vez, trocando os dois valores. Escolha nomes de secrets estáveis.
-select vault.create_secret('https://<PROJECT_REF>.supabase.co', 'sga_project_url');
-select vault.create_secret('<SUPABASE_SERVICE_ROLE_KEY>', 'sga_service_role_key');
+-- Use the Secret API Key named default in Settings > API Keys.
+-- Rotate any key exposed in the failed SQL/error output before using its replacement.
+-- In the Supabase Vault UI, store the rotated value as sga_cron_api_key.
+-- Do not paste the API key into SQL; the preflight below checks only the Vault name.
+select vault.create_secret('https://ykvmzelwpodjmvoujumf.supabase.co', 'sga_project_url')
+where not exists (select 1 from vault.secrets where name = 'sga_project_url');
+
+do $$
+begin
+  if not exists (select 1 from vault.decrypted_secrets where name = 'sga_project_url' and nullif(decrypted_secret, '') is not null) then
+    raise exception 'Vault secret sga_project_url is missing or empty.';
+  end if;
+  if not exists (select 1 from vault.decrypted_secrets where name = 'sga_cron_api_key' and nullif(decrypted_secret, '') is not null) then
+    raise exception 'Vault secret sga_cron_api_key is missing or empty.';
+  end if;
+end;
+$$;
 
 -- Recurring sends for Meta approved templates through Zernio.
 select cron.unschedule(jobid)
@@ -20,7 +35,7 @@ select cron.schedule(
              || '/functions/v1/zernio-message-scheduler',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
-        'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'sga_service_role_key')
+        'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'sga_cron_api_key')
       ),
       body := '{}'::jsonb
     ) as request_id;
@@ -44,7 +59,7 @@ select cron.schedule(
              || '/functions/v1/faturamento-cobrancas',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
-        'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'sga_service_role_key')
+        'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'sga_cron_api_key')
       ),
       body := '{}'::jsonb
     ) as request_id;
@@ -65,7 +80,7 @@ select cron.schedule(
              || '/functions/v1/enviar-lembretes-cobranca',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
-        'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'sga_service_role_key')
+        'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'sga_cron_api_key')
       ),
       body := '{}'::jsonb
     ) as request_id;
