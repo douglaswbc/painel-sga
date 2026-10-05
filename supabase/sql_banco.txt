@@ -1,10 +1,22 @@
--- ==========================================
--- ESTRUTURA DO BANCO DE DADOS - PAINEL SGA
--- ==========================================
--- REFERÊNCIA DE INSTALAÇÃO INICIAL, NÃO É UMA MIGRATION.
--- Em bancos existentes, aplique os arquivos versionados em supabase/migrations.
+-- =====================================================================
+-- PAINEL SGA - ESTRUTURA BASE PARA UM PROJETO SUPABASE VAZIO
+-- =====================================================================
+-- Execute uma vez somente em um banco novo, antes das migrations.
+-- Este arquivo cria o esquema base esperado pelas migrations 001-016.
+-- Depois aplique todos os arquivos de supabase/migrations em ordem numerica
+-- com `npx supabase db push`.
+-- Em bancos existentes, NAO execute este arquivo. Aplique somente migrations
+-- pendentes para evitar recriar estruturas ou alterar dados existentes.
 
--- Tabela de Usuários (Deltalhes do Usuário logado)
+-- Configuracao privada usada pelas rotinas legadas de criptografia.
+CREATE TABLE public.app_config (
+  key text PRIMARY KEY,
+  value text NOT NULL
+);
+REVOKE ALL ON TABLE public.app_config FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.app_config TO service_role;
+
+-- Tabela de Usuários (Detalhes do Usuário logado)
 CREATE TABLE public.usuarios (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   nome_completo text,
@@ -15,7 +27,9 @@ CREATE TABLE public.usuarios (
   ativo boolean NOT NULL DEFAULT true,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   access_token_mercado_pago text,
-  mp_notification_url text DEFAULT '=https://<project-ref>.supabase.co/functions/v1/payment-webhook-receiver'::text,
+  mp_notification_url text,
+  ryze_instance text, -- Removido pela migration 012.
+  ryze_token text, -- Removido pela migration 012.
   CONSTRAINT usuarios_pkey PRIMARY KEY (id)
 );
 
@@ -82,7 +96,7 @@ CREATE TABLE public.cobrancas (
   id_locatario uuid,
   id_usuario uuid NOT NULL,
   valor numeric NOT NULL,
-  data_vencimento date NOT NULL,
+  data_vencimento text NOT NULL, -- Migration 003 valida e converte para DATE.
   ciclo_cobranca date, -- Preenchido apenas em faturas recorrentes de contrato
   data_pagamento timestamp with time zone,
   status text NOT NULL DEFAULT 'pendente'::text,
@@ -226,9 +240,12 @@ CREATE INDEX IF NOT EXISTS idx_agendamentos_proximo ON public.agendamentos_mensa
 -- STORAGE E POLÍTICAS (Anexos de Mensagem)
 -- ==========================================
 
--- 1. Bucket 'mensagens-midia' no Supabase Storage. Marcar como PUBLIC no Dashboard.
+-- 1. Bucket público para arquivos de templates e mensagens enviados ao WhatsApp.
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('mensagens-midia', 'mensagens-midia', true)
+ON CONFLICT (id) DO NOTHING;
 
--- 2. Políticas de RLS para o Bucket 'mensagens-midia' na tabela storage.objects:
+-- 2. Políticas iniciais; a migration 003 restringe escrita à pasta do usuário.
 
 -- Permitir upload para usuários autenticados
 CREATE POLICY "Permitir upload total" ON storage.objects

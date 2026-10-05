@@ -1,87 +1,155 @@
-# SGA - Sistema de Gestão de Aluguel 🚀📱
+# SGA — Sistema de Gestão de Aluguel
 
-Um sistema completo e moderno para gestão de frotas, contratos de aluguel e cobrança automatizada via WhatsApp. Desenvolvido para oferecer controle financeiro total e comunicação ágil com locatários.
+Sistema web para gestão de locatários, veículos, contratos, cobranças e mensagens de WhatsApp. O frontend usa React e Vite; autenticação, banco e funções de backend usam Supabase.
 
----
+## Requisitos
 
-## 🛠️ Tecnologias Utilizadas
+- Node.js 20.19+ ou 22.12+ e npm.
+- Um projeto Supabase.
+- Acesso à API da Zernio/WhatsApp Meta para usar mensagens e lembretes.
+- Conta Mercado Pago para emitir cobranças PIX.
 
-- **Frontend**: [React 19](https://react.dev/) + [Vite](https://vitejs.dev/)
-- **Estilização**: Tailwind CSS (Design Premium / Glassmorphism)
-- **Backend / DB**: [Supabase](https://supabase.com/) (PostgreSQL, Edge Functions, Auth, Storage)
-- **Mensagens**: [Zernio](https://zernio.com/) com a API oficial do WhatsApp da Meta
-- **Pagamentos**: [Mercado Pago](https://www.mercadopago.com.br/) (PIX Automático)
-- **Ícones**: [Lucide React](https://lucide.dev/)
+## Instalação local
 
----
+1. Clone o repositório e instale as dependências:
 
-## ✨ Principais Funcionalidades
-
-### 📋 Gestão de Cadastros
-- **Locatários**: Cadastro completo com integração ViaCEP e validação de documentos.
-- **Veículos**: Controle de frota com status de atividade.
-- **Contratos**: Configuração de cobrança com recorrência semanal/diária ajustável.
-
-### 💰 Financeiro & Cobrança
-- **Faturamento Diário**: Processamento automático de contratos via Cron Jobs.
-- **PIX Automático**: Geração de QR Code e Copia-e-Cola integrado ao Mercado Pago.
-- **Fluxo de Caixa**: Visão agrupada por locatário com status de pagamento em tempo real.
-
-### 💬 Comunicação Inteligente
-- **Régua de Cobrança**: Envio por templates Meta aprovados, usando a integração Zernio individual de cada locador.
-- **Templates Meta**: Criação e acompanhamento da aprovação, envio manual e agendamentos pela rota `/mensagens`.
-- **Conexão WhatsApp**: Cada locador informa sua própria chave de API Zernio, seleciona o canal WhatsApp e conclui o onboarding Meta em Configurações.
-- **Portal do Locatário**: Link exclusivo para o cliente acompanhar faturas e realizar pagamentos.
-
----
-
-## 🚀 Como Executar o Projeto
-
-### Pré-requisitos
-- Node.js (v18+)
-- Conta no Supabase
-- Conta Zernio com acesso à API do WhatsApp da Meta
-
-### Passo a Passo
-1. **Clonar o repositório**
    ```bash
-   git clone [link-do-repositorio]
+   git clone <URL_DO_REPOSITORIO>
    cd painel-sga
+   npm ci
    ```
 
-2. **Instalar dependências**
+2. No Supabase, crie um projeto. Em **Project Settings → API Keys**, copie a URL do projeto e uma chave publicável (`sb_publishable_...`) ou a chave legada `anon`.
+
+3. Crie `.env` na raiz a partir do exemplo e preencha os dois valores:
+
    ```bash
-   npm install
+   cp .env.example .env
    ```
 
-3. **Configurar Variáveis de Ambiente**
-   Crie um arquivo `.env` na raiz do projeto com as seguintes chaves:
+   No PowerShell, use `Copy-Item .env.example .env`.
+
    ```env
-   VITE_SUPABASE_URL=seu_url_do_supabase
-   VITE_SUPABASE_ANON_KEY=sua_chave_anon
+   VITE_SUPABASE_URL=https://<PROJECT_REF>.supabase.co
+   VITE_SUPABASE_ANON_KEY=<PUBLISHABLE_KEY_OU_ANON>
    ```
 
-4. **Banco de Dados, secrets e crons**
-   - Aplique as migrations `001`–`011` em ordem. Aplique a `012` somente depois de confirmar os fluxos Zernio em produção.
-   - Configure `ZERNIO_ENCRYPTION_KEY`, `ZERNIO_REDIRECT_BASE_URL` e `MP_WEBHOOK_URL` como secrets das Edge Functions no Supabase. Gere uma chave hexadecimal de 32 bytes para `ZERNIO_ENCRYPTION_KEY`.
-   - Configure os crons seguindo `supabase/cron-example.txt`.
-   - Cada locador cadastra sua chave Zernio na própria conta; essa chave fica cifrada no banco e não deve ser adicionada ao `.env` do Vite.
+4. Prepare o banco seguindo a seção **Banco de dados**.
 
-5. **Rodar em Desenvolvimento**
+5. Inicie o frontend:
+
    ```bash
    npm run dev
    ```
 
----
+   Para gerar a versão de produção, use `npm run build`; `npm run preview` abre o build localmente.
 
-## 📁 Estrutura de Pastas Úteis
+## Banco de dados
 
-- `/src/pages`: Telas principais do sistema (Locatários, Cobranças, Mensagens).
-- `/src/components`: Componentes reutilizáveis (Modais, Seletores).
-- `/supabase/functions`: Lógica de backend (Faturamento, WhatsApp, Webhooks).
-- `/src/services/supabase.js`: Configuração do cliente Supabase.
+### Projeto Supabase novo
 
----
+1. Abra o **SQL Editor** do projeto vazio e execute `supabase/sql_banco.txt` uma única vez. Esse arquivo cria a estrutura base; ele não substitui as migrations.
+2. Instale as migrations versionadas em ordem, usando o Supabase CLI incluído nas dependências:
 
-## 📄 Licença
-Este projeto foi desenvolvido para uso exclusivo pela **Emove Entregas**. Todos os direitos reservados.
+   ```bash
+   npx supabase login
+   npx supabase link --project-ref <PROJECT_REF>
+   npx supabase db push
+   ```
+
+   A lista atual vai de `001_encrypt.sql` até `016_dashboard_summary.sql`. `db push` registra e aplica as migrations pendentes. Revise qualquer erro de preflight antes de continuar.
+3. Em **Storage**, confirme o bucket público `mensagens-midia`. O SQL base define as políticas de upload e leitura; os arquivos enviados ficam no caminho `<id-do-usuario>/<arquivo>`.
+
+### Banco já existente
+
+Não execute `sql_banco.txt`: ele é apenas para um projeto vazio. Confira o histórico e aplique apenas migrations pendentes:
+
+```bash
+npx supabase login
+npx supabase link --project-ref <PROJECT_REF>
+npx supabase migration list
+npx supabase db push --dry-run
+npx supabase db push
+```
+
+As migrations 003 e outras fazem validações de dados existentes e podem parar se encontrarem relações entre locadores ou datas inválidas. Corrija os registros apontados antes de tentar novamente. Não marque uma migration como aplicada sem confirmar que o SQL correspondente já foi executado.
+
+Se migrations já foram executadas manualmente no SQL Editor, confira a diferença entre o esquema e `supabase_migrations.schema_migrations` antes de usar `db push`. Reconcilie o histórico com o Supabase CLI somente depois de confirmar quais arquivos foram realmente executados.
+
+### Primeiro administrador
+
+O app não tem cadastro público. Crie o primeiro usuário pelo Supabase Auth; depois, no SQL Editor, atribua o papel de administrador a esse e-mail:
+
+```sql
+update public.usuarios
+set role = 'admin'
+where email = 'admin@exemplo.com';
+```
+
+Depois entre pelo app e crie os demais usuários pela administração. A migration 003 faz usuários novos começarem com o papel seguro `locador`.
+
+## Edge Functions e integrações
+
+As Edge Functions recebem `SUPABASE_URL`, `SUPABASE_ANON_KEY` e `SUPABASE_SERVICE_ROLE_KEY` automaticamente do Supabase. Configure os secrets próprios da aplicação no Dashboard ou pela CLI; nunca coloque chaves secretas em variáveis `VITE_*`.
+
+1. Gere uma chave de criptografia Zernio com 32 bytes aleatórios (64 caracteres hexadecimais):
+
+   ```bash
+   node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+   ```
+
+   Guarde a chave gerada. Não a troque depois de salvar integrações Zernio, pois os dados cifrados com a chave antiga deixam de ser decifrados.
+
+2. Crie `supabase/functions/.env` a partir de `supabase/functions/.env.example`, preencha os valores e envie os secrets:
+
+   ```bash
+   cp supabase/functions/.env.example supabase/functions/.env
+   npx supabase secrets set --env-file supabase/functions/.env --project-ref <PROJECT_REF>
+   ```
+
+   Configure `ZERNIO_ENCRYPTION_KEY`, `ZERNIO_REDIRECT_BASE_URL` (URL HTTPS pública do app) e `MP_WEBHOOK_URL` (`https://<PROJECT_REF>.supabase.co/functions/v1/payment-webhook-receiver`). O arquivo local com os valores reais está ignorado pelo Git.
+
+3. Publique as funções:
+
+   ```bash
+   npx supabase functions deploy --use-api --project-ref <PROJECT_REF>
+   ```
+
+4. Cada locador conecta sua própria conta Zernio e conclui o onboarding Meta na tela **Configurações**. Os templates usados na régua precisam estar aprovados pela Meta.
+
+### Mercado Pago
+
+O app chama as RPCs `create_user_mp_secret` e `get_user_mp_token` para salvar e recuperar o token privado de cada locador. Essas RPCs não estão definidas nas migrations deste repositório. Antes de usar Mercado Pago em uma instalação nova, provisionar e revisar essas funções no banco; não copie definições de um projeto sem conferir como o token e a chave de criptografia estão armazenados.
+
+## Crons de faturamento e mensagens
+
+Habilite `pg_cron`, `pg_net` e Vault no projeto. No **Database → Vault → Secrets**, crie:
+
+- `sga_project_url`: `https://<PROJECT_REF>.supabase.co`.
+- `sga_cron_api_key`: valor ativo da Secret API Key `default` (`sb_secret_...`). A função aceita essa chave apenas no cabeçalho `apikey`; não use uma chave publicável.
+
+A chave Secret API Key `default` é diferente de uma senha de Edge Function. Não a grave no SQL versionado nem em `.env` do frontend. Depois, edite o project ref em `supabase/cron-example.txt` e execute o arquivo no SQL Editor para criar os três jobs, que rodam a cada cinco minutos. Em um projeto já configurado, `supabase/update-reminder-crons.sql` atualiza faturamento, lembretes PIX e agendamentos Meta. Confira os jobs com:
+
+```sql
+select jobid, jobname, schedule, active from cron.job order by jobname;
+```
+
+A emissão e os lembretes automáticos dependem também das credenciais Mercado Pago e da configuração Zernio de cada locador.
+
+## Comandos úteis
+
+```bash
+npm run dev       # desenvolvimento
+npm run build     # build de produção
+npm run lint      # ESLint
+npm run preview   # servir o build localmente
+```
+
+## Estrutura relevante
+
+- `src/pages` e `src/components`: telas e interface.
+- `src/services`: acesso ao Supabase.
+- `supabase/functions`: Edge Functions.
+- `supabase/migrations`: alterações versionadas do banco.
+- `supabase/sql_banco.txt`: estrutura base para banco vazio.
+- `supabase/cron-example.txt`: configuração inicial dos crons.

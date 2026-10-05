@@ -2,12 +2,12 @@
 -- Habilite pg_cron, pg_net e Vault no Supabase antes de configurar o job.
 -- Guarde valores reais no Vault; não coloque service_role em arquivos versionados.
 
--- Execute uma vez, trocando os dois valores. Escolha nomes de secrets estáveis.
--- Use the Secret API Key named default in Settings > API Keys.
--- Rotate any key exposed in the failed SQL/error output before using its replacement.
--- In the Supabase Vault UI, store the rotated value as sga_cron_api_key.
--- Do not paste the API key into SQL; the preflight below checks only the Vault name.
-select vault.create_secret('https://ykvmzelwpodjmvoujumf.supabase.co', 'sga_project_url')
+-- Antes de executar, substitua <PROJECT_REF> pela referência do seu projeto Supabase.
+-- Use a Secret API Key chamada default em Settings > API Keys.
+-- Se uma chave apareceu em mensagens de erro, rotacione-a antes de usar o novo valor.
+-- No Vault, salve o valor atual como sga_cron_api_key.
+-- Nao cole a chave no SQL; o preflight verifica apenas o nome do segredo.
+select vault.create_secret('https://<PROJECT_REF>.supabase.co', 'sga_project_url')
 where not exists (select 1 from vault.secrets where name = 'sga_project_url');
 
 do $$
