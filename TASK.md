@@ -205,11 +205,11 @@ Concluir o fluxo de análise de candidatos e reserva de vaga, com status consist
 - [x] Criar a migration `020_candidate_reservation_pix.sql` com os campos `email` e `reserva_idempotency_key`.
 - [x] Confirmar que o secret `MP_WEBHOOK_URL` está cadastrado no projeto Supabase.
 - [x] Aplicar e registrar a migration 020 e publicar `create-reservation-pix` no Supabase.
-- [ ] Publicar as alterações do frontend que solicitam o e-mail e o enviam junto com o pedido de PIX.
+- [x] Publicar as alterações do frontend que solicitam o e-mail e o enviam junto com o pedido de PIX.
 
 **Critério de conclusão:** um candidato pré-aprovado recebe uma cobrança PIX única, vinculada ao próprio registro e ao locador correto.
 
-**Progresso:** migration 020 aplicada e registrada; `create-reservation-pix` publicada. Confirmei remotamente as colunas `email` e `reserva_idempotency_key`. O frontend atualizado em `candidatosService` e `/triagem` ainda está local, então precisa ser publicado para enviar o e-mail solicitado pela nova função. O secret `MP_WEBHOOK_URL` está cadastrado. PIX expirado fica bloqueado até a etapa de reconciliação, para evitar gerar cobrança duplicada enquanto o webhook do pagamento anterior pode estar pendente.
+**Progresso:** migration 020 aplicada e registrada; `create-reservation-pix` publicada. Confirmei remotamente as colunas `email` e `reserva_idempotency_key`. O frontend atualizado em `candidatosService` e `/triagem` foi publicado no Cloudflare Pages. O secret `MP_WEBHOOK_URL` está cadastrado. PIX expirado fica bloqueado até a etapa de reconciliação, para evitar gerar cobrança duplicada enquanto o webhook do pagamento anterior pode estar pendente.
 
 ### Etapa 3 — Unificar a confirmação de pagamento
 
@@ -254,12 +254,12 @@ Concluir o fluxo de análise de candidatos e reserva de vaga, com status consist
 
 - [x] Conferir remotamente o RLS: `candidatos` usa política `ALL` limitada a `id_usuario = auth.uid()`; histórico de pagamentos e auditoria permite leitura somente ao proprietário; RLS está ativo nas três tabelas.
 - [x] Documentar os secrets e a configuração do webhook necessários para a Edge Function de reserva; o secret `MP_WEBHOOK_URL` está configurado e o endpoint esperado consta em `.env.example`, `supabase/secrets.txt` e README.
-- [ ] Fazer validação manual do fluxo: aprovação, geração e reabertura do PIX, pagamento aprovado, repetição do webhook, expiração e confirmação manual. Pendente publicar o frontend e dispor de sandbox/teste Mercado Pago; nenhuma cobrança real foi criada.
+- [ ] Fazer validação manual do fluxo: aprovação, geração e reabertura do PIX, pagamento aprovado, repetição do webhook, expiração e confirmação manual. O frontend já foi publicado; a validação de pagamento segue pendente por falta de sandbox/teste Mercado Pago. Nenhuma cobrança real foi criada.
 - [x] Atualizar este plano com o estado real de implantação das migrations, Edge Functions e frontend.
 
 **Critério de conclusão:** o fluxo pode ser acompanhado de ponta a ponta e cada implantação pendente está registrada sem confundir código local com produção.
 
-**Estado verificado em 06/10/2026:** migrations 019–022 aplicadas e registradas; `create-reservation-pix` ativa com JWT obrigatório e `payment-webhook-receiver` ativa sem JWT obrigatório. RLS e presença do secret `MP_WEBHOOK_URL` foram conferidos remotamente sem consultar dados pessoais ou revelar valores secretos. O provedor do frontend foi identificado como Cloudflare Pages, mas não há token/ID de conta Cloudflare no ambiente nem projeto Pages identificado no repositório, então a publicação ainda está pendente. O frontend das etapas 3–5 continua local: build e lint direcionado aos arquivos da triagem passam. O lint global ainda aponta erros preexistentes em arquivos fora da triagem e avisos de globais Deno nas Edge Functions. A validação ponta a ponta também segue pendente porque não há sandbox Mercado Pago; não executar teste que possa gerar uma cobrança real.
+**Estado verificado em 06/10/2026:** migrations 019–024 aplicadas e registradas; `create-reservation-pix` ativa com JWT obrigatório e `payment-webhook-receiver` ativa sem JWT obrigatório. RLS e presença do secret `MP_WEBHOOK_URL` foram conferidos remotamente sem consultar dados pessoais ou revelar valores secretos. O frontend foi publicado no Cloudflare Pages (conforme informado pelo responsável); build e lint direcionado aos arquivos da triagem passam. O lint global ainda aponta erros preexistentes em arquivos fora da triagem e avisos de globais Deno nas Edge Functions. A validação ponta a ponta também segue pendente porque não há sandbox Mercado Pago; não executar teste que possa gerar uma cobrança real.
 
 ## Inscrição pública de candidatos vinculada à rota `/triagem`
 
@@ -278,9 +278,10 @@ O locador gera e compartilha um link individual pela rota `/triagem`. O candidat
 - [x] Mostrar na ficha do candidato a origem e a versão/data do aviso de privacidade aceito.
 - [x] Aplicar e registrar a migration `023_public_candidate_applications.sql` no Supabase.
 - [x] Publicar as Edge Functions `candidate-application-link` (`verify_jwt = true`) e `submit-candidate-application` (`verify_jwt = false`).
-- [ ] Publicar o frontend no Cloudflare Pages e testar link válido, expirado/desativado, CPF duplicado, limite diário e isolamento entre dois locadores.
+- [x] Publicar o frontend no Cloudflare Pages.
+- [ ] Testar link válido, expirado/desativado, CPF duplicado, limite diário e isolamento entre dois locadores.
 
-**Estado em 06/10/2026:** migration 023 executada e registrada no projeto `cobranca_car`; confirmei remotamente a tabela de links, RLS ativo e RPC de limite diário. As duas Edge Functions estão ativas com as opções JWT esperadas; `candidate-application-link` foi atualizada para retornar o estado e a expiração do link ao painel. O frontend continua local e ainda precisa ser publicado no Cloudflare Pages; validar então a geração/envio com links válidos, expirados/desativados, CPF duplicado, limite diário e isolamento entre locadores. O formulário pede campos do fluxo existente de candidatos, apresenta aviso de privacidade e não oferece consulta pública de status. O limite de 50 inscrições por link/dia e o campo honeypot são controles básicos contra abuso; acompanhar envios e erros após a publicação.
+**Estado em 06/10/2026:** migration 023 executada e registrada no projeto `cobranca_car`; confirmei remotamente a tabela de links, RLS ativo e RPC de limite diário. As duas Edge Functions estão ativas com as opções JWT esperadas; `candidate-application-link` foi atualizada para retornar o estado e a expiração do link ao painel. O frontend foi publicado no Cloudflare Pages (conforme informado pelo responsável); validar a geração/envio com links válidos, expirados/desativados, CPF duplicado, limite diário e isolamento entre locadores. O formulário pede campos do fluxo existente de candidatos, apresenta aviso de privacidade e não oferece consulta pública de status. O limite de 50 inscrições por link/dia e o campo honeypot são controles básicos contra abuso; acompanhar envios e erros após a publicação.
 
 ## Taxa de reserva variável
 
@@ -290,6 +291,7 @@ O locador gera e compartilha um link individual pela rota `/triagem`. O candidat
 - [x] Exibir o valor escolhido no modal do PIX, ao reabrir o pagamento e na ficha do candidato; preservar o valor real nas tentativas reconciliadas.
 - [x] Criar a migration `024_candidate_reservation_amount.sql` e alinhar o esquema base.
 - [x] Aplicar e registrar a migration 024; publicar a Edge Function `create-reservation-pix` atualizada.
-- [ ] Publicar o frontend e validar valores com centavos, valor padrão, limites e reabertura de uma tentativa existente sem criar nova cobrança.
+- [x] Publicar o frontend no Cloudflare Pages.
+- [ ] Validar valores com centavos, valor padrão, limites e reabertura de uma tentativa existente sem criar nova cobrança.
 
-**Estado:** migration 024 aplicada e registrada no Supabase; coluna `candidatos.reserva_valor` e validação de faixa confirmadas remotamente. `create-reservation-pix` está ativa na versão 3, com JWT obrigatório. Frontend segue local, pendente de publicação no Cloudflare Pages; nenhuma cobrança real foi criada durante a implementação.
+**Estado:** migration 024 aplicada e registrada no Supabase; coluna `candidatos.reserva_valor` e validação de faixa confirmadas remotamente. `create-reservation-pix` está ativa na versão 3, com JWT obrigatório. Frontend publicado no Cloudflare Pages (conforme informado pelo responsável). A validação manual continua pendente; nenhuma cobrança real foi criada durante a implementação.
