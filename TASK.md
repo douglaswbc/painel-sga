@@ -168,3 +168,95 @@ Para apagar uma função já implantada, use `supabase functions delete <nome> -
 5. Implementar templates e envio de mensagens.
 6. Migrar os demais fluxos WhatsApp e retirar Evolution/RyzeAPI.
 7. Validar ponta a ponta e concluir a implantação.
+
+## Plano de trabalho: rota `/triagem`
+
+### Objetivo
+
+Concluir o fluxo de análise de candidatos e reserva de vaga, com status consistentes entre a interface, o Mercado Pago e o webhook, além de controles claros para a operação diária.
+
+### Etapa 1 — Alinhar o fluxo e os status
+
+- [x] Conferir os status existentes em produção e identificar registros que usam nomes diferentes para a mesma etapa.
+- [x] Definir os status canônicos: `Em análise`, `Pré-aprovado`, `Aguardando reserva`, `Vaga reservada` e `Reprovado`.
+- [x] Mapear na interface estados legados como `Aguardando Processamento` e `Reserva Confirmada` para os nomes canônicos sem alterar registros históricos.
+- [x] Restringir as ações disponíveis conforme o status atual e impedir que uma ação comum sobrescreva uma reserva já confirmada.
+- [x] Definir o fluxo provisório de confirmação: somente o webhook confirma automaticamente; a ação manual fica desabilitada até haver registro de operador, data e motivo na etapa 3.
+
+**Critério de conclusão:** a interface e o backend usam os mesmos status, e cada candidato só pode avançar por transições válidas.
+
+**Progresso:** produção tinha um candidato com status `Aguardando Reserva` e default `Aguardando Processamento`; nenhum registro foi alterado. A migration 019 foi aplicada e registrada, e o novo default remoto `Em análise` foi confirmado. A Edge Function `payment-webhook-receiver` foi publicada com a gravação do status canônico. As mudanças de interface permanecem locais.
+
+- [x] Criar a migration `019_triagem_canonical_status_default.sql` para que novos candidatos usem `Em análise`, sem alterar registros existentes.
+- [x] Aplicar e registrar a migration 019 no Supabase depois de conferir os status existentes no ambiente de produção.
+
+**Atenção para operações futuras:** o responsável confirmou que as migrations 001–016 já foram publicadas. Mesmo assim, `supabase migration list` não as reconhece no histórico remoto e mostra também a versão `20260325222643` sem arquivo local. A migration 019 foi aplicada isoladamente; reconciliar o histórico antes do próximo `db push`, pois o CLI pode tentar aplicar migrations antigas.
+
+### Etapa 2 — Implementar a criação da reserva PIX
+
+- [x] Criar localmente a Edge Function `create-reservation-pix`, chamada pelo frontend.
+- [x] Exigir sessão autenticada e confirmar que o candidato pertence ao locador autenticado antes de gerar a cobrança.
+- [x] Obter a credencial do Mercado Pago no backend usando `get_user_mp_token`; nunca enviar o token ao navegador.
+- [x] Criar a cobrança com chave de idempotência persistida no candidato para proteger repetições, concorrência e timeout.
+- [x] Persistir no candidato o identificador do pagamento, os dados PIX, o vencimento e os status de reserva e pagamento.
+- [x] Retornar ao frontend os campos esperados pelo modal: QR Code e código copia e cola.
+- [x] Tratar PIX pendente existente, pagamento já confirmado, PIX expirado, credencial/webhook ausente e falha parcial.
+- [x] Capturar o e-mail do candidato antes da cobrança; a API PIX exige e-mail e o schema de produção não tinha esse campo.
+- [x] Criar a migration `020_candidate_reservation_pix.sql` com os campos `email` e `reserva_idempotency_key`.
+- [x] Confirmar que o secret `MP_WEBHOOK_URL` está cadastrado no projeto Supabase.
+- [x] Aplicar e registrar a migration 020 e publicar `create-reservation-pix` no Supabase.
+- [ ] Publicar as alterações do frontend que solicitam o e-mail e o enviam junto com o pedido de PIX.
+
+**Critério de conclusão:** um candidato pré-aprovado recebe uma cobrança PIX única, vinculada ao próprio registro e ao locador correto.
+
+**Progresso:** migration 020 aplicada e registrada; `create-reservation-pix` publicada. Confirmei remotamente as colunas `email` e `reserva_idempotency_key`. O frontend atualizado em `candidatosService` e `/triagem` ainda está local, então precisa ser publicado para enviar o e-mail solicitado pela nova função. O secret `MP_WEBHOOK_URL` está cadastrado. PIX expirado fica bloqueado até a etapa de reconciliação, para evitar gerar cobrança duplicada enquanto o webhook do pagamento anterior pode estar pendente.
+
+### Etapa 3 — Unificar a confirmação de pagamento
+
+- [x] Ajustar `payment-webhook-receiver` para reconhecer a cobrança de reserva e atualizar `pagamento_status`, `status`, `reserva_confirmada_em` e `updated_at` de forma consistente.
+- [x] Tornar o processamento repetido do webhook idempotente, sem duplicar notificações ou reverter o estado da reserva.
+- [x] Definir como tratar pagamentos recusados, cancelados, expirados, devolvidos e contestados; falhas terminais liberam nova tentativa, devoluções liberam a vaga e disputas mantêm a reserva sinalizada.
+- [x] Implementar confirmação manual autenticada, limitada ao proprietário do candidato, com motivo obrigatório e trilha de auditoria; pagamentos PIX ainda ativos bloqueiam a ação.
+- [x] Atualizar a lista da triagem a cada 15 segundos enquanto a tela está visível e após confirmação manual.
+- [x] Criar a migration `021_candidate_reservation_reconciliation.sql` com histórico de tentativas PIX, auditoria e RPC transacional para confirmação manual.
+
+**Critério de conclusão:** o status exibido na triagem representa o estado real da cobrança e da vaga, inclusive após notificações repetidas ou fora de ordem.
+
+**Progresso:** migration 021 aplicada e registrada no Supabase; `payment-webhook-receiver` e `create-reservation-pix` publicados. O histórico remoto confirma a versão 021, e as duas funções constam como ativas (`payment-webhook-receiver` sem JWT obrigatório; `create-reservation-pix` com JWT obrigatório). A configuração local registra essas opções. O frontend permanece local e precisa ser publicado antes da validação ponta a ponta. A migration faz backfill das cobranças PIX já associadas aos candidatos para que notificações atrasadas continuem identificáveis. Ainda falta validar em produção os cenários listados na etapa 6.
+
+### Etapa 4 — Completar estados e ações da tela
+
+- [x] Exibir estados distintos de carregamento, erro com opção de tentar novamente e fila vazia.
+- [x] Adicionar atualização manual da lista e impedir ações duplicadas enquanto uma operação está em andamento.
+- [x] Mostrar mensagens claras quando a criação do PIX falhar ou quando já existir uma cobrança ativa.
+- [x] Permitir abrir novamente os dados PIX de uma reserva pendente, desde que a cobrança ainda esteja válida.
+- [x] Exibir pontuação ausente de forma clara, sem apresentar `null` ou `undefined`.
+- [x] Mostrar confirmação antes de reprovar um candidato ou confirmar uma reserva manualmente.
+
+**Critério de conclusão:** cada ação informa seu resultado, mantém a lista sincronizada e oferece recuperação clara para erros comuns.
+
+**Progresso:** implementação local concluída e validada com `npm.cmd run build`. A interface oferece carregamento, erro recuperável, fila vazia, atualização manual e periódica, reabertura do PIX válido e mensagens específicas retornadas pela Edge Function. O frontend ainda precisa ser publicado para que essas mudanças cheguem à produção.
+
+### Etapa 5 — Busca, filtros e ficha do candidato
+
+- [x] Adicionar busca por nome e telefone e filtros por status.
+- [x] Permitir ordenar por pontuação e data de entrada na fila.
+- [x] Criar uma ficha do candidato com respostas disponíveis no formulário, pontuações, status, dados da reserva, tentativas PIX e histórico de alterações.
+- [x] Mascarar o CPF na lista e mostrar o dado completo somente na ficha, sob a RLS do proprietário autenticado.
+- [x] Incluir paginação na lista de resultados, com 20 candidatos por página.
+- [x] Criar a migration `022_candidate_status_audit.sql` para registrar mudanças de status e pagamento a partir de sua publicação, preservando o motivo da confirmação manual.
+
+**Critério de conclusão:** operadores conseguem localizar candidatos, entender decisões e acompanhar o histórico sem expor dados pessoais na lista geral.
+
+**Progresso:** migration 022 aplicada e registrada no Supabase; ela passa a auditar transições de status e pagamento. O frontend da ficha ainda está local e precisa ser publicado para exibir busca, filtros, paginação e histórico. Confirmações manuais anteriores permanecem no histórico; alterações antigas sem auditoria não podem ser reconstruídas.
+
+### Etapa 6 — Fechar a entrega operacional
+
+- [x] Conferir remotamente o RLS: `candidatos` usa política `ALL` limitada a `id_usuario = auth.uid()`; histórico de pagamentos e auditoria permite leitura somente ao proprietário; RLS está ativo nas três tabelas.
+- [x] Documentar os secrets e a configuração do webhook necessários para a Edge Function de reserva; o secret `MP_WEBHOOK_URL` está configurado e o endpoint esperado consta em `.env.example`, `supabase/secrets.txt` e README.
+- [ ] Fazer validação manual do fluxo: aprovação, geração e reabertura do PIX, pagamento aprovado, repetição do webhook, expiração e confirmação manual. Pendente publicar o frontend e dispor de sandbox/teste Mercado Pago; nenhuma cobrança real foi criada.
+- [x] Atualizar este plano com o estado real de implantação das migrations, Edge Functions e frontend.
+
+**Critério de conclusão:** o fluxo pode ser acompanhado de ponta a ponta e cada implantação pendente está registrada sem confundir código local com produção.
+
+**Estado verificado em 06/10/2026:** migrations 019–022 aplicadas e registradas; `create-reservation-pix` ativa com JWT obrigatório e `payment-webhook-receiver` ativa sem JWT obrigatório. RLS e presença do secret `MP_WEBHOOK_URL` foram conferidos remotamente sem consultar dados pessoais ou revelar valores secretos. O provedor do frontend foi identificado como Cloudflare Pages, mas não há token/ID de conta Cloudflare no ambiente nem projeto Pages identificado no repositório, então a publicação ainda está pendente. O frontend das etapas 3–5 continua local: build e lint direcionado aos arquivos da triagem passam. O lint global ainda aponta erros preexistentes em arquivos fora da triagem e avisos de globais Deno nas Edge Functions. A validação ponta a ponta também segue pendente porque não há sandbox Mercado Pago; não executar teste que possa gerar uma cobrança real.

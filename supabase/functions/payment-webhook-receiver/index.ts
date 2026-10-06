@@ -151,8 +151,13 @@ serve(async (req) => {
     const { data: charge } = await admin.from('cobrancas')
       .select('*,contratos(usuarios(*),locatarios(*))')
       .eq('mercado_pago_id', String(paymentId)).maybeSingle()
+    const { data: reservationAttempt } = !charge
+      ? await admin.from('candidato_reserva_pagamentos').select('*').eq('mercado_pago_id', String(paymentId)).maybeSingle()
+      : { data: null }
     const { data: candidate } = !charge
-      ? await admin.from('candidatos').select('*,usuarios(*)').eq('pagamento_id', String(paymentId)).maybeSingle()
+      ? await admin.from('candidatos').select('*,usuarios(*)')
+        .eq(reservationAttempt ? 'id' : 'pagamento_id', reservationAttempt ? reservationAttempt.id_candidato : String(paymentId))
+        .maybeSingle()
       : { data: null }
     if (!charge && !candidate) return json({ error: `Pagamento ${paymentId} não localizado no sistema` }, 404)
 
@@ -168,17 +173,95 @@ serve(async (req) => {
     const mpPayment = await mpResponse.json()
     if (!mpResponse.ok) throw new Error(`Mercado Pago retornou HTTP ${mpResponse.status}`)
 
-    if (mpPayment.status === 'approved') {
+    if (candidate) {
+      const paymentStatus = String(mpPayment.status ?? '').toLowerCase()
+      const detail = String(mpPayment.status_detail ?? '').toLowerCase()
+      const statusMap: Record<string, string> = {
+        approved: 'Confirmado',
+        pending: 'Pendente',
+        in_process: 'Processando',
+        authorized: 'Autorizado',
+        rejected: 'Rejeitado',
+        cancelled: detail.includes('expired') ? 'Expirado' : 'Cancelado',
+        refunded: 'Reembolsado',
+        charged_back: 'Contestado',
+        in_mediation: 'Em disputa',
+      }
+      const candidatePaymentStatus = statusMap[paymentStatus]
+      if (!candidatePaymentStatus) return json({ success: true, ignored: true, paymentStatus })
+
+      const { error: attemptUpdateError } = await admin.from('candidato_reserva_pagamentos').upsert({
+        id_candidato: candidate.id,
+        id_usuario: owner.id,
+        mercado_pago_id: String(paymentId),
+        status: candidatePaymentStatus,
+        status_detalhe: mpPayment.status_detail ?? null,
+        valor: Number(mpPayment.transaction_amount ?? reservationAttempt?.valor ?? 0),
+        expira_em: mpPayment.date_of_expiration ?? reservationAttempt?.expira_em ?? null,
+        atualizado_em: new Date().toISOString(),
+      }, { onConflict: 'mercado_pago_id' })
+      if (attemptUpdateError) throw new Error('Não foi possível registrar o estado do pagamento da reserva.')
+
+      const currentPayment = String(candidate.pagamento_id ?? '') === String(paymentId)
+      const currentCandidateStatus = String(candidate.status ?? '').trim().toLocaleLowerCase('pt-BR')
+      const manuallyConfirmed = String(candidate.pagamento_status ?? '').trim().toLocaleLowerCase('pt-BR') === 'confirmado manualmente'
+      const alreadyConfirmed = String(candidate.pagamento_status ?? '').trim().toLocaleLowerCase('pt-BR') === 'confirmado'
+        && ['vaga reservada', 'reserva confirmada'].includes(currentCandidateStatus)
+      let candidateUpdate: Record<string, unknown> | null = null
+      if (paymentStatus === 'approved') {
+        if (!alreadyConfirmed) {
+          candidateUpdate = {
+            status: 'Vaga reservada',
+            pagamento_status: 'Confirmado',
+            reserva_confirmada_em: mpPayment.date_approved ?? new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }
+        }
+      } else if (currentPayment && paymentStatus === 'refunded' && !manuallyConfirmed) {
+        candidateUpdate = {
+          status: 'Pré-aprovado', pagamento_status: candidatePaymentStatus,
+          pagamento_id: null, pix_qr_code: null, pix_copia_e_cola: null, pix_url: null,
+          reserva_expira_em: null, reserva_idempotency_key: null, reserva_confirmada_em: null,
+          updated_at: new Date().toISOString(),
+        }
+      } else if (currentPayment && !manuallyConfirmed && !['vaga reservada', 'reserva confirmada'].includes(currentCandidateStatus)) {
+        if (['rejected', 'cancelled'].includes(paymentStatus)) {
+          candidateUpdate = {
+            status: 'Pré-aprovado', pagamento_status: candidatePaymentStatus,
+            pagamento_id: null, pix_qr_code: null, pix_copia_e_cola: null, pix_url: null,
+            reserva_expira_em: null, reserva_idempotency_key: null, reserva_confirmada_em: null,
+            updated_at: new Date().toISOString(),
+          }
+        } else {
+          candidateUpdate = {
+            status: 'Aguardando reserva', pagamento_status: candidatePaymentStatus,
+            updated_at: new Date().toISOString(),
+          }
+        }
+      } else if (currentPayment && ['charged_back', 'in_mediation'].includes(paymentStatus)) {
+        candidateUpdate = { pagamento_status: candidatePaymentStatus, updated_at: new Date().toISOString() }
+      }
+
+      if (candidateUpdate) {
+        let updateQuery = admin.from('candidatos').update(candidateUpdate).eq('id', candidate.id)
+        if (paymentStatus !== 'approved') updateQuery = updateQuery.eq('pagamento_id', String(paymentId))
+        const { data: updatedCandidate, error: candidateUpdateError } = await updateQuery.select('id').maybeSingle()
+        if (candidateUpdateError) throw new Error('Não foi possível atualizar o estado da reserva.')
+        if (updatedCandidate && paymentStatus === 'approved') {
+          await sendPaymentConfirmation(admin, owner.id, String(paymentId), candidate, Number(mpPayment.transaction_amount ?? 0), String(candidateUpdate.reserva_confirmada_em), 'id_candidato', candidate.id)
+        }
+      }
+    } else if (mpPayment.status === 'approved') {
       if (charge && charge.status !== 'pago') {
         const paidAt = new Date().toISOString()
         const { data: updated } = await admin.from('cobrancas').update({ status: 'pago', data_pagamento: paidAt, next_reminder_at: null })
           .eq('id', charge.id).neq('status', 'pago').select('id').maybeSingle()
         if (updated) await sendPaymentConfirmation(admin, owner.id, String(paymentId), charge.contratos?.locatarios, Number(charge.valor), paidAt, 'id_cobranca', charge.id)
-      } else if (candidate && candidate.status !== 'Vaga Reservada') {
+      } else if (candidate && !['vaga reservada', 'reserva confirmada'].includes(String(candidate.status ?? '').trim().toLocaleLowerCase('pt-BR'))) {
         const paidAt = new Date().toISOString()
         const { data: updatedCandidate } = await admin.from('candidatos').update({
-          status: 'Vaga Reservada', pagamento_status: 'Confirmado', reserva_confirmada_em: paidAt,
-        }).eq('id', candidate.id).neq('status', 'Vaga Reservada').select('id').maybeSingle()
+          status: 'Vaga reservada', pagamento_status: 'Confirmado', reserva_confirmada_em: paidAt,
+        }).eq('id', candidate.id).eq('status', candidate.status).select('id').maybeSingle()
         if (updatedCandidate) await sendPaymentConfirmation(admin, owner.id, String(paymentId), candidate, Number(mpPayment.transaction_amount ?? 0), paidAt, 'id_candidato', candidate.id)
       }
     }

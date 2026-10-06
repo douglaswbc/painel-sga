@@ -52,6 +52,11 @@ const PixModal = ({ isOpen, onClose, pixData }) => {
         <p className="mt-6 text-[10px] text-slate-500 italic">
           O status será atualizado automaticamente após a confirmação do pagamento.
         </p>
+        {pixData.expiresAt && (
+          <p className="mt-2 text-[10px] text-amber-400">
+            Válido até {new Date(pixData.expiresAt).toLocaleString('pt-BR')}
+          </p>
+        )}
       </div>
     </div>
   );
