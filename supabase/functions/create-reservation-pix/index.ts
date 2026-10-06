@@ -7,7 +7,9 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-const RESERVATION_AMOUNT = 25
+const DEFAULT_RESERVATION_AMOUNT_CENTS = 2500
+const MIN_RESERVATION_AMOUNT_CENTS = 100
+const MAX_RESERVATION_AMOUNT_CENTS = 1000000
 const RESERVATION_TTL_MS = 24 * 60 * 60 * 1000
 
 type Candidate = {
@@ -24,6 +26,7 @@ type Candidate = {
   pix_url: string | null
   reserva_expira_em: string | null
   reserva_idempotency_key: string | null
+  reserva_valor: number | string | null
 }
 
 function json(body: Record<string, unknown>, status = 200) {
@@ -41,6 +44,12 @@ function isEmail(value: unknown): value is string {
   return typeof value === 'string' && value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
 }
 
+function amountToCents(value: unknown): number | null {
+  const amount = Number(value)
+  if (!Number.isFinite(amount) || amount < 1 || amount > 10000) return null
+  return Math.round(amount * 100)
+}
+
 function existingPix(candidate: Candidate, now: Date) {
   const expiresAt = candidate.reserva_expira_em ? new Date(candidate.reserva_expira_em) : null
   if (!candidate.pagamento_id || !candidate.pix_qr_code || !candidate.pix_copia_e_cola || !expiresAt || expiresAt <= now) return null
@@ -50,6 +59,7 @@ function existingPix(candidate: Candidate, now: Date) {
     copyPaste: candidate.pix_copia_e_cola,
     ticketUrl: candidate.pix_url,
     expiresAt: expiresAt.toISOString(),
+    amount: Number(candidate.reserva_valor ?? 25),
     alreadyExists: true,
   }
 }
@@ -79,6 +89,16 @@ serve(async (req) => {
   }
   if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ error: 'Requisição inválida.' }, 400)
 
+  const requestedAmountCents = body.valorCentavos == null ? null : body.valorCentavos
+  if (requestedAmountCents !== null && (
+    typeof requestedAmountCents !== 'number'
+    || !Number.isInteger(requestedAmountCents)
+    || requestedAmountCents < MIN_RESERVATION_AMOUNT_CENTS
+    || requestedAmountCents > MAX_RESERVATION_AMOUNT_CENTS
+  )) {
+    return json({ error: 'Informe uma taxa entre R$ 1,00 e R$ 10.000,00, com até duas casas decimais.' }, 400)
+  }
+
   const candidateId = typeof body.candidatoId === 'string' ? body.candidatoId.trim() : ''
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidateId)) {
     return json({ error: 'Candidato inválido.' }, 400)
@@ -86,7 +106,7 @@ serve(async (req) => {
 
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const { data: candidateData, error: candidateError } = await admin.from('candidatos')
-    .select('id,id_usuario,nome,cpf,email,status,pagamento_id,pagamento_status,pix_qr_code,pix_copia_e_cola,pix_url,reserva_expira_em,reserva_idempotency_key')
+    .select('id,id_usuario,nome,cpf,email,status,pagamento_id,pagamento_status,pix_qr_code,pix_copia_e_cola,pix_url,reserva_expira_em,reserva_idempotency_key,reserva_valor')
     .eq('id', candidateId)
     .eq('id_usuario', user.id)
     .maybeSingle()
@@ -118,6 +138,17 @@ serve(async (req) => {
   }
   if (status === 'aguardando reserva' && !candidate.reserva_idempotency_key) {
     return json({ error: 'A reserva está aguardando pagamento, mas não possui chave de recuperação. Revise o candidato antes de tentar novamente.' }, 409)
+  }
+
+  let reservationAmountCents: number
+  if (candidate.reserva_idempotency_key) {
+    const savedAmountCents = amountToCents(candidate.reserva_valor) ?? DEFAULT_RESERVATION_AMOUNT_CENTS
+    if (requestedAmountCents !== null && requestedAmountCents !== savedAmountCents) {
+      return json({ error: `Já existe uma tentativa de cobrança de ${(savedAmountCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}. Aguarde a conclusão antes de alterar o valor.` }, 409)
+    }
+    reservationAmountCents = savedAmountCents
+  } else {
+    reservationAmountCents = requestedAmountCents ?? amountToCents(candidate.reserva_valor) ?? DEFAULT_RESERVATION_AMOUNT_CENTS
   }
 
   const requestedEmail = typeof body.email === 'string' ? body.email.trim() : ''
@@ -155,32 +186,39 @@ serve(async (req) => {
     const { data: claimed, error: claimError } = await admin.from('candidatos').update({
       email: payerEmail,
       reserva_idempotency_key: idempotencyKey,
+      reserva_valor: reservationAmountCents / 100,
       updated_at: now.toISOString(),
     }).eq('id', candidate.id).eq('id_usuario', user.id)
       .eq('status', candidate.status).is('reserva_idempotency_key', null)
-      .select('id,email,status,reserva_idempotency_key').maybeSingle()
+      .select('id,email,status,reserva_idempotency_key,reserva_valor').maybeSingle()
 
     if (claimError) {
       console.error('Reservation idempotency claim failed:', claimError.code ?? 'database_error')
       return json({ error: 'Não foi possível iniciar a reserva.' }, 500)
     }
     if (claimed) {
-      candidate = { ...candidate, email: claimed.email, status: claimed.status, reserva_idempotency_key: claimed.reserva_idempotency_key }
+      candidate = { ...candidate, email: claimed.email, status: claimed.status, reserva_idempotency_key: claimed.reserva_idempotency_key, reserva_valor: claimed.reserva_valor }
     } else {
       const { data: refreshed, error: refreshError } = await admin.from('candidatos')
-        .select('id,id_usuario,nome,cpf,email,status,pagamento_id,pagamento_status,pix_qr_code,pix_copia_e_cola,pix_url,reserva_expira_em,reserva_idempotency_key')
+        .select('id,id_usuario,nome,cpf,email,status,pagamento_id,pagamento_status,pix_qr_code,pix_copia_e_cola,pix_url,reserva_expira_em,reserva_idempotency_key,reserva_valor')
         .eq('id', candidate.id).eq('id_usuario', user.id).maybeSingle()
-      if (refreshError || !refreshed?.reserva_idempotency_key || !isEmail(refreshed.email)) {
+      const refreshedEmail = refreshed?.email
+      if (refreshError || !refreshed?.reserva_idempotency_key || !isEmail(refreshedEmail)) {
         return json({ error: 'A reserva está sendo iniciada. Atualize a fila e tente novamente.' }, 409)
       }
-      candidate = refreshed as Candidate
+      candidate = { ...(refreshed as Candidate), email: refreshedEmail }
       if (normalizeStatus(candidate.status) !== 'pre-aprovado' && normalizeStatus(candidate.status) !== 'aguardando reserva') {
         return json({ error: 'O status do candidato mudou. Atualize a fila antes de continuar.' }, 409)
       }
-      if (candidate.email.toLowerCase() !== payerEmail.toLowerCase()) {
+      if (refreshedEmail.toLowerCase() !== payerEmail.toLowerCase()) {
         return json({ error: 'Outra tentativa iniciou a reserva com um e-mail diferente. Atualize a fila e confirme o e-mail salvo.' }, 409)
       }
-      payerEmail = candidate.email
+      const savedAmountCents = amountToCents(candidate.reserva_valor) ?? DEFAULT_RESERVATION_AMOUNT_CENTS
+      if (savedAmountCents !== reservationAmountCents) {
+        return json({ error: `Outra tentativa iniciou a cobrança de ${(savedAmountCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}. Atualize a fila antes de tentar novamente.` }, 409)
+      }
+      reservationAmountCents = savedAmountCents
+      payerEmail = refreshedEmail
     }
   }
 
@@ -200,7 +238,7 @@ serve(async (req) => {
         'X-Idempotency-Key': candidate.reserva_idempotency_key,
       },
       body: JSON.stringify({
-        transaction_amount: RESERVATION_AMOUNT,
+        transaction_amount: reservationAmountCents / 100,
         description: 'Taxa de reserva de vaga',
         external_reference: candidate.id,
         notification_url: notificationUrl,
@@ -251,7 +289,7 @@ serve(async (req) => {
     mercado_pago_id: paymentId,
     status: String(payment.status ?? 'pending'),
     status_detalhe: payment.status_detail ?? null,
-    valor: Number(payment.transaction_amount ?? RESERVATION_AMOUNT),
+    valor: Number(payment.transaction_amount ?? reservationAmountCents / 100),
     expira_em: actualExpiresAt,
     atualizado_em: new Date().toISOString(),
   }, { onConflict: 'mercado_pago_id', ignoreDuplicates: true })
@@ -295,5 +333,5 @@ serve(async (req) => {
     })
   }
 
-  return json({ paymentId, qrCode, copyPaste, ticketUrl, expiresAt: actualExpiresAt, alreadyExists: false })
+  return json({ paymentId, qrCode, copyPaste, ticketUrl, expiresAt: actualExpiresAt, amount: Number(payment.transaction_amount ?? reservationAmountCents / 100), alreadyExists: false })
 })

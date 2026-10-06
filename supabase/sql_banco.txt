@@ -169,6 +169,7 @@ CREATE TABLE public.candidatos (
   status text DEFAULT 'Em análise'::text,
   pagamento_id text,
   reserva_idempotency_key uuid,
+  reserva_valor numeric(12,2),
   pagamento_status text DEFAULT 'Aguardando'::text,
   pix_qr_code text,
   pix_copia_e_cola text,
@@ -178,6 +179,7 @@ CREATE TABLE public.candidatos (
   updated_at timestamp with time zone DEFAULT now(),
   pix_url text,
   CONSTRAINT candidatos_pkey PRIMARY KEY (id),
+  CONSTRAINT candidatos_reserva_valor_check CHECK (reserva_valor IS NULL OR reserva_valor BETWEEN 1.00 AND 10000.00),
   CONSTRAINT candidatos_id_usuario_fkey FOREIGN KEY (id_usuario) REFERENCES public.usuarios(id) ON DELETE CASCADE
 );
 

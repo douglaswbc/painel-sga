@@ -17,8 +17,16 @@ const statusStyles = {
 
 const ITEMS_PER_PAGE = 20;
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_RESERVATION_AMOUNT = 25;
 const maskCpf = (value) => String(value ?? '').replace(/\D/g, '').length === 11 ? '***.***.***-**' : '***';
 const normalizeSearch = (value) => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR').trim();
+const parseReservationAmount = (value) => {
+  const trimmed = String(value ?? '').trim().replace(/R\$/gi, '').replace(/\s+/g, '');
+  const normalized = trimmed.includes(',') ? trimmed.replace(/\./g, '').replace(',', '.') : trimmed;
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return null;
+  const cents = Math.round(Number(normalized) * 100);
+  return cents >= 100 && cents <= 1000000 ? cents : null;
+};
 const formatLinkExpiration = (expiresAt, active) => {
   if (!expiresAt) return 'Nenhum link foi gerado ainda.';
   const expiration = new Date(expiresAt);
@@ -228,13 +236,23 @@ const Triagem = () => {
       return;
     }
 
+    const defaultAmount = Number(candidato.reserva_valor ?? DEFAULT_RESERVATION_AMOUNT).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const amountInput = window.prompt('Informe o valor da taxa de reserva (de R$ 1,00 a R$ 10.000,00):', defaultAmount);
+    if (amountInput === null) return;
+    const amountCents = parseReservationAmount(amountInput);
+    if (amountCents === null) {
+      toast.error('Informe um valor entre R$ 1,00 e R$ 10.000,00 com até duas casas decimais.');
+      return;
+    }
+
     setProcessingId(candidato.id);
     try {
-      const data = await candidatosService.createReservationPix(candidato.id, email);
+      const data = await candidatosService.createReservationPix(candidato.id, email, amountCents);
       setPixData(data);
       setIsPixModalOpen(true);
       await fetchCandidatos();
     } catch (error) {
+      await fetchCandidatos({ quiet: true });
       toast.error(`Erro ao gerar reserva: ${error.message}`);
     } finally {
       setProcessingId(null);
@@ -255,6 +273,7 @@ const Triagem = () => {
       copyPaste: candidato.pix_copia_e_cola,
       ticketUrl: candidato.pix_url,
       expiresAt: expiresAt.toISOString(),
+      amount: Number(candidato.reserva_valor ?? DEFAULT_RESERVATION_AMOUNT),
       alreadyExists: true,
     });
     setIsPixModalOpen(true);

@@ -281,3 +281,15 @@ O locador gera e compartilha um link individual pela rota `/triagem`. O candidat
 - [ ] Publicar o frontend no Cloudflare Pages e testar link válido, expirado/desativado, CPF duplicado, limite diário e isolamento entre dois locadores.
 
 **Estado em 06/10/2026:** migration 023 executada e registrada no projeto `cobranca_car`; confirmei remotamente a tabela de links, RLS ativo e RPC de limite diário. As duas Edge Functions estão ativas com as opções JWT esperadas; `candidate-application-link` foi atualizada para retornar o estado e a expiração do link ao painel. O frontend continua local e ainda precisa ser publicado no Cloudflare Pages; validar então a geração/envio com links válidos, expirados/desativados, CPF duplicado, limite diário e isolamento entre locadores. O formulário pede campos do fluxo existente de candidatos, apresenta aviso de privacidade e não oferece consulta pública de status. O limite de 50 inscrições por link/dia e o campo honeypot são controles básicos contra abuso; acompanhar envios e erros após a publicação.
+
+## Taxa de reserva variável
+
+- [x] Permitir informar a taxa em reais antes de criar o PIX, mantendo R$ 25,00 como valor inicial sugerido.
+- [x] Validar no frontend e no backend valores entre R$ 1,00 e R$ 10.000,00, em centavos e com até duas casas decimais.
+- [x] Gravar a taxa no candidato antes da chamada ao Mercado Pago, para manter o mesmo valor em tentativas concorrentes e reexecuções idempotentes.
+- [x] Exibir o valor escolhido no modal do PIX, ao reabrir o pagamento e na ficha do candidato; preservar o valor real nas tentativas reconciliadas.
+- [x] Criar a migration `024_candidate_reservation_amount.sql` e alinhar o esquema base.
+- [x] Aplicar e registrar a migration 024; publicar a Edge Function `create-reservation-pix` atualizada.
+- [ ] Publicar o frontend e validar valores com centavos, valor padrão, limites e reabertura de uma tentativa existente sem criar nova cobrança.
+
+**Estado:** migration 024 aplicada e registrada no Supabase; coluna `candidatos.reserva_valor` e validação de faixa confirmadas remotamente. `create-reservation-pix` está ativa na versão 3, com JWT obrigatório. Frontend segue local, pendente de publicação no Cloudflare Pages; nenhuma cobrança real foi criada durante a implementação.

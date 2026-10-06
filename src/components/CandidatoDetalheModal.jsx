@@ -69,6 +69,7 @@ const CandidatoDetalheModal = ({ candidato, onClose }) => {
               <Field label="Status do candidato" value={candidato.status} />
               <Field label="Pontuação do formulário" value={candidato.score_formulario} />
               <Field label="Pontuação de crédito" value={candidato.score_credito} />
+              <Field label="Taxa de reserva" value={candidato.reserva_valor == null ? '—' : formatMoney(candidato.reserva_valor)} />
               <Field label="Status do pagamento" value={candidato.pagamento_status} />
               <Field label="ID do pagamento" value={candidato.pagamento_id} />
               <Field label="Origem da candidatura" value={candidato.id_link_inscricao ? 'Inscrição pública' : 'Cadastro interno ou legado'} />

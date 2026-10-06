@@ -31,9 +31,9 @@ export const candidatosService = {
     if (error) throw error;
   },
 
-  createReservationPix: async (candidatoId, email) => {
+  createReservationPix: async (candidatoId, email, valorCentavos) => {
     const { data, error } = await supabase.functions.invoke('create-reservation-pix', {
-      body: { candidatoId, email },
+      body: { candidatoId, email, valorCentavos },
     });
     if (error) await throwFunctionError(error, 'Não foi possível gerar o PIX.');
     return data;

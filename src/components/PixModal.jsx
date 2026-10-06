@@ -7,6 +7,8 @@ const PixModal = ({ isOpen, onClose, pixData }) => {
 
   if (!isOpen || !pixData) return null;
 
+  const reservationAmount = Number(pixData.amount ?? 25).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
   const handleCopy = () => {
     navigator.clipboard.writeText(pixData.copyPaste);
     setCopied(true);
@@ -22,7 +24,7 @@ const PixModal = ({ isOpen, onClose, pixData }) => {
           <button onClick={onClose} className="text-slate-300 hover:text-white"><X size={20} /></button>
         </div>
 
-        <p className="text-slate-300 text-sm mb-4">Escaneie o QR Code abaixo para pagar a reserva (R$ 25,00):</p>
+        <p className="text-slate-300 text-sm mb-4">Escaneie o QR Code abaixo para pagar a taxa de reserva ({reservationAmount}):</p>
         
         <div className="bg-white p-3 rounded-lg inline-block mb-4">
           <img 
