@@ -8,7 +8,7 @@ const formatMoney = (value) => value == null ? '—' : Number(value).toLocaleStr
 
 const Field = ({ label, value }) => (
   <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3">
-    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</p>
+    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-300">{label}</p>
     <p className="mt-1 break-words text-sm text-slate-200">{value ?? 'Não informado'}</p>
   </div>
 );
@@ -43,9 +43,9 @@ const CandidatoDetalheModal = ({ candidato, onClose }) => {
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-widest text-indigo-400">Ficha do candidato</p>
             <h2 id="candidate-details-title" className="mt-1 truncate text-xl font-bold text-white">{candidato.nome}</h2>
-            <p className="mt-1 text-xs text-slate-500">Cadastrado em {formatDate(candidato.created_at)}</p>
+            <p className="mt-1 text-xs text-slate-300">Cadastrado em {formatDate(candidato.created_at)}</p>
           </div>
-          <button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white" aria-label="Fechar ficha"><X size={20} /></button>
+          <button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-300 hover:bg-slate-800 hover:text-white" aria-label="Fechar ficha"><X size={20} /></button>
         </header>
 
         <div className="mt-5 space-y-6">
@@ -71,6 +71,9 @@ const CandidatoDetalheModal = ({ candidato, onClose }) => {
               <Field label="Pontuação de crédito" value={candidato.score_credito} />
               <Field label="Status do pagamento" value={candidato.pagamento_status} />
               <Field label="ID do pagamento" value={candidato.pagamento_id} />
+              <Field label="Origem da candidatura" value={candidato.id_link_inscricao ? 'Inscrição pública' : 'Cadastro interno ou legado'} />
+              <Field label="Aviso de privacidade" value={candidato.aviso_privacidade_versao ? `Lido (${candidato.aviso_privacidade_versao})` : 'Não registrado'} />
+              <Field label="Aviso lido em" value={formatDate(candidato.aviso_privacidade_lido_em)} />
               <Field label="PIX válido até" value={formatDate(candidato.reserva_expira_em)} />
               <Field label="Reserva confirmada em" value={formatDate(candidato.reserva_confirmada_em)} />
               <Field label="Atualizado em" value={formatDate(candidato.updated_at)} />
@@ -83,27 +86,27 @@ const CandidatoDetalheModal = ({ candidato, onClose }) => {
               {loading && <Loader2 size={16} className="animate-spin text-indigo-400" />}
             </div>
             {error ? (
-              <div className="flex items-center justify-between gap-3 rounded-xl border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-200">
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-700">
                 <span className="flex items-center gap-2"><AlertCircle size={16} />{error}</span>
                 <button type="button" onClick={loadHistory} className="font-semibold underline">Tentar novamente</button>
               </div>
             ) : loading ? (
-              <p className="text-sm text-slate-500">Carregando histórico…</p>
+              <p className="text-sm text-slate-300">Carregando histórico…</p>
             ) : history.audit.length === 0 && history.payments.length === 0 ? (
-              <p className="rounded-xl border border-slate-800 p-4 text-sm text-slate-500">Ainda não há alterações registradas para este candidato.</p>
+              <p className="rounded-xl border border-slate-800 p-4 text-sm text-slate-300">Ainda não há alterações registradas para este candidato.</p>
             ) : (
               <div className="space-y-4">
                 {history.payments.length > 0 && (
                   <div className="space-y-2">
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Tentativas PIX</h4>
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-300">Tentativas PIX</h4>
                     {history.payments.map((payment) => (
                       <article key={payment.id} className="rounded-xl border border-slate-800 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                           <span className="font-semibold text-slate-200">{payment.status}</span>
-                          <span className="text-xs text-slate-500">Criado em {formatDate(payment.criado_em)}</span>
+                          <span className="text-xs text-slate-300">Criado em {formatDate(payment.criado_em)}</span>
                         </div>
-                        <p className="mt-1 break-all font-mono text-xs text-slate-500">Pagamento {payment.mercado_pago_id}</p>
-                        <p className="mt-1 text-xs text-slate-400">{formatMoney(payment.valor)}{payment.status_detalhe ? ` · ${payment.status_detalhe}` : ''}</p>
+                        <p className="mt-1 break-all font-mono text-xs text-slate-300">Pagamento {payment.mercado_pago_id}</p>
+                        <p className="mt-1 text-xs text-slate-300">{formatMoney(payment.valor)}{payment.status_detalhe ? ` · ${payment.status_detalhe}` : ''}</p>
                       </article>
                     ))}
                   </div>
@@ -111,20 +114,20 @@ const CandidatoDetalheModal = ({ candidato, onClose }) => {
 
                 {history.audit.length > 0 && (
                   <div className="space-y-2">
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Alterações</h4>
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-300">Alterações</h4>
                     {history.audit.map((entry) => (
                       <article key={entry.id} className="rounded-xl border border-slate-800 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <span className="text-sm font-semibold text-slate-200">
                             {entry.acao === 'confirmacao_manual' ? 'Confirmação manual' : entry.acao === 'atualizacao_pagamento' ? 'Atualização do pagamento' : 'Mudança de status'}
                           </span>
-                          <span className="text-xs text-slate-500">{formatDate(entry.criado_em)}</span>
+                          <span className="text-xs text-slate-300">{formatDate(entry.criado_em)}</span>
                         </div>
-                        <p className="mt-1 text-xs text-slate-400">Status: {entry.status_anterior || '—'} → {entry.status_novo || '—'}</p>
+                        <p className="mt-1 text-xs text-slate-300">Status: {entry.status_anterior || '—'} → {entry.status_novo || '—'}</p>
                         {(entry.pagamento_status_anterior || entry.pagamento_status_novo) && (
-                          <p className="mt-1 text-xs text-slate-400">Pagamento: {entry.pagamento_status_anterior || '—'} → {entry.pagamento_status_novo || '—'}</p>
+                          <p className="mt-1 text-xs text-slate-300">Pagamento: {entry.pagamento_status_anterior || '—'} → {entry.pagamento_status_novo || '—'}</p>
                         )}
-                        <p className="mt-1 text-xs text-slate-500">Origem: {entry.origem === 'sistema' ? 'automática' : 'operador'}{entry.motivo ? ` · ${entry.motivo}` : ''}</p>
+                        <p className="mt-1 text-xs text-slate-300">Origem: {entry.origem === 'sistema' ? 'automática' : 'operador'}{entry.motivo ? ` · ${entry.motivo}` : ''}</p>
                       </article>
                     ))}
                   </div>

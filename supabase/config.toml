@@ -15,3 +15,9 @@ verify_jwt = true
 
 [functions.payment-webhook-receiver]
 verify_jwt = false
+
+[functions.candidate-application-link]
+verify_jwt = true
+
+[functions.submit-candidate-application]
+verify_jwt = false

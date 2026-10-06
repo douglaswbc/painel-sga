@@ -18,6 +18,7 @@ import Configuracoes from './pages/Configuracoes';
 import Admin from './pages/Admin';
 import Acessos from './pages/Acessos';
 import ZernioCallback from './pages/ZernioCallback';
+import CandidateApplication from './pages/CandidateApplication';
 
 
 // Componente temporário para teste
@@ -31,6 +32,7 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/zernio/callback" element={<ZernioCallback />} />
+            <Route path="/inscricao/:token" element={<CandidateApplication />} />
 
             
             {/* Rotas Protegidas pelo DashboardLayout */}

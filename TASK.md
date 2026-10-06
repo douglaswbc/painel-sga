@@ -260,3 +260,24 @@ Concluir o fluxo de análise de candidatos e reserva de vaga, com status consist
 **Critério de conclusão:** o fluxo pode ser acompanhado de ponta a ponta e cada implantação pendente está registrada sem confundir código local com produção.
 
 **Estado verificado em 06/10/2026:** migrations 019–022 aplicadas e registradas; `create-reservation-pix` ativa com JWT obrigatório e `payment-webhook-receiver` ativa sem JWT obrigatório. RLS e presença do secret `MP_WEBHOOK_URL` foram conferidos remotamente sem consultar dados pessoais ou revelar valores secretos. O provedor do frontend foi identificado como Cloudflare Pages, mas não há token/ID de conta Cloudflare no ambiente nem projeto Pages identificado no repositório, então a publicação ainda está pendente. O frontend das etapas 3–5 continua local: build e lint direcionado aos arquivos da triagem passam. O lint global ainda aponta erros preexistentes em arquivos fora da triagem e avisos de globais Deno nas Edge Functions. A validação ponta a ponta também segue pendente porque não há sandbox Mercado Pago; não executar teste que possa gerar uma cobrança real.
+
+## Inscrição pública de candidatos vinculada à rota `/triagem`
+
+### Objetivo e fluxo
+
+O locador gera e compartilha um link individual pela rota `/triagem`. O candidato abre `/inscricao/:codigo`, preenche os dados e envia a inscrição sem criar conta. O backend valida o link, grava a candidatura vinculada ao locador que o criou e inicia o status `Em análise`; a candidatura então aparece na fila existente de triagem.
+
+### Etapa 1 — Implementar o fluxo local
+
+- [x] Criar a rota pública `/inscricao/:codigo`, fora da área autenticada do painel.
+- [x] Adicionar à `/triagem` a geração, cópia, rotação e desativação do link individual do locador, com toggle de estado, validade restante e correções de contraste.
+- [x] Criar a Edge Function autenticada `candidate-application-link`; guardar somente o hash do código e expirar o link após 90 dias.
+- [x] Criar `submit-candidate-application` sem JWT, validando o link, CPF, campos, aviso de privacidade, honeypot e tempo mínimo de preenchimento antes de inserir.
+- [x] Vincular a inscrição ao `id_usuario` obtido exclusivamente do link, começar em `Em análise`, impedir CPF repetido para o mesmo locador e auditar o recebimento.
+- [x] Limitar cada link a 50 envios diários no banco e não expor acesso público direto às tabelas.
+- [x] Mostrar na ficha do candidato a origem e a versão/data do aviso de privacidade aceito.
+- [x] Aplicar e registrar a migration `023_public_candidate_applications.sql` no Supabase.
+- [x] Publicar as Edge Functions `candidate-application-link` (`verify_jwt = true`) e `submit-candidate-application` (`verify_jwt = false`).
+- [ ] Publicar o frontend no Cloudflare Pages e testar link válido, expirado/desativado, CPF duplicado, limite diário e isolamento entre dois locadores.
+
+**Estado em 06/10/2026:** migration 023 executada e registrada no projeto `cobranca_car`; confirmei remotamente a tabela de links, RLS ativo e RPC de limite diário. As duas Edge Functions estão ativas com as opções JWT esperadas; `candidate-application-link` foi atualizada para retornar o estado e a expiração do link ao painel. O frontend continua local e ainda precisa ser publicado no Cloudflare Pages; validar então a geração/envio com links válidos, expirados/desativados, CPF duplicado, limite diário e isolamento entre locadores. O formulário pede campos do fluxo existente de candidatos, apresenta aviso de privacidade e não oferece consulta pública de status. O limite de 50 inscrições por link/dia e o campo honeypot são controles básicos contra abuso; acompanhar envios e erros após a publicação.
