@@ -575,6 +575,15 @@ const ZernioTemplatesCard = () => {
     .filter((item) => item.usage)
     .sort((a, b) => Number(a.usage.reminder_order || 1) - Number(b.usage.reminder_order || 1)), [templates]);
 
+  // Templates apagados na Meta ficam no banco apenas como historico: nao
+  // entram na lista de escolha nem na sequencia de lembretes.
+  const visibleTemplates = useMemo(() => templates.filter((template) => {
+    const status = String(template.status || '').toUpperCase();
+    return status !== 'DELETED' && status !== 'PENDING_DELETION';
+  }), [templates]);
+
+  const hiddenTemplates = templates.length - visibleTemplates.length;
+
   const saveChargeSequence = async (templateIds) => {
     setBusy(true);
     setErrorMessage('');
@@ -654,8 +663,8 @@ const ZernioTemplatesCard = () => {
         </li>)}</ol> : <p className="rounded-lg border border-dashed border-slate-700 px-3 py-4 text-center text-xs text-slate-500">Adicione templates aprovados usando o botão “Usar em lembretes”.</p>}
       </div>}
 
-      {templates.length > 0 ? <div className="space-y-2">
-        {templates.map((template) => {
+      {visibleTemplates.length > 0 ? <div className="space-y-2">
+        {visibleTemplates.map((template) => {
           const status = String(template.status || 'PENDING').toUpperCase();
           const chargeUsage = template.usages?.find((usage) => usage.purpose === 'charge' && usage.is_default);
           const isChargeTemplate = Boolean(chargeUsage);
@@ -696,6 +705,10 @@ const ZernioTemplatesCard = () => {
           </article>;
         })}
       </div> : <div className="flex items-start gap-3 text-xs text-slate-500 bg-slate-900/40 border border-slate-800 rounded-lg p-3"><AlertCircle size={16} className="shrink-0" />Nenhum template encontrado neste canal. Clique em “Novo Template” para criar o primeiro.</div>}
+
+      {hiddenTemplates > 0 && <p className="text-[11px] text-slate-500">
+        {hiddenTemplates} template(s) apagado(s) na Meta não aparecem mais na lista. Eles continuam no histórico de envios.
+      </p>}
 
       {selection && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setSelection(null); }}>
         <form onSubmit={(event) => { event.preventDefault(); setDefault(); }} className="max-h-[92vh] w-full max-w-6xl overflow-y-auto rounded-2xl border border-slate-700 bg-slate-950 p-5 shadow-2xl">

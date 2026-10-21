@@ -22,8 +22,10 @@ export class MetaApiError extends Error {
   type: string | null;
   userMessage: string | null;
   userTitle: string | null;
+  /** Endpoint that failed, without the token, for diagnosis. */
+  target: string | null;
 
-  constructor(status: number, message: string, code: number | null = null, subcode: number | null = null, type: string | null = null, userMessage: string | null = null, userTitle: string | null = null) {
+  constructor(status: number, message: string, code: number | null = null, subcode: number | null = null, type: string | null = null, userMessage: string | null = null, userTitle: string | null = null, target: string | null = null) {
     super(message);
     this.status = status;
     this.code = code;
@@ -31,6 +33,22 @@ export class MetaApiError extends Error {
     this.type = type;
     this.userMessage = userMessage;
     this.userTitle = userTitle;
+    this.target = target;
+  }
+}
+
+/** Keeps only the Graph path of a request, dropping tokens and long cursors. */
+export function describeGraphTarget(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    const version = segments.shift() ?? '';
+    const object = segments[0] ?? '';
+    const resource = segments[1] ?? '';
+    const name = parsed.searchParams.get('name');
+    return [version, object, resource].filter(Boolean).join('/') + (name ? ` (${name})` : '');
+  } catch {
+    return 'requisição à Meta';
   }
 }
 
@@ -58,7 +76,7 @@ function appId(): string {
   return value;
 }
 
-function parseError(status: number, payload: unknown): MetaApiError {
+function parseError(status: number, payload: unknown, target: string | null = null): MetaApiError {
   const error = (payload as { error?: Record<string, unknown> } | null)?.error ?? {};
   const message = sanitizeProviderMessage(error.message) || `A Meta recusou a solicitação (HTTP ${status}).`;
   const code = typeof error.code === 'number' ? error.code : null;
@@ -66,7 +84,7 @@ function parseError(status: number, payload: unknown): MetaApiError {
   const type = typeof error.type === 'string' ? error.type.slice(0, 60) : null;
   const userMessage = sanitizeProviderMessage(error.error_user_msg) || null;
   const userTitle = sanitizeProviderMessage(error.error_user_title) || null;
-  return new MetaApiError(status, message, code, subcode, type, userMessage, userTitle);
+  return new MetaApiError(status, message, code, subcode, type, userMessage, userTitle, target);
 }
 
 const TRANSIENT_STATUSES = new Set([429, 500, 502, 503, 504]);
@@ -111,7 +129,7 @@ async function graphFetchUrl(
       await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)));
       return graphFetchUrl(url, options, attempt + 1);
     }
-    throw parseError(response.status, payload);
+    throw parseError(response.status, payload, describeGraphTarget(url));
   }
   return { payload, text };
 }
@@ -364,6 +382,7 @@ export function describeMetaError(error: unknown): string {
   if (!(error instanceof MetaApiError)) {
     return error instanceof Error ? error.message : 'Não foi possível concluir a operação na Meta.';
   }
+  const where = error.target ? ` em ${error.target}` : '';
   if (error.status === 400 && error.subcode === 2388024) {
     return 'Já existe um template com esse nome e idioma nesta conta. Escolha outro nome ou apague o template existente.';
   }
@@ -373,19 +392,28 @@ export function describeMetaError(error: unknown): string {
   if (error.status === 400 && error.subcode === 2388293) {
     return 'A Meta achou o corpo curto demais para o número de variáveis. Reduza as variáveis ou amplie a mensagem.';
   }
+  if (error.subcode === 2593002 || /modelo de mensagem n[ãa]o encontrado|message template .*not found/i.test(error.userMessage ?? '')) {
+    return `${error.userMessage || 'A Meta não encontrou este template na conta.'} Atualize a lista em Templates Meta e escolha outro template aprovado.`;
+  }
   if (error.status === 400 && error.subcode === 33) {
-    return 'A Meta não encontrou o objeto informado. Confira o Phone Number ID e o WABA ID.';
+    return `A Meta não encontrou o objeto${where}. Confira o Phone Number ID e o WABA ID.`;
+  }
+  if (error.status === 400 && error.code === 2500) {
+    return `A Meta não reconheceu o caminho da chamada${where}. Confira o identificador usado e a versão da API.`;
+  }
+  if (error.status === 400 && /unsupported (get|post) request/i.test(error.message)) {
+    return `A Meta não encontrou o objeto${where}. Confira o Phone Number ID, o WABA ID e as permissões do token.`;
   }
   if (error.status === 400 && error.code === 100) {
     return error.userMessage
-      ? `A Meta recusou o template: ${error.userMessage}`
-      : 'A Meta recusou os dados informados. Revise o identificador e tente novamente.';
+      ? `A Meta recusou a solicitação${where}: ${error.userMessage}`
+      : `A Meta recusou os dados enviados${where}. Revise o template, o número de destino e os parâmetros.`;
   }
   if (error.status === 401 || error.status === 403) {
     return 'O token da Meta não autorizou esta operação. Gere um token com as permissões whatsapp_business_management e whatsapp_business_messaging.';
   }
   if (error.status === 404) {
-    return 'A Meta não encontrou a conta do WhatsApp. Confira o ID do WABA e o Phone Number ID.';
+    return `A Meta não encontrou o recurso${where}. Confira o Phone Number ID, o WABA ID e se o template ainda existe na conta.`;
   }
   if (error.status === 429) {
     return 'A Meta limitou temporariamente as chamadas. Aguarde e tente novamente.';
@@ -394,4 +422,16 @@ export function describeMetaError(error: unknown): string {
     return 'A Meta está temporariamente indisponível. Tente novamente em alguns instantes.';
   }
   return error.message;
+}
+
+/** Technical, sanitized detail for the response log (never shown as the main message). */
+export function metaErrorDetail(error: unknown): string | null {
+  if (!(error instanceof MetaApiError)) return null;
+  const parts = [`HTTP ${error.status}`];
+  if (error.code !== null) parts.push(`code ${error.code}`);
+  if (error.subcode !== null) parts.push(`subcode ${error.subcode}`);
+  if (error.target) parts.push(error.target);
+  const provider = sanitizeProviderMessage(error.userMessage || error.message);
+  if (provider) parts.push(provider);
+  return parts.join(' · ').slice(0, 300);
 }

@@ -8,6 +8,7 @@ import {
   describeMetaError,
   getPhoneNumberDetails,
   listMessageTemplates,
+  metaErrorDetail,
 } from '../_shared/meta-graph.ts';
 import { normalizeProvider, metaWebhookUrl, type WhatsappProvider } from '../_shared/whatsapp-provider.ts';
 
@@ -214,6 +215,25 @@ async function syncTemplates(admin: any, channel: Channel, ownerId: string) {
           console.error('Skipping template that could not be saved:', row.name, rowError.message, rowError.code);
         }
       }
+    }
+  }
+  // Templates apagados na Meta deixam de existir no catalogo remoto. Marca as
+  // linhas locais ausentes como DELETED e remove os usos, para que a sequencia
+  // de lembretes nao tente enviar um template inexistente. A limpeza vale so
+  // para a Meta, cuja listagem segue paginacao completa.
+  if (channel.provider === 'meta' && remoteTemplates.length) {
+    const remoteKeys = new Set(remoteTemplates.map((template) => `${template.name}\u0000${template.language}`));
+    const stale = (existingRows ?? []).filter((row: JsonRecord) =>
+      !remoteKeys.has(`${row.name}\u0000${row.language}`) && String(row.status ?? '').toUpperCase() !== 'DELETED');
+    if (stale.length) {
+      const staleIds = stale.map((row: JsonRecord) => row.id);
+      const { error: usageCleanupError } = await admin.from('zernio_whatsapp_template_usages')
+        .delete().in('template_id', staleIds).eq('id_usuario', ownerId);
+      if (usageCleanupError) console.error('Could not remove usages of stale templates:', usageCleanupError.message);
+      const { error: staleError } = await admin.from('zernio_whatsapp_templates')
+        .update({ status: 'DELETED', updated_at: new Date().toISOString() }).in('id', staleIds).eq('id_usuario', ownerId);
+      if (staleError) console.error('Could not mark stale templates as deleted:', staleError.message);
+      else console.log(`Marked ${stale.length} template(s) as deleted: ${stale.map((row: JsonRecord) => row.name).join(', ')}`);
     }
   }
   const { data, error } = await admin.from('zernio_whatsapp_templates')
@@ -1361,13 +1381,16 @@ Deno.serve(async (req) => {
     return json({ error: 'Ação não reconhecida.' }, 400);
   } catch (error) {
     let safeError: PublicError;
+    let detail: string | null = null;
     if (error instanceof PublicError) safeError = error;
     else if (error instanceof ZernioError) safeError = safeZernioError(error);
-    else if (error instanceof MetaApiError) safeError = new PublicError(describeMetaError(error), error.status === 429 ? 429 : 400);
-    else {
+    else if (error instanceof MetaApiError) {
+      safeError = new PublicError(describeMetaError(error), error.status === 429 ? 429 : 400);
+      detail = metaErrorDetail(error);
+    } else {
       console.error('Unexpected WhatsApp error:', error);
-      const detail = error instanceof Error ? error.message.slice(0, 200) : 'erro interno';
-      safeError = new PublicError(`Não foi possível concluir a operação. Confira as Configurações e tente novamente. (${detail})`, 500);
+      detail = error instanceof Error ? error.message.slice(0, 200) : 'erro interno';
+      safeError = new PublicError('Não foi possível concluir a operação. Confira as Configurações e tente novamente.', 500);
     }
     if (claimedDeliveryId && admin) {
       const code = error instanceof ZernioError && error.code ? error.code : 'send_failed';
@@ -1381,6 +1404,6 @@ Deno.serve(async (req) => {
         status: 'failed', error_code: code, safe_error: safeError.message, updated_at: new Date().toISOString(),
       }).eq('id', claimedManualDeliveryId).eq('status', 'sending');
     }
-    return json({ error: safeError.message }, safeError.status);
+    return json(detail ? { error: safeError.message, detail } : { error: safeError.message }, safeError.status);
   }
 });

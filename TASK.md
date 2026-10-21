@@ -414,3 +414,15 @@ Permitir que o locador use a API oficial da Meta (WhatsApp Cloud API) no lugar d
 **Estado:** validado na conta Meta real com o template `sga_confirmacao_pagamento_01`. A acao enviou a mensagem (wamid retornado), gravou a entrega com `provider=meta` e o segundo envio nao duplicou. O fluxo antigo (seletor de templates com valores digitados a mao) continua disponivel como fallback.
 
 **Sobre o 500 reportado:** o `list` falhava com um erro generico no catalogo de templates. O dado do locador foi restaurado e a listagem passou; a sincronizacao agora grava linha a linha quando o lote falha, entao um registro inconsistente nao impede mais a leitura do catalogo. Os dados do locador foram conferidos e estao consistentes.
+
+### Fase 8.8 — Erros da Meta com diagnostico e limpeza de templates apagados
+
+- [x] Trocar a traducao generica de HTTP 404 ("A Meta nao encontrou a conta do WhatsApp") por mensagens que dizem **qual chamada** falhou (`describeGraphTarget`) e o motivo devolvido pela Meta.
+- [x] Tratar separadamente template inexistente (`subcode 2593002` e "message template not found"), objeto inacessivel (`subcode 33` e "Unsupported get/post request") e caminho/versao invalidos (`code 2500`).
+- [x] Devolver `detail` (HTTP, code, subcode, endpoint e mensagem sanitizada da Meta) nas respostas de erro do `zernio-whatsapp`, sem expor o token.
+- [x] Marcar como `DELETED` os templates do canal Meta que nao existem mais na conta e remover os usos deles, para a sequencia de lembretes nao tentar enviar um template apagado.
+- [x] Esconder os templates `DELETED` da lista de `/mensagens` (continuam no historico de envios) e avisar quantos foram ocultados.
+- [x] Corrigir a sequencia do locador de teste: `aviso_boleto_01` (apagado) saiu da ordem 1; a sequencia ficou `aviso_boleto_03` (4 variaveis) e `aviso_boleto_02` (2 variaveis), com `sga_confirmacao_pagamento_01` nas confirmacoes.
+- [x] Validar de ponta a ponta: lembrete 1, lembrete 2 e confirmacao de pagamento retornaram `wamid`; o webhook registrou o status (`Message undeliverable` quando o destino e o proprio numero do canal).
+
+**Estado:** `zernio-whatsapp` e `meta-integration` publicados. Com os dados atuais todas as chamadas a Meta respondem 200/400 esperados; o 404 nao e mais traduzido como "WABA/Phone Number ID errado" e, se voltar, a resposta traz `detail` com o endpoint exato.

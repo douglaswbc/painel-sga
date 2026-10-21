@@ -238,6 +238,22 @@ Atenção: a Meta bloqueia a recriação de um template com o mesmo nome por 4 s
 
 **URL de callback**: a tela de integração da Meta e a aba **Custos e Operação** mostram a URL que a Meta chama para entregar os eventos, com um botão para copiar. O mesmo valor deve ser informado em **Webhooks**, no painel do App da Meta, junto do token de verificação configurado no SGA.
 
+## 11. Diagnóstico de erros da Meta
+
+As mensagens de erro do `zernio-whatsapp` agora apontam a chamada que falhou, em vez de culpar sempre o WABA/Phone Number ID:
+
+| Resposta da Meta | Mensagem no SGA |
+| --- | --- |
+| `subcode 2593002` / usuário "modelo de mensagem não encontrado" | O template não existe mais na conta. Atualize a lista e escolha outro aprovado. |
+| `subcode 33` / `Unsupported get|post request` | O objeto do endpoint não existe ou o token não tem acesso: confira WABA ID, Phone Number ID e permissões. |
+| `code 2500` | Caminho ou versão da Graph API inválidos. |
+| `code 100` sem subcode | Uma chamada `POST /messages` recusada: normalmente template inexistente, número de destino inválido ou parâmetros fora do padrão do template. |
+| `404` | Mensagem informa o endpoint que falhou (`detail` traz HTTP, code, subcode e o alvo). |
+
+A resposta de erro inclui `detail` (HTTP, `code`, `subcode`, endpoint e mensagem sanitizada da Meta), sem expor o token. Use esse campo ao abrir um chamado.
+
+**Templates apagados na Meta**: ao sincronizar, o SGA marca como `DELETED` as linhas locais que não existem mais na conta e remove os usos delas. Assim a sequência de lembretes não tenta enviar um template inexistente — sem isso, o lembrete falha com `#100 Invalid parameter` ou com o aviso de template não aprovado.
+
 ## 7. Referências
 
 - [WhatsApp Business Platform — Cloud API](https://developers.facebook.com/documentation/business-messaging/whatsapp)
