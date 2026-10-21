@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "test": "npx --yes deno test supabase/tests/",
     "preview": "vite preview"
   },
   "dependencies": {

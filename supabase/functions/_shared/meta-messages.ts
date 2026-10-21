@@ -32,9 +32,11 @@ export function whatsappNumberVariants(value: string): string[] {
   const digits = String(value ?? '').replace(/\D/g, '');
   const variants = [digits];
   if (digits.startsWith('55') && digits.length === 13) {
-    variants.push(`55${digits.slice(0, 4)}${digits.slice(5)}`);
+    // 55 + DDD + nono digito + 8 digitos -> remove o nono digito.
+    variants.push(`${digits.slice(0, 4)}${digits.slice(5)}`);
   } else if (digits.startsWith('55') && digits.length === 12) {
-    variants.push(`55${digits.slice(2, 4)}9${digits.slice(4)}`);
+    // 55 + DDD + 8 digitos -> inclui o nono digito.
+    variants.push(`${digits.slice(0, 4)}9${digits.slice(4)}`);
   }
   return [...new Set(variants)];
 }
@@ -64,12 +66,12 @@ export function buildTemplateComponents(components: JsonRecord[] = [], params: s
       if (!variables.length) continue;
       result.push({
         type: type.toLowerCase(),
-        parameters: variables.map(() => ({
-          type: 'text',
-          text: typeof params[cursor] === 'string' ? params[cursor] : '',
-        })),
+        parameters: variables.map(() => {
+          const value = typeof params[cursor] === 'string' ? params[cursor] : '';
+          cursor += 1;
+          return { type: 'text', text: value };
+        }),
       });
-      cursor += variables.length;
       continue;
     }
     if (type === 'BUTTONS') {

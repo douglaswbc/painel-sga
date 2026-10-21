@@ -51,3 +51,5 @@ Thumbs.db
 
 # Testes
 coverage/
+# Deno lock gerado pelos testes das Edge Functions
+deno.lock

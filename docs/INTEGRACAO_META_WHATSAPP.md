@@ -155,6 +155,8 @@ O envio usa o mesmo módulo nos dois provedores (`supabase/functions/_shared/met
 
 **Conversão de componentes**: o template é gravado no formato de criação (`BODY`, `HEADER`, `BUTTONS` com `{{1}}`), e a Messages API espera o formato de envio (`body`, `header`, `button` com `parameters`). A conversão respeita a ordem da Meta: cabeçalho, corpo e botões de URL dinâmica.
 
+A numeração `{{n}}` é **global no template**: o cabeçalho usa os primeiros números, o corpo os seguintes e os botões os últimos. O frontend (`getTemplateParameterSlots`), o mapeamento do backend (`billingTemplateParams`) e o envio (`buildTemplateComponents`) seguem exatamente essa ordem.
+
 **Número brasileiro com 9º dígito**: números brasileiros existem em duas formas no WhatsApp. O número da empresa de exemplo é exibido como `+55 11 92217-5013` (com o 9º dígito), mas está registrado no WhatsApp como `551122175013` (sem ele). A Meta só aceita a forma registrada e responde `#100 Invalid parameter` para a outra. Por isso o envio tenta a forma principal e, se a Meta recusar o destinatário, repete com a variante alternativa.
 
 **Tabela por fluxo**:
@@ -167,6 +169,16 @@ O envio usa o mesmo módulo nos dois provedores (`supabase/functions/_shared/met
 | Confirmação de pagamento | `payment-webhook-receiver` | provedor ativo |
 
 A idempotência local (`zernio_whatsapp_deliveries`, `zernio_whatsapp_scheduled_deliveries` e `zernio_payment_notifications`) impede mensagem duplicada quando o cron e o botão manual correm ao mesmo tempo.
+
+## 8. Testes
+
+O repositório tem um conjunto de testes das Edge Functions em Deno:
+
+```bash
+npm test          # npx deno test supabase/tests/
+```
+
+`supabase/tests/meta-messages.test.ts` trava o comportamento do conversor de componentes (cada variável recebe o valor correspondente, na ordem cabeçalho → corpo → botão) e das variantes de número brasileiro.
 
 ## 7. Referências
 
