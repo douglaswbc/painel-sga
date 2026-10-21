@@ -87,7 +87,7 @@ async function zernioRequest(
     const rawCode = payload?.code ?? payload?.error?.code;
     const code = typeof rawCode === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(rawCode) ? rawCode : null;
     const rawParam = payload?.param;
-    const param = typeof rawParam === 'string' && /^[A-Za-z0-9_.\[\]-]{1,100}$/.test(rawParam) ? rawParam : null;
+    const param = typeof rawParam === 'string' && /^[A-Za-z0-9_.[\]-]{1,100}$/.test(rawParam) ? rawParam : null;
     const platformError = payload?.platformError;
     const providerMessage = safeProviderMessage(
       platformError?.error_user_msg

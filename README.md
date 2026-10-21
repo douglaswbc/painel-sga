@@ -117,6 +117,20 @@ As Edge Functions recebem `SUPABASE_URL`, `SUPABASE_ANON_KEY` e `SUPABASE_SERVIC
 
 4. Cada locador conecta sua própria conta Zernio e conclui o onboarding Meta na tela **Configurações**. Os templates usados na régua precisam estar aprovados pela Meta.
 
+### Provedor de WhatsApp: Zernio ou Meta
+
+A rota `/configuracoes` tem abas para o provedor de WhatsApp usado pelo SGA:
+
+- **Zernio**: chave de API da Zernio, seleção de perfil e canal e onboarding pelo Embedded Signup da Zernio (completado na rota `/zernio/callback`).
+- **Meta Cloud API**: API oficial da Meta, com dois caminhos de conexão — o Embedded Signup da Meta ou a entrada manual de um token do sistema, do Phone Number ID e do WABA ID.
+- **Conta e Pagamentos**: nome, WhatsApp de contato, token do Mercado Pago e redefinição de senha.
+
+O provedor em uso fica em `zernio_integracoes.provider` (`zernio` ou `meta`). A configuração do provedor inativo é preservada, e cada aba oferece o botão **Usar este canal** para alternar.
+
+Para a integração Meta, configure os secrets `META_APP_ID`, `META_APP_SECRET`, `META_CONFIGURATION_ID` e `META_GRAPH_VERSION` (veja `supabase/secrets.txt`). `META_ENCRYPTION_KEY` é opcional: quando ausente, o token da Meta é cifrado com `ZERNIO_ENCRYPTION_KEY`.
+
+O guia completo, com o passo a passo do App da Meta e o estado de cada fase, está em [`docs/INTEGRACAO_META_WHATSAPP.md`](docs/INTEGRACAO_META_WHATSAPP.md).
+
 ### Mercado Pago
 
 O app chama as RPCs `create_user_mp_secret` e `get_user_mp_token` para salvar e recuperar o token privado de cada locador. Essas RPCs não estão definidas nas migrations deste repositório. Antes de usar Mercado Pago em uma instalação nova, provisionar e revisar essas funções no banco; não copie definições de um projeto sem conferir como o token e a chave de criptografia estão armazenados.
@@ -134,7 +148,7 @@ A chave Secret API Key `default` é diferente de uma senha de Edge Function. Nã
 select jobid, jobname, schedule, active from cron.job order by jobname;
 ```
 
-A emissão e os lembretes automáticos dependem também das credenciais Mercado Pago e da configuração Zernio de cada locador.
+A emissão e os lembretes automáticos dependem também das credenciais Mercado Pago e da configuração do provedor de WhatsApp de cada locador.
 
 ## Comandos úteis
 
@@ -153,3 +167,5 @@ npm run preview   # servir o build localmente
 - `supabase/migrations`: alterações versionadas do banco.
 - `supabase/sql_banco.txt`: estrutura base para banco vazio.
 - `supabase/cron-example.txt`: configuração inicial dos crons.
+- `supabase/functions/_shared`: módulos compartilhados pelas Edge Functions (criptografia, cliente Graph API e leitura do provedor).
+- `docs`: guias de integração (Zernio, Instagram e Meta/WhatsApp Cloud API).

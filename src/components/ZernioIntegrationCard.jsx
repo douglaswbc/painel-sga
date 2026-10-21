@@ -157,6 +157,21 @@ const ZernioIntegrationCard = () => {
     }
   };
 
+  const activateZernio = async () => {
+    setBusy(true);
+    setErrorMessage('');
+    setNotice('');
+    try {
+      const result = await invoke('activate');
+      setIntegration(result.integration);
+      setNotice('A Zernio agora é o canal de WhatsApp usado pelo SGA.');
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const startOnboarding = async () => {
     if (!selectedProfileId || !onboardingMode) {
       setErrorMessage('Escolha o perfil Zernio e o modo de conexão antes de continuar.');
@@ -303,6 +318,19 @@ const ZernioIntegrationCard = () => {
 
       {hasKey && (
         <div className="border-t border-slate-800 pt-4 space-y-4">
+          {integration?.provider === 'meta' && (
+            <p className="text-xs rounded-lg p-3 text-amber-300 bg-amber-500/10 border border-amber-500/20 flex flex-wrap items-center justify-between gap-3">
+              <span>O canal em uso pelo SGA é a Meta. Use o botão abaixo para voltar a enviar pela Zernio.</span>
+              <button
+                type="button"
+                onClick={activateZernio}
+                disabled={busy}
+                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg font-bold text-xs"
+              >
+                Usar este canal
+              </button>
+            </p>
+          )}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-semibold text-white">Perfil e canal WhatsApp</h3>

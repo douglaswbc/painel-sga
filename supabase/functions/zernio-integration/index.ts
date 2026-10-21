@@ -1,4 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { decryptSecret, encryptSecret } from '../_shared/crypto.ts';
+import { activateProvider, publicIntegration } from '../_shared/whatsapp-provider.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -7,8 +9,6 @@ const corsHeaders = {
 };
 
 const ZERNIO_API = 'https://zernio.com/api/v1';
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 type JsonRecord = Record<string, any>;
 type ZernioProfile = { id: string; name: string; accounts: ZernioAccount[] };
@@ -33,50 +33,12 @@ function base64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function fromBase64(value: string): Uint8Array {
-  const binary = atob(value);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-}
-
-function encryptionKeyBytes(): Uint8Array {
-  const value = Deno.env.get('ZERNIO_ENCRYPTION_KEY') ?? '';
-  if (!/^[a-fA-F0-9]{64}$/.test(value)) {
-    throw new Error('A chave de criptografia da integração ainda não foi configurada no Supabase.');
-  }
-  return Uint8Array.from(value.match(/.{2}/g)!, (pair) => Number.parseInt(pair, 16));
-}
-
-async function cryptoKey(): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
-    'raw',
-    encryptionKeyBytes(),
-    { name: 'AES-GCM' },
-    false,
-    ['encrypt', 'decrypt'],
-  );
-}
-
 async function encryptApiKey(apiKey: string, ownerId: string): Promise<string> {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encrypted = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv, additionalData: encoder.encode(ownerId) },
-    await cryptoKey(),
-    encoder.encode(apiKey),
-  );
-  return `v1.${base64(iv)}.${base64(new Uint8Array(encrypted))}`;
+  return encryptSecret(apiKey, ownerId, 'zernio');
 }
 
 async function decryptApiKey(ciphertext: string, ownerId: string): Promise<string> {
-  const [version, encodedIv, encodedCiphertext] = ciphertext.split('.');
-  if (version !== 'v1' || !encodedIv || !encodedCiphertext) {
-    throw new Error('Formato da credencial armazenada não reconhecido.');
-  }
-  const decrypted = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: fromBase64(encodedIv), additionalData: encoder.encode(ownerId) },
-    await cryptoKey(),
-    fromBase64(encodedCiphertext),
-  );
-  return decoder.decode(decrypted);
+  return decryptSecret(ciphertext, ownerId);
 }
 
 async function zernioGet(path: string, apiKey: string): Promise<JsonRecord> {
@@ -187,26 +149,6 @@ async function getProfilesAndWhatsAppAccounts(apiKey: string): Promise<ZernioPro
   }));
 }
 
-function publicIntegration(row: JsonRecord | null) {
-  if (!row) return { hasApiKey: false, keyStatus: 'missing', keyLast4: null, profile: null, account: null };
-  return {
-    hasApiKey: Boolean(row.api_key_ciphertext),
-    keyStatus: row.key_status,
-    keyLast4: row.api_key_last4?.trim() || null,
-    validatedAt: row.validated_at,
-    lastCheckedAt: row.last_checked_at,
-    profile: row.zernio_profile_id ? {
-      id: row.zernio_profile_id,
-      name: row.zernio_profile_name,
-    } : null,
-    account: row.whatsapp_account_id ? {
-      id: row.whatsapp_account_id,
-      name: row.whatsapp_account_name,
-      phoneNumber: row.whatsapp_phone_number,
-    } : null,
-  };
-}
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   const json = (body: JsonRecord, status = 200) => new Response(JSON.stringify(body), {
@@ -250,10 +192,43 @@ Deno.serve(async (req) => {
 
     if (action === 'status') return json({ integration: publicIntegration(integration) });
 
+    if (action === 'activate') {
+      if (!integration?.api_key_ciphertext || integration?.key_status !== 'valid' || !integration?.whatsapp_account_id) {
+        return json({ error: 'Conecte um canal da Zernio antes de usá-lo como canal principal.' }, 409);
+      }
+      await activateProvider(admin, user.id, 'zernio');
+      const { data: updated } = await admin
+        .from('zernio_integracoes').select('*').eq('id_usuario', user.id).maybeSingle();
+      return json({ integration: publicIntegration(updated) });
+    }
+
     if (action === 'remove') {
-      const { error } = await admin.from('zernio_integracoes').delete().eq('id_usuario', user.id);
+      // Only the Zernio payload is cleared: the row is shared with the Meta
+      // provider and deleting it would drop the other credentials.
+      const keepMeta = Boolean(integration?.meta_access_token_ciphertext) && integration?.meta_phone_number_id;
+      const now = new Date().toISOString();
+      const { error } = await admin.from('zernio_integracoes').update({
+        api_key_ciphertext: null,
+        api_key_last4: null,
+        key_status: null,
+        zernio_profile_id: null,
+        zernio_profile_name: null,
+        whatsapp_account_id: null,
+        whatsapp_account_name: null,
+        whatsapp_phone_number: null,
+        webhook_id: null,
+        webhook_secret_ciphertext: null,
+        webhook_account_id: null,
+        provider: integration?.provider === 'zernio' && keepMeta ? 'meta' : (integration?.provider ?? 'zernio'),
+        provider_connected_at: integration?.provider === 'zernio'
+          ? (keepMeta ? now : null)
+          : (integration?.provider_connected_at ?? null),
+        updated_at: now,
+      }).eq('id_usuario', user.id);
       if (error) throw new Error('Não foi possível remover a chave Zernio.');
-      return json({ integration: publicIntegration(null) });
+      const { data: updated } = await admin
+        .from('zernio_integracoes').select('*').eq('id_usuario', user.id).maybeSingle();
+      return json({ integration: publicIntegration(updated) });
     }
 
     if (action === 'validate') {

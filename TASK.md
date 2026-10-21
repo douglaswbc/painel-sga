@@ -295,3 +295,57 @@ O locador gera e compartilha um link individual pela rota `/triagem`. O candidat
 - [ ] Validar valores com centavos, valor padrão, limites e reabertura de uma tentativa existente sem criar nova cobrança.
 
 **Estado:** migration 024 aplicada e registrada no Supabase; coluna `candidatos.reserva_valor` e validação de faixa confirmadas remotamente. `create-reservation-pix` está ativa na versão 3, com JWT obrigatório. Frontend publicado no Cloudflare Pages (conforme informado pelo responsável). A validação manual continua pendente; nenhuma cobrança real foi criada durante a implementação.
+
+## Fase 8 — Integração Meta (WhatsApp Cloud API) e abas em `/configuracoes`
+
+### Objetivo
+
+Permitir que o locador use a API oficial da Meta (WhatsApp Cloud API) no lugar da Zernio, escolhendo o provedor na rota `/configuracoes`. O provedor ativo fica em `zernio_integracoes.provider`; a configuração do provedor inativo é preservada para permitir a troca sem reconfigurar.
+
+### Fase 8.1 — Fundação no banco e abstração de provedor
+
+- [x] Criar a migration `025_whatsapp_provider_meta.sql` com `provider`, `provider_connected_at`, `meta_status` e as colunas Meta (`meta_waba_id`, `meta_phone_number_id`, `meta_access_token_ciphertext`, `meta_token_last4`, `meta_token_expires_at`, `meta_display_phone_number`, `meta_verified_name`, `meta_quality_rating`, `meta_name_status`, `meta_messaging_limit_tier`, `meta_code_verification_status`, `meta_business_id`, `meta_validated_at`, `meta_last_checked_at`).
+- [x] Tornar `api_key_ciphertext` e `key_status` opcionais, para que um locador use apenas a Meta.
+- [x] Extrair a cifra AES-GCM para `supabase/functions/_shared/crypto.ts`, preservando o formato `v1.` da Zernio e usando `vm1.` para a Meta (chave `META_ENCRYPTION_KEY`, com fallback para `ZERNIO_ENCRYPTION_KEY`).
+- [x] Criar `supabase/functions/_shared/meta-graph.ts` com o cliente da Graph API, timeout, mapeamento de erros e sanitização das mensagens do provedor.
+- [x] Criar `supabase/functions/_shared/whatsapp-provider.ts` com a leitura pública da integração e a troca de provedor ativo.
+- [x] Adaptar `zernio-integration` para usar os módulos compartilhados, com a ação `activate` e a remoção que agora limpa apenas os campos da Zernio (a linha é compartilhada entre os dois provedores).
+
+**Estado:** migration 025 aplicada e registrada no projeto `cobranca_car`; colunas e restrições confirmadas remotamente. `zernio-integration` republicada (versão 8) com a resposta de `status` mantida compatível com o frontend existente.
+
+### Fase 8.2 — Abas em `/configuracoes` e conexão Meta
+
+- [x] Transformar `/configuracoes` em página com abas **Zernio**, **Meta Cloud API** e **Conta e Pagamentos**, no mesmo padrão visual de `/mensagens`.
+- [x] Mover o formulário de perfil, token do Mercado Pago e redefinição de senha para a aba **Conta e Pagamentos**, carregando `get-secrets` sob demanda.
+- [x] Criar `src/components/MetaIntegrationCard.jsx` com o status do canal, os metadados do número e as ações de atualizar, desconectar e usar o canal.
+- [x] Implementar o Embedded Signup com o SDK do Facebook (`FB.login` com `config_id`, `response_type: 'code'` e `sessionInfoVersion: '3'`), carregado sob demanda.
+- [x] Implementar a entrada manual de token do sistema, Phone Number ID e WABA ID, validada no servidor antes de gravar.
+- [x] Criar a Edge Function autenticada `meta-integration` com as ações `status`, `validate_manual`, `complete_signup`, `select_number`, `register`, `refresh`, `disconnect` e `activate`.
+- [x] Registrar o número na Meta (`POST /{phone_number_id}/register`) com o PIN de 6 dígitos definido pelo locador, sem persistir o PIN.
+- [x] Assinar os webhooks da conta (`POST /{waba_id}/subscribed_apps`) ao concluir a conexão.
+- [x] Adicionar o botão **Usar este canal** nas duas abas e o aviso quando o outro provedor está ativo.
+- [x] Documentar os secrets (`META_APP_ID`, `META_APP_SECRET`, `META_CONFIGURATION_ID`, `META_GRAPH_VERSION`, `META_ENCRYPTION_KEY` opcional) em `supabase/secrets.txt`, `supabase/functions/.env.example` e README.
+- [x] Criar `docs/INTEGRACAO_META_WHATSAPP.md` com o passo a passo do App da Meta, os limites e o roadmap.
+- [x] Aplicar e registrar a migration 025; publicar `meta-integration` e `zernio-integration`; configurar o secret `META_GRAPH_VERSION`.
+
+**Estado:** `meta-integration` está ativa com JWT obrigatório e `zernio-integration` republicada. Um teste de fumaca com locador descartavel confirmou o formato da resposta de `status`, os 409 de `activate` sem canal, o erro limpo de token invalido em `validate_manual` e a rejeicao de codigo invalido em `complete_signup`; o usuario e a linha de teste foram removidos ao final. `META_APP_ID`, `META_APP_SECRET` e `META_CONFIGURATION_ID` ainda nao foram cadastrados: sem eles a aba Meta informa que o App da Meta nao foi configurado. O frontend precisa ser publicado no Cloudflare Pages para a aba aparecer em producao.
+
+### Fase 8.3 — Templates pela Meta
+
+- [ ] Adicionar `provider` às tabelas `zernio_whatsapp_templates`, `zernio_whatsapp_deliveries`, `zernio_whatsapp_template_usages` e `zernio_whatsapp_manual_deliveries`, relaxando o CHECK de `account_id` para aceitar o Phone Number ID.
+- [ ] Despachar `list`, `create_template`, `set_default` e `save_charge_order` para a Graph API quando o provedor ativo for a Meta.
+- [ ] Criar o conversor de `components` do formato de criacao (`BODY`, `HEADER`, `BUTTONS` com `{{1}}`) para o formato de envio (`body`, `header`, `button` com `parameters`).
+- [ ] Adaptar `ZernioTemplatesCard` para exibir o canal ativo e a origem do template.
+
+### Fase 8.4 — Envio por provedor
+
+- [ ] Fazer `send_charge`, o envio manual, `zernio-message-scheduler` e a confirmacao de pagamento usarem o provedor ativo, preservando a idempotencia atual.
+- [ ] Adaptar `zernio-whatsapp` e `zernio-message-scheduler` para resolver a credencial e o canal de acordo com `provider`.
+
+### Fase 8.5 — Webhooks da Meta
+
+- [ ] Criar a Edge Function `meta-webhook` (`verify_jwt = false`) com a verificacao `GET` (`hub.mode`, `hub.verify_token`, `hub.challenge`) e a assinatura `X-Hub-Signature-256` sobre o corpo cru.
+- [ ] Tratar o inbound `messages` reaproveitando a logica de OTP das fechaduras, extraida de `webhook-fechadura` para `_shared`.
+- [ ] Tratar `statuses` (`sent`, `delivered`, `read`, `failed`) e atualizar o status das entregas registradas.
+
+**Observacao:** enquanto as fases 8.3 a 8.5 nao forem entregues, os envios do SGA continuam usando exclusivamente o canal da Zernio, mesmo com `provider = 'meta'`.
