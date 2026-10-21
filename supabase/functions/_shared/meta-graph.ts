@@ -125,7 +125,7 @@ async function graphFetch(
   return graphFetchUrl(url, options);
 }
 
-async function graphJson<T = Record<string, unknown>>(
+export async function graphJson<T = Record<string, unknown>>(
   path: string,
   options: Parameters<typeof graphFetch>[1] = {},
 ): Promise<T> {

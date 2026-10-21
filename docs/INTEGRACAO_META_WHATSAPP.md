@@ -147,7 +147,26 @@ A rota `/mensagens` já lê o provedor ativo e gerencia os templates do canal co
 
 **Na interface**: as abas **Templates Meta** e **Agendamentos Ativos** mostram o provedor e o canal em uso, com atalho para trocar o canal em `/configuracoes`.
 
-**Limite desta fase**: o envio continua sendo feito apenas pela Zernio. Com o provedor Meta ativo, o envio manual e o agendamento respondem com uma mensagem explicativa, e o cron de lembretes marca a cobrança como `skipped` (sem enviar pelo canal errado e sem poluir o log de falhas). A cobrança permanece pendente e será retomada quando a fase de envio for ativada.
+**Limite desta fase**: a Fase 8.4 habilitou o envio, portanto os lembretes de cobrança, o envio manual, os agendamentos recorrentes e a confirmação de pagamento já saem pelo canal Meta quando ele é o provedor ativo.
+
+## 7. Envio por provedor (Fase 3, entregue)
+
+O envio usa o mesmo módulo nos dois provedores (`supabase/functions/_shared/meta-messages.ts` para a Meta).
+
+**Conversão de componentes**: o template é gravado no formato de criação (`BODY`, `HEADER`, `BUTTONS` com `{{1}}`), e a Messages API espera o formato de envio (`body`, `header`, `button` com `parameters`). A conversão respeita a ordem da Meta: cabeçalho, corpo e botões de URL dinâmica.
+
+**Número brasileiro com 9º dígito**: números brasileiros existem em duas formas no WhatsApp. O número da empresa de exemplo é exibido como `+55 11 92217-5013` (com o 9º dígito), mas está registrado no WhatsApp como `551122175013` (sem ele). A Meta só aceita a forma registrada e responde `#100 Invalid parameter` para a outra. Por isso o envio tenta a forma principal e, se a Meta recusar o destinatário, repete com a variante alternativa.
+
+**Tabela por fluxo**:
+
+| Fluxo | Onde | Canal |
+| --- | --- | --- |
+| Lembrete de cobrança | `zernio-whatsapp` (`send_charge`), chamado pelo cron `enviar-lembretes-cobranca` | provedor ativo |
+| Envio manual | `zernio-whatsapp` (`send_template`) | provedor ativo |
+| Agendamento recorrente | `zernio-message-scheduler` (cron `*/5`) | provedor ativo |
+| Confirmação de pagamento | `payment-webhook-receiver` | provedor ativo |
+
+A idempotência local (`zernio_whatsapp_deliveries`, `zernio_whatsapp_scheduled_deliveries` e `zernio_payment_notifications`) impede mensagem duplicada quando o cron e o botão manual correm ao mesmo tempo.
 
 ## 7. Referências
 

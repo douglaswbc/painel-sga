@@ -344,7 +344,7 @@ Permitir que o locador use a API oficial da Meta (WhatsApp Cloud API) no lugar d
 - [x] Impedir envio pelo canal errado: envio manual e agendamento respondem com aviso quando o provedor ativo é a Meta, e o cron de lembretes marca a cobrança como `skipped`.
 - [x] Aplicar e registrar a migration 026; publicar `zernio-whatsapp` e `enviar-lembretes-cobranca`.
 
-**Estado:** migration 026 aplicada e registrada no projeto `cobranca_car`; as três constraints foram conferidas remotamente. `zernio-whatsapp` e `enviar-lembretes-cobranca` republicadas. Um teste de fumaca com locador descartavel confirmou o despacho: `provider=zernio` sem chave responde 409 pedindo chave Zernio, `provider=meta` sem credencial responde 409 pedindo numero da Meta, `health` responde `attention` e `validate_manual` com token falso devolve erro sanitizado da Meta sem vazar o token. O envio pela Meta continua bloqueado ate a fase 8.4. O frontend precisa ser publicado no Cloudflare Pages.
+**Estado:** migration 026 aplicada e registrada no projeto `cobranca_car`; as três constraints foram conferidas remotamente. `zernio-whatsapp` e `enviar-lembretes-cobranca` republicadas. Um teste de fumaca com locador descartavel confirmou o despacho: `provider=zernio` sem chave responde 409 pedindo chave Zernio, `provider=meta` sem credencial responde 409 pedindo numero da Meta, `health` responde `attention` e `validate_manual` com token falso devolve erro sanitizado da Meta sem vazar o token. O envio pela Meta foi habilitado na fase 8.4. O frontend precisa ser publicado no Cloudflare Pages.
 
 **Validacao com a conta Meta real** (WABA `1493104652592138`, numero `1177949292067294` / +55 11 92217-5013, quality GREEN, limite TIER_2K, nameStatus APPROVED): os secrets `META_APP_ID`, `META_APP_SECRET` e `META_GRAPH_VERSION=26` foram cadastrados; `validate_manual` conectou o canal; `list` devolveu os 8 templates da conta com os componentes preservados; `create_template` gravou um template novo com status PENDING e o `meta_template_id` correto. Todos os templates de teste foram removidos da conta (restaram os 8 originais). As duas regras de analise de template da Meta foram medidas empiricamente e implementadas na validacao do SGA.
 
@@ -354,10 +354,17 @@ Permitir que o locador use a API oficial da Meta (WhatsApp Cloud API) no lugar d
 - [x] Validar no SGA as duas regras de analise de template da Meta (variavel no inicio ou no fim do corpo; corpo curto demais para o numero de variaveis) e repassar o `error_user_msg` da Meta.
 - [x] Adicionar retry com backoff para as chamadas idempotentes da Graph API, que responde com erro transitorio logo apos um POST.
 - [x] Atribuir o system user a WABA (`POST /{waba_id}/assigned_users?user=...&tasks=['MANAGE']`), exigido para excluir templates.
-- [ ] Criar o conversor de `components` do formato de criacao (`BODY`, `HEADER`, `BUTTONS` com `{{1}}`) para o formato de envio (`body`, `header`, `button` com `parameters`).
-- [ ] Fazer `send_charge`, o envio manual, `zernio-message-scheduler` e a confirmacao de pagamento usarem o provedor ativo, preservando a idempotencia atual.
-- [ ] Adaptar `zernio-whatsapp` e `zernio-message-scheduler` para resolver a credencial e o canal de acordo com `provider`.
+- [x] Criar `supabase/functions/_shared/meta-messages.ts` com o conversor de `components` (formato de criacao -> formato de envio) e o envio pela Messages API.
+- [x] Fazer `send_charge`, `send_template`, `zernio-message-scheduler` e `payment-webhook-receiver` usarem o provedor ativo.
+- [x] Tratar o numero brasileiro com e sem o 9o digito: a Meta aceita apenas a forma registrada no WhatsApp e responde `#100 Invalid parameter` para a outra.
+- [x] Repassar o erro da Meta no `zernio-whatsapp` em vez da mensagem generica.
 - [ ] Implementar a exclusao de templates pela Graph API (`DELETE /{waba_id}/message_templates?name=...`), hoje validada na conta real mas ainda sem controle na interface.
+
+**Estado:** validado de ponta a ponta na conta Meta real. O teste criou um locador temporario, configurou `aviso_boleto_01` como template de lembrete de cobranca (4 variaveis: nome, valor, vencimento e link PIX) e um template de confirmacao de pagamento (3 variaveis), e enviou um lembrete real pela Cloud API. Resultado: `messageId=wamid...`, linha de auditoria com `status=sent`, `provider=meta` e `account_id=1177949292067294`, cobranca com `tentativas_envio=1`, `ultimo_lembrete_at` preenchido e `next_reminder_at` agendado para 30 minutos depois. Todos os registros de teste foram removidos.
+
+**Observacao sobre o numero:** o celular da empresa e exibido como `+55 11 92217-5013`, mas no WhatsApp ele esta registrado como `551122175013` (sem o 9o digito). A Meta so aceita a forma registrada, e a tentativa com o 9o digito retorna `#100 Invalid parameter`. O envio tenta as duas formas.
+
+**Confirmacao de pagamento:** o caminho de envio e o mesmo do lembrete e usa a mesma conversao, mas o disparo depende de um pagamento real do Mercado Pago chegar pelo webhook; por isso nao foi exercitado de ponta a ponta para nao gerar cobranca real.
 
 ### Fase 8.5 — Webhooks da Meta
 

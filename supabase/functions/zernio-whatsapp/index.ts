@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { decryptSecret } from '../_shared/crypto.ts';
+import { sendMetaTemplateMessage } from '../_shared/meta-messages.ts';
 import {
   MetaApiError,
   createMessageTemplate,
@@ -601,9 +602,6 @@ Deno.serve(async (req) => {
         .eq('id', templateId).eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId).maybeSingle();
       if (templateError || !template) return json({ error: 'O template não pertence a este locador ou canal.' }, 404);
       if (template.purpose !== 'general') return json({ error: 'Este template é reservado para o fluxo de cobrança.' }, 409);
-      if (channel.provider === 'meta') {
-        return json({ error: 'O envio pela API oficial da Meta será habilitado na próxima etapa. Por enquanto, use a Zernio como canal de envio.' }, 409);
-      }
       const liveTemplates = await syncTemplates(admin, channel, user.id);
       const liveTemplate = liveTemplates.find((item: JsonRecord) => item.id === template.id);
       if (!liveTemplate || liveTemplate.status !== 'APPROVED' || liveTemplate.meta_template_id !== template.meta_template_id) {
@@ -643,32 +641,51 @@ Deno.serve(async (req) => {
       }).select('id').single();
       if (manualDeliveryError || !manualDelivery) throw new PublicError('Nao foi possivel registrar a tentativa de envio. A mensagem nao foi enviada.', 500);
       claimedManualDeliveryId = manualDelivery.id;
-      let sentPayload: JsonRecord;
-      try {
-        sentPayload = await zernioRequest('/inbox/conversations', apiKey, {
-          method: 'POST', idempotencyKey,
-          body: {
-            accountId,
-            participantId: phoneForWhatsApp(tenant.whatsapp),
-            templateName: template.name,
-            templateLanguage: template.language,
-            ...(params.length ? { templateParams: params } : {}),
-          },
+      let messageId: string;
+      let conversationId: string | null = null;
+      if (channel.provider === 'meta') {
+        const sent = await sendMetaTemplateMessage({
+          phoneNumberId: channel.accountId,
+          token: apiKey,
+          to: phoneForWhatsApp(tenant.whatsapp),
+          templateName: template.name,
+          templateLanguage: template.language,
+          templateParams: params,
+          components: template.components || [],
         });
-      } catch (error) {
-        if (error instanceof ZernioError) throw safeZernioError(error);
-        throw error;
+        messageId = sent.messageId;
+      } else {
+        let sentPayload: JsonRecord;
+        try {
+          sentPayload = await zernioRequest('/inbox/conversations', apiKey, {
+            method: 'POST', idempotencyKey,
+            body: {
+              accountId,
+              participantId: phoneForWhatsApp(tenant.whatsapp),
+              templateName: template.name,
+              templateLanguage: template.language,
+              ...(params.length ? { templateParams: params } : {}),
+            },
+          });
+        } catch (error) {
+          if (error instanceof ZernioError) throw safeZernioError(error);
+          throw error;
+        }
+        const result = sentPayload.data ?? sentPayload;
+        const sentMessageId = result.messageId ?? result.message?.id;
+        if (typeof sentMessageId !== 'string' || !sentMessageId) {
+          throw new PublicError('A Zernio não retornou a identificação da mensagem enviada.', 502);
+        }
+        messageId = sentMessageId;
+        conversationId = result.conversationId ?? result.conversation?.id ?? null;
       }
-      const result = sentPayload.data ?? sentPayload;
-      const messageId = result.messageId ?? result.message?.id;
-      if (typeof messageId !== 'string' || !messageId) throw new PublicError('A Zernio não retornou a identificação da mensagem enviada.', 502);
       const sentAt = new Date().toISOString();
       const { error: auditError } = await admin.from('zernio_whatsapp_manual_deliveries').update({
         status: 'sent', message_id: messageId,
-        conversation_id: result.conversationId ?? result.conversation?.id ?? null,
+        conversation_id: conversationId,
         sent_at: sentAt, updated_at: sentAt, safe_error: null, error_code: null,
       }).eq('id', manualDelivery.id).eq('status', 'sending');
-      if (auditError) throw new Error('A Zernio enviou a mensagem, mas o registro de operacao nao foi concluido.');
+      if (auditError) throw new Error('A mensagem foi enviada, mas o registro de operacao nao foi concluido.');
       claimedManualDeliveryId = null;
       return json({ success: true, messageId });
     }
@@ -947,9 +964,6 @@ Deno.serve(async (req) => {
         .eq('id', templateId).eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId).maybeSingle();
       if (selectedTemplateError || !selectedTemplate) return json({ error: 'Template Meta não encontrado neste canal.' }, 404);
       if (selectedTemplate.status !== 'APPROVED') return json({ error: 'Somente templates aprovados pela Meta podem receber agendamentos.' }, 409);
-      if (channel.provider === 'meta') {
-        return json({ error: 'O agendamento pela API oficial da Meta será habilitado na próxima etapa. Por enquanto, use a Zernio como canal de envio.' }, 409);
-      }
       if ((selectedTemplate.components || []).some((component: JsonRecord) => String(component.type).toUpperCase() === 'HEADER' && String(component.format).toUpperCase() === 'LOCATION')) {
         return json({ error: 'Templates com cabeçalho de localização precisam de coordenadas por envio e não podem ser agendados nesta tela.' }, 400);
       }
@@ -1034,15 +1048,6 @@ Deno.serve(async (req) => {
         }
       }
       if (!charge.id_locatario) return json({ error: 'Esta cobrança não tem locatário vinculado. Atualize o cadastro da cobrança.' }, 409);
-      if (channel.provider === 'meta') {
-        // O envio pela API oficial da Meta entra na próxima etapa. A cobrança
-        // continua pendente e o cron tentará de novo depois da ativação.
-        return json({
-          success: false,
-          skipped: true,
-          message: 'O envio por este provedor ainda não está disponível. O lembrete será retomado quando o envio for ativado.',
-        });
-      }
       const { data: tenant, error: tenantError } = await admin.from('locatarios')
         .select('id,nome_completo,whatsapp,email,cpf').eq('id', charge.id_locatario).eq('id_usuario', user.id).maybeSingle();
       if (tenantError || !tenant || !tenant.whatsapp) return json({ error: 'O locatário não possui WhatsApp válido cadastrado.' }, 409);
@@ -1104,25 +1109,42 @@ Deno.serve(async (req) => {
       }
       if (!delivery) throw new Error('Não foi possível registrar a tentativa de envio.');
       claimedDeliveryId = delivery.id;
-      let sendPayload: JsonRecord;
-      try {
-        sendPayload = await zernioRequest('/inbox/conversations', apiKey, {
-          method: 'POST', idempotencyKey: delivery.idempotency_key,
-          body: { accountId, participantId, templateName: selectedTemplate.name, templateLanguage: selectedTemplate.language, templateParams: params },
+      let messageId: string;
+      let conversationId: string | null = null;
+      if (channel.provider === 'meta') {
+        const sent = await sendMetaTemplateMessage({
+          phoneNumberId: channel.accountId,
+          token: apiKey,
+          to: participantId,
+          templateName: selectedTemplate.name,
+          templateLanguage: selectedTemplate.language,
+          templateParams: params,
+          components: selectedTemplate.components || [],
         });
-      } catch (error) {
-        if (error instanceof ZernioError) throw safeZernioError(error);
-        throw error;
-      }
-      const sentData = sendPayload.data ?? sendPayload;
-      const messageId = sentData.messageId ?? sentData.message?.id;
-      const conversationId = sentData.conversationId ?? sentData.conversation?.id;
-      if (typeof messageId !== 'string' || !messageId) {
-        throw new PublicError('A Zernio aceitou o envio, mas não retornou o identificador da mensagem. O SGA manterá a tentativa protegida contra duplicidade.', 502);
+        messageId = sent.messageId;
+      } else {
+        let sendPayload: JsonRecord;
+        try {
+          sendPayload = await zernioRequest('/inbox/conversations', apiKey, {
+            method: 'POST', idempotencyKey: delivery.idempotency_key,
+            body: { accountId, participantId, templateName: selectedTemplate.name, templateLanguage: selectedTemplate.language, templateParams: params },
+          });
+        } catch (error) {
+          if (error instanceof ZernioError) throw safeZernioError(error);
+          throw error;
+        }
+        const sentData = sendPayload.data ?? sendPayload;
+        const sentMessageId = sentData.messageId ?? sentData.message?.id;
+        const sentConversationId = sentData.conversationId ?? sentData.conversation?.id;
+        if (typeof sentMessageId !== 'string' || !sentMessageId) {
+          throw new PublicError('A Zernio aceitou o envio, mas não retornou o identificador da mensagem. O SGA manterá a tentativa protegida contra duplicidade.', 502);
+        }
+        messageId = sentMessageId;
+        conversationId = typeof sentConversationId === 'string' ? sentConversationId : null;
       }
       const sentAt = new Date().toISOString();
       const { error: finishError } = await admin.from('zernio_whatsapp_deliveries').update({
-        status: 'sent', message_id: messageId, conversation_id: typeof conversationId === 'string' ? conversationId : null,
+        status: 'sent', message_id: messageId, conversation_id: conversationId,
         safe_error: null, error_code: null, sent_at: sentAt, updated_at: sentAt,
       }).eq('id', delivery.id).eq('status', 'sending');
       if (finishError) throw new Error('A Zernio enviou a mensagem, mas o SGA não conseguiu concluir a auditoria. Atualize a tela antes de tentar novamente.');
@@ -1147,6 +1169,7 @@ Deno.serve(async (req) => {
     let safeError: PublicError;
     if (error instanceof PublicError) safeError = error;
     else if (error instanceof ZernioError) safeError = safeZernioError(error);
+    else if (error instanceof MetaApiError) safeError = new PublicError(describeMetaError(error), error.status === 429 ? 429 : 400);
     else safeError = new PublicError('Não foi possível concluir a operação. Confira as Configurações e tente novamente.', 500);
     if (claimedDeliveryId && admin) {
       const code = error instanceof ZernioError && error.code ? error.code : 'send_failed';

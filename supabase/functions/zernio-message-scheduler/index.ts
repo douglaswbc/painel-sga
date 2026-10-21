@@ -1,5 +1,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { isServiceRequest } from '../_shared/cron-auth.ts';
+import { decryptSecret } from '../_shared/crypto.ts';
+import { sendMetaTemplateMessage } from '../_shared/meta-messages.ts';
+import { normalizeProvider } from '../_shared/whatsapp-provider.ts';
 
 type JsonRecord = Record<string, any>;
 const encoder = new TextEncoder();
@@ -130,9 +133,9 @@ Deno.serve(async (req) => {
 
   const ownerIds = [...new Set(schedules.map((schedule: JsonRecord) => schedule.id_usuario))];
   const { data: integrations, error: integrationError } = await admin.from('zernio_integracoes')
-    .select('id_usuario,api_key_ciphertext,key_status,whatsapp_account_id')
+    .select('id_usuario,provider,api_key_ciphertext,key_status,whatsapp_account_id,meta_access_token_ciphertext,meta_status,meta_phone_number_id,meta_waba_id')
     .in('id_usuario', ownerIds);
-  if (integrationError) return json({ error: 'Não foi possível carregar as integrações Zernio.' }, 500);
+  if (integrationError) return json({ error: 'Não foi possível carregar as integrações de WhatsApp.' }, 500);
   const integrationByOwner = new Map((integrations || []).map((item: JsonRecord) => [item.id_usuario, item]));
   const apiKeys = new Map<string, string>();
   const results: JsonRecord[] = [];
@@ -149,14 +152,27 @@ Deno.serve(async (req) => {
         continue;
       }
       if (!tenant?.whatsapp) throw new Error('O locatário não possui WhatsApp cadastrado.');
-      if (!integration?.api_key_ciphertext || integration.key_status !== 'valid'
-        || integration.whatsapp_account_id !== template.account_id) {
+      const provider = normalizeProvider(integration?.provider);
+      const channelId = provider === 'meta' ? integration?.meta_phone_number_id : integration?.whatsapp_account_id;
+      if (provider === 'meta') {
+        if (!integration?.meta_access_token_ciphertext || !integration?.meta_phone_number_id || integration?.meta_status === 'invalid') {
+          throw new Error('A integração da Meta ou o canal associado ao template está indisponível.');
+        }
+      } else if (!integration?.api_key_ciphertext || integration.key_status !== 'valid') {
         throw new Error('A integração Zernio ou o canal associado ao template está indisponível.');
       }
-      let apiKey = apiKeys.get(schedule.id_usuario);
+      if (channelId !== template.account_id) {
+        throw new Error('O canal do template não é o canal ativo deste locador.');
+      }
+      const credential = provider === 'meta'
+        ? integration.meta_access_token_ciphertext
+        : integration.api_key_ciphertext;
+      let apiKey = apiKeys.get(`${provider}:${schedule.id_usuario}`);
       if (!apiKey) {
-        apiKey = await decryptApiKey(integration.api_key_ciphertext, schedule.id_usuario);
-        apiKeys.set(schedule.id_usuario, apiKey);
+        apiKey = provider === 'meta'
+          ? await decryptSecret(credential, schedule.id_usuario)
+          : await decryptApiKey(credential, schedule.id_usuario);
+        apiKeys.set(`${provider}:${schedule.id_usuario}`, apiKey);
       }
       const templateParams = Array.isArray(schedule.template_params) ? schedule.template_params : [];
       const scheduledTime = String(schedule.horario_envio).slice(0, 8);
@@ -199,20 +215,34 @@ Deno.serve(async (req) => {
         delivery = claim.data;
       }
 
-      const sendBody: JsonRecord = {
-        accountId: template.account_id,
-        participantId: phoneForWhatsApp(tenant.whatsapp),
-        templateName: template.name,
-        templateLanguage: template.language,
-        ...(templateParams.length ? { templateParams } : {}),
-      };
-      const sent = await zernioSend(apiKey, sendBody, idempotencyKey);
+      let sent: { messageId: string; conversationId: string | null };
+      if (provider === 'meta') {
+        const result = await sendMetaTemplateMessage({
+          phoneNumberId: template.account_id,
+          token: apiKey,
+          to: phoneForWhatsApp(tenant.whatsapp),
+          templateName: template.name,
+          templateLanguage: template.language,
+          templateParams,
+          components: template.components || [],
+        });
+        sent = { messageId: result.messageId, conversationId: null };
+      } else {
+        const sendBody: JsonRecord = {
+          accountId: template.account_id,
+          participantId: phoneForWhatsApp(tenant.whatsapp),
+          templateName: template.name,
+          templateLanguage: template.language,
+          ...(templateParams.length ? { templateParams } : {}),
+        };
+        sent = await zernioSend(apiKey, sendBody, idempotencyKey);
+      }
       const sentAt = new Date().toISOString();
       const { error: completeError } = await admin.from('zernio_whatsapp_scheduled_deliveries').update({
         status: 'sent', message_id: sent.messageId, conversation_id: sent.conversationId,
         safe_error: null, error_code: null, sent_at: sentAt,
       }).eq('id', delivery.id).eq('status', 'sending');
-      if (completeError) throw new Error('A Zernio aceitou a mensagem, mas a auditoria do envio não foi concluída.');
+      if (completeError) throw new Error('A mensagem foi enviada, mas a auditoria do envio não foi concluída.');
       const nextDate = nextOccurrence(schedule, today);
       const { error: scheduleUpdateError } = await admin.from('agendamentos_mensagens').update({
         proximo_envio: nextDate, ultimo_erro: null, ultima_execucao: sentAt,

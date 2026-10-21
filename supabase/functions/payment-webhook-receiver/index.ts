@@ -1,5 +1,8 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { decryptSecret } from '../_shared/crypto.ts'
+import { sendMetaTemplateMessage } from '../_shared/meta-messages.ts'
+import { normalizeProvider } from '../_shared/whatsapp-provider.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -26,6 +29,11 @@ async function decrypt(ciphertext: string, ownerId: string): Promise<string> {
   return new TextDecoder().decode(clear)
 }
 
+/** Decrypts the credential of the active provider (Zernio key or Meta token). */
+async function decryptProviderCredential(ciphertext: string, ownerId: string, provider: 'zernio' | 'meta'): Promise<string> {
+  return provider === 'meta' ? decryptSecret(ciphertext, ownerId) : decrypt(ciphertext, ownerId)
+}
+
 function templateParameterCount(components: any[] = []): number {
   const ordered = [
     ...components.filter((component) => String(component.type).toUpperCase() === 'HEADER'),
@@ -50,18 +58,23 @@ async function sendPaymentConfirmation(admin: any, ownerId: string, paymentId: s
   const phoneValue = target?.whatsapp ?? target?.telefone
   if (!phoneValue) return
   const { data: integration } = await admin.from('zernio_integracoes')
-    .select('api_key_ciphertext,whatsapp_account_id,key_status')
+    .select('provider,api_key_ciphertext,whatsapp_account_id,key_status,meta_access_token_ciphertext,meta_status,meta_phone_number_id')
     .eq('id_usuario', ownerId).maybeSingle()
-  if (!integration?.api_key_ciphertext || integration.key_status !== 'valid' || !integration.whatsapp_account_id) return
+  const provider = normalizeProvider(integration?.provider)
+  const channelId = provider === 'meta' ? integration?.meta_phone_number_id : integration?.whatsapp_account_id
+  const credential = provider === 'meta' ? integration?.meta_access_token_ciphertext : integration?.api_key_ciphertext
+  if (!credential || !channelId) return
+  if (provider === 'meta' && integration?.meta_status === 'invalid') return
+  if (provider === 'zernio' && integration?.key_status !== 'valid') return
 
   const { data: templateUsage } = await admin.from('zernio_whatsapp_template_usages')
     .select('template_id,variable_mapping')
-    .eq('id_usuario', ownerId).eq('account_id', integration.whatsapp_account_id)
+    .eq('id_usuario', ownerId).eq('provider', provider).eq('account_id', channelId)
     .eq('purpose', 'payment_confirmation').eq('is_default', true).maybeSingle()
   if (!templateUsage) return
   const { data: template } = await admin.from('zernio_whatsapp_templates')
     .select('name,language,account_id,components,status')
-    .eq('id', templateUsage.template_id).eq('id_usuario', ownerId).eq('account_id', integration.whatsapp_account_id)
+    .eq('id', templateUsage.template_id).eq('id_usuario', ownerId).eq('provider', provider).eq('account_id', channelId)
     .eq('status', 'APPROVED').maybeSingle()
   if (!template) return
 
@@ -97,35 +110,51 @@ async function sendPaymentConfirmation(admin: any, ownerId: string, paymentId: s
     await admin.from('zernio_payment_notifications').update({ status: 'failed', safe_error: 'invalid_template_mapping', updated_at: new Date().toISOString() }).eq('id', attempt.id)
     return
   }
-  const apiKey = await decrypt(integration.api_key_ciphertext, ownerId)
+  const apiKey = await decryptProviderCredential(credential, ownerId, provider)
   const phone = String(phoneValue).replace(/\D/g, '')
   const participantId = phone.startsWith('55') ? phone : `55${phone}`
+  const templateParams = mapping.map((item: any) => values[item.field])
   try {
-    const response = await fetch(`${ZERNIO_API}/inbox/conversations`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        'Idempotency-Key': attempt.idempotency_key,
-      },
-      body: JSON.stringify({
-        accountId: integration.whatsapp_account_id,
-        participantId,
+    let messageId: string | null = null
+    if (provider === 'meta') {
+      const sent = await sendMetaTemplateMessage({
+        phoneNumberId: channelId as string,
+        token: apiKey,
+        to: participantId,
         templateName: template.name,
         templateLanguage: template.language,
-        templateParams: mapping.map((item: any) => values[item.field]),
-      }),
-      signal: AbortSignal.timeout(20000),
-    })
-    const result = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(`zernio_http_${response.status}`)
+        templateParams,
+        components: Array.isArray(template.components) ? template.components : [],
+      })
+      messageId = sent.messageId
+    } else {
+      const response = await fetch(`${ZERNIO_API}/inbox/conversations`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'Idempotency-Key': attempt.idempotency_key,
+        },
+        body: JSON.stringify({
+          accountId: channelId,
+          participantId,
+          templateName: template.name,
+          templateLanguage: template.language,
+          templateParams,
+        }),
+        signal: AbortSignal.timeout(20000),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(`zernio_http_${response.status}`)
+      messageId = result.message?.id ?? result.data?.message?.id ?? result.id ?? null
+    }
     await admin.from('zernio_payment_notifications').update({
-      status: 'sent', message_id: result.message?.id ?? result.data?.message?.id ?? result.id ?? null,
+      status: 'sent', message_id: messageId,
       safe_error: null, updated_at: new Date().toISOString(),
     }).eq('id', attempt.id)
   } catch (error) {
-    console.error('Zernio payment confirmation failed:', error)
+    console.error('Payment confirmation failed:', error)
     await admin.from('zernio_payment_notifications').update({
       status: 'failed', safe_error: error instanceof Error ? error.message.slice(0, 160) : 'send_failed',
       updated_at: new Date().toISOString(),
