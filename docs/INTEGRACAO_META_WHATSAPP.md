@@ -85,9 +85,34 @@ Preencha **Token de acesso do sistema**, **Phone Number ID** e **WABA ID**. O SG
 
 | Fase | Escopo |
 | --- | --- |
-| 2 | Coluna `provider` nas tabelas de templates e envios; `list`, `create_template`, `set_default` e `save_charge_order` despachando para a Graph API; conversor de `components` (formato de criação → formato de envio). |
+| 2 | Coluna `provider` nas tabelas de templates e envios; `list`, `create_template`, `set_default` e `save_charge_order` despachando para a Graph API; conversor de `components` (formato de criação → formato de envio). **Entregue** (ver seção 5). |
 | 3 | `send_charge`, envio manual, `zernio-message-scheduler` e confirmação de pagamento usando o provedor ativo. |
 | 4 | Edge Function `meta-webhook` (verificação `GET`, assinatura `X-Hub-Signature-256`, inbound `messages` para o OTP das fechaduras e `statuses` de entrega). |
+
+## 5. Templates por provedor (Fase 2, entregue)
+
+A rota `/mensagens` já lê o provedor ativo e gerencia os templates do canal correspondente.
+
+**No banco** (migration `026_whatsapp_template_provider.sql`):
+
+- `zernio_whatsapp_templates.provider` (`zernio` | `meta`), com padrão `zernio` para os registros existentes.
+- `account_id` passou a aceitar o Phone Number ID da Meta (`^[0-9]{10,20}$`) além do id de conta da Zernio (`^[a-fA-F0-9]{24}$`).
+- A chave única virou `(id_usuario, provider, account_id, name, language)`, e o template padrão é exclusivo por provedor.
+- O `status` aceitou os estados extras da Meta: `PENDING_DEPRECATION`, `LIMIT_EXCEEDED`, `DEPRECATED`, `ARCHIVED`, `DELETED` e `EXPIRED`.
+- `provider` também foi adicionado a `zernio_whatsapp_deliveries`, `zernio_whatsapp_template_usages` e `zernio_whatsapp_manual_deliveries`.
+
+**No backend** (`zernio-whatsapp`):
+
+- `resolveChannel()` descobre o canal do provedor ativo a partir de `zernio_integracoes.provider`, descriptografa a credencial correta (`v1.` na Zernio, `vm1.` na Meta) e valida o canal remoto no caso da Zernio.
+- `list` e `syncTemplates()` consultam a API do provedor: `GET /whatsapp/templates` na Zernio, `GET /{waba_id}/message_templates` (com paginação) na Meta.
+- `create_template` usa `POST /whatsapp/templates` na Zernio e `POST /{waba_id}/message_templates` com `parameter_format: POSITIONAL` na Meta. O `components` usa o mesmo formato da Meta nos dois casos.
+- `set_default` e `save_charge_order` gravam o `provider` junto do uso do template.
+- `health` verifica o canal do provedor ativo.
+- A resposta de `list` inclui `channel` (`provider`, `providerLabel`, `accountId`, `phoneNumber`, `label`), consumido pela interface.
+
+**Na interface**: as abas **Templates Meta** e **Agendamentos Ativos** mostram o provedor e o canal em uso, com atalho para trocar o canal em `/configuracoes`.
+
+**Limite desta fase**: o envio continua sendo feito apenas pela Zernio. Com o provedor Meta ativo, o envio manual e o agendamento respondem com uma mensagem explicativa, e o cron de lembretes marca a cobrança como `skipped` (sem enviar pelo canal errado e sem poluir o log de falhas). A cobrança permanece pendente e será retomada quando a fase de envio for ativada.
 
 ## 7. Referências
 

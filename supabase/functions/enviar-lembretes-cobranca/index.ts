@@ -78,7 +78,7 @@ Deno.serve(async (req) => {
       results.push({
         id: charge.id,
         ownerId: charge.id_usuario,
-        status: response.ok && payload?.success ? 'sent' : payload?.alreadySent ? 'already_sent' : 'failed',
+        status: response.ok && payload?.success ? 'sent' : payload?.alreadySent ? 'already_sent' : payload?.skipped ? 'skipped' : 'failed',
         ...(!response.ok ? { detail: typeof payload?.error === 'string' ? payload.error.slice(0, 300) : `HTTP ${response.status}` } : {}),
       });
     } catch (error) {
@@ -93,6 +93,6 @@ Deno.serve(async (req) => {
     return counts;
   }, {});
   const failureSummary = Object.entries(failedByReason).map(([reason, count]) => `${count} × ${reason}`).join('; ');
-  console.log(`Reminder run completed: ${results.filter((item) => item.status === 'sent').length} sent, ${results.filter((item) => item.status === 'already_sent').length} already sent, ${results.filter((item) => item.status === 'failed').length} failed.${failureSummary ? ` Failure reasons: ${failureSummary}` : ''}`);
+  console.log(`Reminder run completed: ${results.filter((item) => item.status === 'sent').length} sent, ${results.filter((item) => item.status === 'already_sent').length} already sent, ${results.filter((item) => item.status === 'skipped').length} skipped, ${results.filter((item) => item.status === 'failed').length} failed.${failureSummary ? ` Failure reasons: ${failureSummary}` : ''}`);
   return json({ processed: results.length, results });
 });

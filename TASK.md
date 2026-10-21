@@ -332,13 +332,23 @@ Permitir que o locador use a API oficial da Meta (WhatsApp Cloud API) no lugar d
 
 ### Fase 8.3 — Templates pela Meta
 
-- [ ] Adicionar `provider` às tabelas `zernio_whatsapp_templates`, `zernio_whatsapp_deliveries`, `zernio_whatsapp_template_usages` e `zernio_whatsapp_manual_deliveries`, relaxando o CHECK de `account_id` para aceitar o Phone Number ID.
-- [ ] Despachar `list`, `create_template`, `set_default` e `save_charge_order` para a Graph API quando o provedor ativo for a Meta.
-- [ ] Criar o conversor de `components` do formato de criacao (`BODY`, `HEADER`, `BUTTONS` com `{{1}}`) para o formato de envio (`body`, `header`, `button` com `parameters`).
-- [ ] Adaptar `ZernioTemplatesCard` para exibir o canal ativo e a origem do template.
+- [x] Criar a migration `026_whatsapp_template_provider.sql` com `provider` em `zernio_whatsapp_templates`, `zernio_whatsapp_deliveries`, `zernio_whatsapp_template_usages` e `zernio_whatsapp_manual_deliveries`.
+- [x] Relaxar o CHECK de `account_id` para aceitar o Phone Number ID da Meta e recriar a chave única como `(id_usuario, provider, account_id, name, language)`.
+- [x] Aceitar os estados extras de template da Meta (`LIMIT_EXCEEDED`, `DEPRECATED`, `PENDING_DEPRECATION`, `ARCHIVED`, `DELETED`, `EXPIRED`) e ler o motivo de recusa em `rejected_reason`.
+- [x] Criar `resolveChannel()` em `zernio-whatsapp`: o canal vem de `zernio_integracoes.provider` e a credencial é descriptografada conforme o prefixo (`v1.` Zernio, `vm1.` Meta).
+- [x] Despachar `list` e `syncTemplates()` para a API do provedor ativo: `GET /whatsapp/templates` na Zernio e `GET /{waba_id}/message_templates` com paginação na Meta.
+- [x] Despachar `create_template`: `POST /whatsapp/templates` na Zernio e `POST /{waba_id}/message_templates` com `parameter_format: POSITIONAL` na Meta.
+- [x] Gravar `provider` nos usos de template e incluir `channel` na resposta de `list`, `create_template`, `set_default` e `save_charge_order`.
+- [x] Adaptar `health` ao provedor ativo.
+- [x] Mostrar provedor e canal nas abas **Templates Meta** e **Agendamentos Ativos**, com atalho para `/configuracoes`.
+- [x] Impedir envio pelo canal errado: envio manual e agendamento respondem com aviso quando o provedor ativo é a Meta, e o cron de lembretes marca a cobrança como `skipped`.
+- [x] Aplicar e registrar a migration 026; publicar `zernio-whatsapp` e `enviar-lembretes-cobranca`.
+
+**Estado:** migration 026 aplicada e registrada no projeto `cobranca_car`; as três constraints foram conferidas remotamente. `zernio-whatsapp` e `enviar-lembretes-cobranca` republicadas. Um teste de fumaca com locador descartavel confirmou o despacho: `provider=zernio` sem chave responde 409 pedindo chave Zernio, `provider=meta` sem credencial responde 409 pedindo numero da Meta, `health` responde `attention` e `validate_manual` com token falso devolve erro sanitizado da Meta sem vazar o token. O envio pela Meta continua bloqueado ate a fase 8.4. O frontend precisa ser publicado no Cloudflare Pages.
 
 ### Fase 8.4 — Envio por provedor
 
+- [ ] Criar o conversor de `components` do formato de criacao (`BODY`, `HEADER`, `BUTTONS` com `{{1}}`) para o formato de envio (`body`, `header`, `button` com `parameters`).
 - [ ] Fazer `send_charge`, o envio manual, `zernio-message-scheduler` e a confirmacao de pagamento usarem o provedor ativo, preservando a idempotencia atual.
 - [ ] Adaptar `zernio-whatsapp` e `zernio-message-scheduler` para resolver a credencial e o canal de acordo com `provider`.
 

@@ -59,12 +59,10 @@ function parseError(status: number, payload: unknown): MetaApiError {
   return new MetaApiError(status, message, code, subcode, type);
 }
 
-async function graphFetch(
-  path: string,
-  options: { method?: string; token?: string; body?: unknown; query?: Record<string, string>; timeoutMs?: number } = {},
+async function graphFetchUrl(
+  url: string,
+  options: { method?: string; token?: string; body?: unknown; timeoutMs?: number } = {},
 ): Promise<{ payload: unknown; text: string }> {
-  const query = new URLSearchParams(options.query ?? {});
-  const url = `${GRAPH_BASE}/${graphVersion()}/${path.replace(/^\//, '')}${query.toString() ? `?${query.toString()}` : ''}`;
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (options.token) headers.Authorization = `Bearer ${options.token}`;
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
@@ -88,6 +86,15 @@ async function graphFetch(
   }
   if (!response.ok) throw parseError(response.status, payload);
   return { payload, text };
+}
+
+async function graphFetch(
+  path: string,
+  options: { method?: string; token?: string; body?: unknown; query?: Record<string, string>; timeoutMs?: number } = {},
+): Promise<{ payload: unknown; text: string }> {
+  const query = new URLSearchParams(options.query ?? {});
+  const url = `${GRAPH_BASE}/${graphVersion()}/${path.replace(/^\//, '')}${query.toString() ? `?${query.toString()}` : ''}`;
+  return graphFetchUrl(url, options);
 }
 
 async function graphJson<T = Record<string, unknown>>(
@@ -238,10 +245,79 @@ export async function subscribeWaba(wabaId: string, token: string): Promise<bool
   return payload.success === true;
 }
 
+export type MetaTemplate = {
+  id: string;
+  name: string;
+  language: string;
+  category: string;
+  status: string;
+  components: unknown[];
+  rejectionReason: string | null;
+};
+
+function mapMetaTemplate(item: Record<string, unknown>): MetaTemplate | null {
+  const id = typeof item.id === 'string' ? item.id : null;
+  const name = typeof item.name === 'string' ? item.name : null;
+  const language = typeof item.language === 'string' ? item.language : null;
+  if (!id || !name || !language) return null;
+  return {
+    id,
+    name,
+    language,
+    category: typeof item.category === 'string' ? item.category.toUpperCase() : 'UTILITY',
+    status: typeof item.status === 'string' ? item.status.toUpperCase() : 'PENDING',
+    components: Array.isArray(item.components) ? item.components : [],
+    rejectionReason: typeof item.rejected_reason === 'string' ? item.rejected_reason : null,
+  };
+}
+
+/** Lists the message templates of a WhatsApp Business Account, following pagination. */
+export async function listMessageTemplates(wabaId: string, token: string): Promise<MetaTemplate[]> {
+  const templates: MetaTemplate[] = [];
+  const fields = 'name,language,category,status,components,rejected_reason,parameter_format';
+  let next: string | null = `${GRAPH_BASE}/${graphVersion()}/${wabaId}/message_templates?fields=${encodeURIComponent(fields)}&limit=100`;
+  let pages = 0;
+  while (next && pages < 10) {
+    const { payload } = await graphFetchUrl(next, { token });
+    const data = Array.isArray((payload as { data?: unknown[] })?.data) ? (payload as { data: Record<string, unknown>[] }).data : [];
+    for (const item of data) {
+      const mapped = mapMetaTemplate(item);
+      if (mapped) templates.push(mapped);
+    }
+    const paging = (payload as { paging?: { next?: unknown } })?.paging;
+    next = typeof paging?.next === 'string' ? paging.next : null;
+    pages += 1;
+  }
+  return templates;
+}
+
+/** Creates a message template on a WhatsApp Business Account. */
+export async function createMessageTemplate(
+  wabaId: string,
+  token: string,
+  payload: Record<string, unknown>,
+): Promise<{ id: string; status: string; category: string }> {
+  const result = await graphJson<Record<string, unknown>>(`${wabaId}/message_templates`, {
+    method: 'POST',
+    token,
+    body: payload,
+  });
+  const id = typeof result.id === 'string' ? result.id : null;
+  if (!id) throw new MetaApiError(502, 'A Meta não retornou a identificação do template criado.');
+  return {
+    id,
+    status: typeof result.status === 'string' ? result.status.toUpperCase() : 'PENDING',
+    category: typeof result.category === 'string' ? result.category.toUpperCase() : 'UTILITY',
+  };
+}
+
 /** Friendly, non technical message for a Meta API failure. */
 export function describeMetaError(error: unknown): string {
   if (!(error instanceof MetaApiError)) {
     return error instanceof Error ? error.message : 'Não foi possível concluir a operação na Meta.';
+  }
+  if (error.status === 400 && error.subcode === 2388024) {
+    return 'Já existe um template com esse nome e idioma nesta conta. Escolha outro nome ou apague o template existente.';
   }
   if (error.status === 400 && error.subcode === 33) {
     return 'A Meta não encontrou o objeto informado. Confira o Phone Number ID e o WABA ID.';

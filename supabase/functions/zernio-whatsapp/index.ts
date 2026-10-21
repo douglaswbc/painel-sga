@@ -1,4 +1,13 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { decryptSecret } from '../_shared/crypto.ts';
+import {
+  MetaApiError,
+  createMessageTemplate,
+  describeMetaError,
+  getPhoneNumberDetails,
+  listMessageTemplates,
+} from '../_shared/meta-graph.ts';
+import { normalizeProvider, type WhatsappProvider } from '../_shared/whatsapp-provider.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -112,22 +121,47 @@ function listAt(payload: JsonRecord, key: string): JsonRecord[] {
   return [];
 }
 
-function mapTemplate(template: JsonRecord, accountId: string, ownerId: string, existing?: JsonRecord) {
+type Channel = {
+  provider: WhatsappProvider;
+  accountId: string;
+  wabaId: string | null;
+  token: string;
+  label: string;
+  phoneNumber: string | null;
+};
+
+const TEMPLATE_STATUSES = new Set([
+  'PENDING', 'APPROVED', 'REJECTED', 'PAUSED', 'DISABLED', 'IN_APPEAL',
+  'PENDING_DELETION', 'PENDING_DEPRECATION', 'LIMIT_EXCEEDED', 'DEPRECATED',
+  'ARCHIVED', 'DELETED', 'EXPIRED',
+]);
+
+function publicChannel(channel: Channel) {
+  return {
+    provider: channel.provider,
+    providerLabel: channel.provider === 'meta' ? 'Meta Cloud API' : 'Zernio',
+    accountId: channel.accountId,
+    phoneNumber: channel.phoneNumber,
+    label: channel.label,
+  };
+}
+
+function mapTemplate(template: JsonRecord, channel: Channel, ownerId: string, existing?: JsonRecord) {
   const remoteId = template.id ?? template._id;
   if (typeof remoteId !== 'string' || !template.name || !template.language) return null;
   const status = String(template.status ?? 'PENDING').toUpperCase();
-  const allowed = new Set(['PENDING', 'APPROVED', 'REJECTED', 'PAUSED', 'DISABLED', 'IN_APPEAL', 'PENDING_DELETION']);
   return {
     ...(existing?.id ? { id: existing.id } : {}),
     id_usuario: ownerId,
-    account_id: accountId,
+    provider: channel.provider,
+    account_id: channel.accountId,
     meta_template_id: remoteId,
     name: String(template.name),
     language: String(template.language),
     category: ['UTILITY', 'MARKETING', 'AUTHENTICATION'].includes(String(template.category).toUpperCase())
       ? String(template.category).toUpperCase() : 'UTILITY',
-    status: allowed.has(status) ? status : 'PENDING',
-    rejection_reason: template.reason ?? template.rejectionReason ?? template.rejection_reason ?? null,
+    status: TEMPLATE_STATUSES.has(status) ? status : 'PENDING',
+    rejection_reason: template.reason ?? template.rejected_reason ?? template.rejectionReason ?? template.rejection_reason ?? null,
     components: Array.isArray(template.components) ? template.components : [],
     variable_mapping: existing?.variable_mapping ?? [],
     purpose: existing?.purpose ?? 'general',
@@ -137,34 +171,106 @@ function mapTemplate(template: JsonRecord, accountId: string, ownerId: string, e
   };
 }
 
-async function syncTemplates(admin: any, apiKey: string, ownerId: string, accountId: string) {
-  const query = new URLSearchParams({ accountId });
-  const payload = await zernioRequest(`/whatsapp/templates?${query.toString()}`, apiKey);
-  const remoteTemplates = listAt(payload, 'templates');
+async function listRemoteTemplates(channel: Channel): Promise<JsonRecord[]> {
+  if (channel.provider === 'meta') {
+    const templates = await listMessageTemplates(channel.wabaId as string, channel.token);
+    return templates.map((template) => ({
+      id: template.id,
+      name: template.name,
+      language: template.language,
+      category: template.category,
+      status: template.status,
+      components: template.components,
+      rejected_reason: template.rejectionReason,
+    }));
+  }
+  const query = new URLSearchParams({ accountId: channel.accountId });
+  const payload = await zernioRequest(`/whatsapp/templates?${query.toString()}`, channel.token);
+  return listAt(payload, 'templates');
+}
+
+async function syncTemplates(admin: any, channel: Channel, ownerId: string) {
+  const remoteTemplates = await listRemoteTemplates(channel);
   const { data: existingRows, error: readError } = await admin.from('zernio_whatsapp_templates')
-    .select('*').eq('id_usuario', ownerId).eq('account_id', accountId);
+    .select('*').eq('id_usuario', ownerId).eq('provider', channel.provider).eq('account_id', channel.accountId);
   if (readError) throw new Error('Não foi possível ler os templates salvos.');
   const rows = remoteTemplates.map((template) => {
     const existing = existingRows?.find((row: JsonRecord) => row.name === template.name && row.language === template.language);
-    return mapTemplate(template, accountId, ownerId, existing);
+    return mapTemplate(template, channel, ownerId, existing);
   }).filter(Boolean);
   if (rows.length) {
     const { error } = await admin.from('zernio_whatsapp_templates')
-      .upsert(rows, { onConflict: 'id_usuario,account_id,name,language' });
+      .upsert(rows, { onConflict: 'id_usuario,provider,account_id,name,language' });
     if (error) throw new Error('Os templates foram consultados, mas não foi possível atualizar o catálogo do SGA.');
   }
   const { data, error } = await admin.from('zernio_whatsapp_templates')
-    .select('id,meta_template_id,name,language,category,status,rejection_reason,components,variable_mapping,purpose,is_default,last_synced_at')
-    .eq('id_usuario', ownerId).eq('account_id', accountId).order('name').order('language');
+    .select('id,meta_template_id,name,language,category,status,rejection_reason,components,variable_mapping,purpose,is_default,last_synced_at,provider')
+    .eq('id_usuario', ownerId).eq('provider', channel.provider).eq('account_id', channel.accountId).order('name').order('language');
   if (error) throw new Error('Não foi possível carregar os templates do SGA.');
   const { data: usages, error: usageError } = await admin.from('zernio_whatsapp_template_usages')
     .select('template_id,purpose,variable_mapping,is_default,reminder_order')
-    .eq('id_usuario', ownerId).eq('account_id', accountId);
+    .eq('id_usuario', ownerId).eq('provider', channel.provider).eq('account_id', channel.accountId);
   if (usageError) throw new Error('Não foi possível carregar os usos dos templates. Aplique as migrations 013 e 015.');
   return (data ?? []).map((template: JsonRecord) => ({
     ...template,
     usages: (usages ?? []).filter((usage: JsonRecord) => usage.template_id === template.id),
   }));
+}
+
+/**
+ * Resolves the channel of the active provider for the authenticated landlord.
+ * The landlord id always comes from the session, never from the request body.
+ */
+async function resolveChannel(integration: JsonRecord | null, ownerId: string): Promise<Channel> {
+  const provider = normalizeProvider(integration?.provider);
+
+  if (provider === 'meta') {
+    if (!integration?.meta_access_token_ciphertext || !integration?.meta_phone_number_id || !integration?.meta_waba_id) {
+      throw new PublicError('Conecte um número da Meta nas Configurações antes de continuar.', 409);
+    }
+    if (integration.meta_status === 'invalid') {
+      throw new PublicError('O token da Meta não foi aceito. Gere um novo token nas Configurações.', 409);
+    }
+    const token = await decryptSecret(integration.meta_access_token_ciphertext, ownerId);
+    return {
+      provider,
+      accountId: integration.meta_phone_number_id,
+      wabaId: integration.meta_waba_id,
+      token,
+      label: integration.meta_display_phone_number || integration.meta_verified_name || 'WhatsApp da Meta',
+      phoneNumber: integration.meta_display_phone_number ?? null,
+    };
+  }
+
+  if (!integration?.api_key_ciphertext || integration?.key_status !== 'valid') {
+    throw new PublicError('Valide uma chave Zernio nas Configurações antes de continuar.', 409);
+  }
+  if (!integration.whatsapp_account_id || !integration.zernio_profile_id) {
+    throw new PublicError('Conecte um canal WhatsApp da Zernio nas Configurações antes de continuar.', 409);
+  }
+  const accountId = integration.whatsapp_account_id as string;
+  if (!/^[a-fA-F0-9]{24}$/.test(accountId)) {
+    throw new PublicError('Atualize a conexão do canal WhatsApp nas Configurações.', 409);
+  }
+  const apiKey = await decryptSecret(integration.api_key_ciphertext, ownerId);
+  const accountQuery = new URLSearchParams({ profileId: integration.zernio_profile_id });
+  const accountsPayload = await zernioRequest(`/accounts?${accountQuery.toString()}`, apiKey);
+  const remoteAccount = listAt(accountsPayload, 'accounts').find((item) => {
+    if ((item._id ?? item.id) !== accountId || item.platform !== 'whatsapp' || item.isActive === false) return false;
+    const profileId = typeof item.profileId === 'object' ? item.profileId?._id ?? item.profileId?.id : item.profileId;
+    return !profileId || profileId === integration.zernio_profile_id;
+  });
+  if (!remoteAccount) {
+    throw new PublicError('O canal não está ativo no perfil Zernio selecionado. Reconecte-o nas Configurações.', 409);
+  }
+  return {
+    provider,
+    accountId,
+    wabaId: null,
+    token: apiKey,
+    label: [integration.zernio_profile_name, integration.whatsapp_account_name].filter(Boolean).join(' · ') || 'Canal Zernio',
+    phoneNumber: integration.whatsapp_phone_number ?? null,
+  };
 }
 
 function safeZernioError(error: ZernioError): PublicError {
@@ -324,9 +430,34 @@ Deno.serve(async (req) => {
     const action = body?.action;
     if (action === 'health') {
       const { data: integration, error: integrationError } = await admin.from('zernio_integracoes')
-        .select('api_key_ciphertext,key_status,whatsapp_account_id,zernio_profile_id')
+        .select('*')
         .eq('id_usuario', user.id).maybeSingle();
-      if (integrationError || !integration?.api_key_ciphertext || integration.key_status !== 'valid'
+      if (integrationError) {
+        return json({ health: 'attention', message: 'Nao foi possivel carregar a integracao de WhatsApp.' });
+      }
+      const provider = normalizeProvider(integration?.provider);
+      if (provider === 'meta') {
+        if (!integration?.meta_access_token_ciphertext || !integration?.meta_phone_number_id) {
+          return json({ health: 'attention', message: 'Conecte um numero da Meta em Configuracoes.' });
+        }
+        if (integration.meta_status === 'invalid') {
+          return json({ health: 'attention', message: 'O token da Meta nao foi aceito. Gere um novo token em Configuracoes.' });
+        }
+        try {
+          const details = await getPhoneNumberDetails(integration.meta_phone_number_id, await decryptSecret(integration.meta_access_token_ciphertext, user.id));
+          const connected = integration.meta_status === 'connected';
+          return json({
+            health: connected ? 'connected' : 'attention',
+            message: connected
+              ? `Canal WhatsApp conectado na Meta${details.displayPhoneNumber ? ` (${details.displayPhoneNumber})` : ''}.`
+              : 'O numero da Meta ainda nao foi registrado para uso pela API.',
+          });
+        } catch (error) {
+          const message = error instanceof MetaApiError ? describeMetaError(error) : 'Nao foi possivel consultar o canal da Meta agora.';
+          return json({ health: 'unavailable', message });
+        }
+      }
+      if (!integration?.api_key_ciphertext || integration.key_status !== 'valid'
         || !integration.whatsapp_account_id || !integration.zernio_profile_id) {
         return json({ health: 'attention', message: 'Configure e valide a integracao Zernio em Configuracoes.' });
       }
@@ -417,26 +548,20 @@ Deno.serve(async (req) => {
     }
     const { data: integration, error: integrationError } = await admin.from('zernio_integracoes')
       .select('*').eq('id_usuario', user.id).maybeSingle();
-    if (integrationError || !integration?.api_key_ciphertext || integration.key_status !== 'valid') {
-      return json({ error: 'Valide uma chave Zernio nas Configurações antes de continuar.' }, 409);
+    if (integrationError) return json({ error: 'Não foi possível carregar a integração de WhatsApp.' }, 500);
+
+    let channel: Channel;
+    try {
+      channel = await resolveChannel(integration, user.id);
+    } catch (error) {
+      if (error instanceof PublicError) return json({ error: error.message }, error.status);
+      return json({ error: 'Não foi possível resolver o canal de WhatsApp. Revise as Configurações.' }, 400);
     }
-    if (!integration.whatsapp_account_id || !integration.zernio_profile_id) {
-      return json({ error: 'Conecte um canal WhatsApp da Zernio nas Configurações antes de continuar.' }, 409);
-    }
-    const accountId = integration.whatsapp_account_id as string;
-    const apiKey = await decryptApiKey(integration.api_key_ciphertext, user.id);
-    if (!/^[a-fA-F0-9]{24}$/.test(accountId)) return json({ error: 'Atualize a conexão do canal WhatsApp nas Configurações.' }, 409);
-    const accountQuery = new URLSearchParams({ profileId: integration.zernio_profile_id });
-    const accountsPayload = await zernioRequest(`/accounts?${accountQuery.toString()}`, apiKey);
-    const remoteAccount = listAt(accountsPayload, 'accounts').find((item) => {
-      if ((item._id ?? item.id) !== accountId || item.platform !== 'whatsapp' || item.isActive === false) return false;
-      const profileId = typeof item.profileId === 'object' ? item.profileId?._id ?? item.profileId?.id : item.profileId;
-      return !profileId || profileId === integration.zernio_profile_id;
-    });
-    if (!remoteAccount) return json({ error: 'O canal não está ativo no perfil Zernio selecionado. Reconecte-o nas Configurações.' }, 409);
+    const accountId = channel.accountId;
+    const apiKey = channel.token;
 
     if (action === 'list') {
-      return json({ templates: await syncTemplates(admin, apiKey, user.id, accountId) });
+      return json({ templates: await syncTemplates(admin, channel, user.id), channel: publicChannel(channel) });
     }
 
     if (action === 'send_template') {
@@ -451,10 +576,13 @@ Deno.serve(async (req) => {
       if (tenantError || !tenant || !tenant.whatsapp) return json({ error: 'O locatário precisa estar ativo e ter WhatsApp cadastrado.' }, 409);
       const { data: template, error: templateError } = await admin.from('zernio_whatsapp_templates')
         .select('id,meta_template_id,account_id,name,language,status,components,purpose')
-        .eq('id', templateId).eq('id_usuario', user.id).eq('account_id', accountId).maybeSingle();
+        .eq('id', templateId).eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId).maybeSingle();
       if (templateError || !template) return json({ error: 'O template não pertence a este locador ou canal.' }, 404);
       if (template.purpose !== 'general') return json({ error: 'Este template é reservado para o fluxo de cobrança.' }, 409);
-      const liveTemplates = await syncTemplates(admin, apiKey, user.id, accountId);
+      if (channel.provider === 'meta') {
+        return json({ error: 'O envio pela API oficial da Meta será habilitado na próxima etapa. Por enquanto, use a Zernio como canal de envio.' }, 409);
+      }
+      const liveTemplates = await syncTemplates(admin, channel, user.id);
       const liveTemplate = liveTemplates.find((item: JsonRecord) => item.id === template.id);
       if (!liveTemplate || liveTemplate.status !== 'APPROVED' || liveTemplate.meta_template_id !== template.meta_template_id) {
         return json({ error: 'Este template não está aprovado pela Meta. Atualize a lista de templates.' }, 409);
@@ -487,6 +615,7 @@ Deno.serve(async (req) => {
       const idempotencyKey = `sga-manual-${crypto.randomUUID()}`;
       const { data: manualDelivery, error: manualDeliveryError } = await admin.from('zernio_whatsapp_manual_deliveries').insert({
         id_usuario: user.id, id_locatario: tenant.id, template_id: template.id, account_id: accountId,
+        provider: channel.provider,
         idempotency_key: idempotencyKey, template_name: template.name, template_language: template.language,
         status: 'sending',
       }).select('id').single();
@@ -625,31 +754,57 @@ Deno.serve(async (req) => {
       if (invalidCta) {
         return json({ error: 'Confira o número de telefone ou informe uma URL HTTPS válida com exemplo quando dinâmica.' }, 400);
       }
-      const createPayload = await zernioRequest('/whatsapp/templates', apiKey, {
-        method: 'POST',
-        body: { accountId, name, category, language, components },
-      });
-      const remoteTemplate = createPayload.template ?? createPayload.data?.template;
-      if (!remoteTemplate || typeof remoteTemplate.id !== 'string') {
-        throw new PublicError('A Meta recebeu o pedido, mas a Zernio não retornou os dados do template. Atualize a lista.', 502);
+      let remoteTemplate: JsonRecord | null = null;
+      if (channel.provider === 'meta') {
+        try {
+          const created = await createMessageTemplate(channel.wabaId as string, apiKey, {
+            name,
+            category,
+            language,
+            parameter_format: 'POSITIONAL',
+            components,
+          });
+          remoteTemplate = {
+            id: created.id,
+            name,
+            language,
+            category: created.category,
+            status: created.status,
+            components,
+          };
+        } catch (error) {
+          if (error instanceof MetaApiError) {
+            throw new PublicError(describeMetaError(error), error.status === 429 ? 429 : 400);
+          }
+          throw error;
+        }
+      } else {
+        const createPayload = await zernioRequest('/whatsapp/templates', apiKey, {
+          method: 'POST',
+          body: { accountId, name, category, language, components },
+        });
+        remoteTemplate = createPayload.template ?? createPayload.data?.template ?? null;
+        if (!remoteTemplate || typeof remoteTemplate.id !== 'string') {
+          throw new PublicError('A Meta recebeu o pedido, mas a Zernio não retornou os dados do template. Atualize a lista.', 502);
+        }
       }
       const mapping: JsonRecord[] = [];
-      const row = mapTemplate(remoteTemplate, accountId, user.id, {
+      const row = mapTemplate(remoteTemplate, channel, user.id, {
         purpose, variable_mapping: mapping, is_default: false,
       });
       if (!row) throw new PublicError('A Zernio não retornou uma identificação válida para o template.', 502);
       row.purpose = purpose;
       row.variable_mapping = mapping;
       const { data: saved, error: saveError } = await admin.from('zernio_whatsapp_templates')
-        .upsert(row, { onConflict: 'id_usuario,account_id,name,language' })
-        .select('id,meta_template_id,name,language,category,status,rejection_reason,components,variable_mapping,purpose,is_default,last_synced_at')
+        .upsert(row, { onConflict: 'id_usuario,provider,account_id,name,language' })
+        .select('id,meta_template_id,name,language,category,status,rejection_reason,components,variable_mapping,purpose,is_default,last_synced_at,provider')
         .single();
       if (saveError || !saved) throw new Error('O template foi enviado à Meta, mas não foi possível salvá-lo no SGA. Atualize a lista.');
-      return json({ template: saved });
+      return json({ template: saved, channel: publicChannel(channel) });
     }
 
     if (action === 'set_default') {
-      const templates = await syncTemplates(admin, apiKey, user.id, accountId);
+      const templates = await syncTemplates(admin, channel, user.id);
       const purpose = body.purpose === 'payment_confirmation' ? 'payment_confirmation' : body.purpose === 'charge' ? 'charge' : '';
       if (!purpose) return json({ error: 'Informe se o template será usado em lembretes ou confirmações de pagamento.' }, 400);
       const selected = templates.find((item: JsonRecord) => item.id === body.templateId);
@@ -677,52 +832,52 @@ Deno.serve(async (req) => {
           reminderOrder = Number(currentUsage.reminder_order) || 1;
         } else {
           const { data: currentReminders } = await admin.from('zernio_whatsapp_template_usages')
-            .select('reminder_order').eq('id_usuario', user.id).eq('account_id', accountId)
+            .select('reminder_order').eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId)
             .eq('purpose', 'charge').eq('is_default', true).order('reminder_order', { ascending: false }).limit(1);
           reminderOrder = Number(currentReminders?.[0]?.reminder_order || 0) + 1;
         }
       } else {
         const { error: clearError } = await admin.from('zernio_whatsapp_template_usages')
           .update({ is_default: false, updated_at: new Date().toISOString() })
-          .eq('id_usuario', user.id).eq('account_id', accountId).eq('purpose', purpose).eq('is_default', true);
+          .eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId).eq('purpose', purpose).eq('is_default', true);
         if (clearError) throw new Error('Não foi possível atualizar o template padrão.');
       }
       const { data: saved, error: saveError } = await admin.from('zernio_whatsapp_template_usages')
         .upsert({
-          template_id: selected.id, id_usuario: user.id, account_id: accountId, purpose,
+          template_id: selected.id, id_usuario: user.id, provider: channel.provider, account_id: accountId, purpose,
           variable_mapping: variableMapping.map(({ position, field }: JsonRecord) => ({ position, field })),
           is_default: true, reminder_order: reminderOrder, updated_at: new Date().toISOString(),
         }, { onConflict: 'template_id,purpose' }).select('id').maybeSingle();
       if (saveError || !saved) throw new Error('Não foi possível selecionar o template padrão.');
-      return json({ success: true, templates: await syncTemplates(admin, apiKey, user.id, accountId) });
+      return json({ success: true, templates: await syncTemplates(admin, channel, user.id), channel: publicChannel(channel) });
     }
 
     if (action === 'save_charge_order') {
       const templateIds = Array.isArray(body.templateIds) ? body.templateIds.map(String) : [];
       if (new Set(templateIds).size !== templateIds.length) return json({ error: 'A sequência contém templates duplicados.' }, 400);
-      const templates = await syncTemplates(admin, apiKey, user.id, accountId);
+      const templates = await syncTemplates(admin, channel, user.id);
       const selected = templateIds.map((templateId: string) => templates.find((item: JsonRecord) => item.id === templateId));
       if (selected.some((template: JsonRecord | undefined) => !template || template.status !== 'APPROVED')) {
         return json({ error: 'Todos os templates da sequência precisam estar aprovados neste canal.' }, 409);
       }
       const { data: selectedUsages, error: usageReadError } = templateIds.length
         ? await admin.from('zernio_whatsapp_template_usages').select('template_id,purpose')
-          .eq('id_usuario', user.id).eq('account_id', accountId).eq('purpose', 'charge').in('template_id', templateIds)
+          .eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId).eq('purpose', 'charge').in('template_id', templateIds)
         : { data: [], error: null };
       if (usageReadError || (selectedUsages || []).length !== templateIds.length) {
         return json({ error: 'Configure primeiro as variáveis de cada template de lembrete.' }, 409);
       }
       const { error: clearError } = await admin.from('zernio_whatsapp_template_usages')
         .update({ is_default: false, updated_at: new Date().toISOString() })
-        .eq('id_usuario', user.id).eq('account_id', accountId).eq('purpose', 'charge').eq('is_default', true);
+        .eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId).eq('purpose', 'charge').eq('is_default', true);
       if (clearError) throw new Error('Não foi possível atualizar a sequência de lembretes.');
       for (const [index, templateId] of templateIds.entries()) {
         const { error: orderError } = await admin.from('zernio_whatsapp_template_usages')
           .update({ is_default: true, reminder_order: index + 1, updated_at: new Date().toISOString() })
-          .eq('id_usuario', user.id).eq('account_id', accountId).eq('purpose', 'charge').eq('template_id', templateId);
+          .eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId).eq('purpose', 'charge').eq('template_id', templateId);
         if (orderError) throw new Error('Não foi possível salvar a ordem dos templates de lembrete.');
       }
-      return json({ success: true, templates: await syncTemplates(admin, apiKey, user.id, accountId) });
+      return json({ success: true, templates: await syncTemplates(admin, channel, user.id), channel: publicChannel(channel) });
     }
 
     if (action === 'create_schedule') {
@@ -766,9 +921,12 @@ Deno.serve(async (req) => {
       if (tenantError || !tenant || !tenant.whatsapp) return json({ error: 'Selecione um locatário ativo com WhatsApp cadastrado.' }, 409);
       const { data: selectedTemplate, error: selectedTemplateError } = await admin.from('zernio_whatsapp_templates')
         .select('id,account_id,name,language,category,status,components')
-        .eq('id', templateId).eq('id_usuario', user.id).eq('account_id', accountId).maybeSingle();
+        .eq('id', templateId).eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId).maybeSingle();
       if (selectedTemplateError || !selectedTemplate) return json({ error: 'Template Meta não encontrado neste canal.' }, 404);
       if (selectedTemplate.status !== 'APPROVED') return json({ error: 'Somente templates aprovados pela Meta podem receber agendamentos.' }, 409);
+      if (channel.provider === 'meta') {
+        return json({ error: 'O agendamento pela API oficial da Meta será habilitado na próxima etapa. Por enquanto, use a Zernio como canal de envio.' }, 409);
+      }
       if ((selectedTemplate.components || []).some((component: JsonRecord) => String(component.type).toUpperCase() === 'HEADER' && String(component.format).toUpperCase() === 'LOCATION')) {
         return json({ error: 'Templates com cabeçalho de localização precisam de coordenadas por envio e não podem ser agendados nesta tela.' }, 400);
       }
@@ -853,6 +1011,15 @@ Deno.serve(async (req) => {
         }
       }
       if (!charge.id_locatario) return json({ error: 'Esta cobrança não tem locatário vinculado. Atualize o cadastro da cobrança.' }, 409);
+      if (channel.provider === 'meta') {
+        // O envio pela API oficial da Meta entra na próxima etapa. A cobrança
+        // continua pendente e o cron tentará de novo depois da ativação.
+        return json({
+          success: false,
+          skipped: true,
+          message: 'O envio por este provedor ainda não está disponível. O lembrete será retomado quando o envio for ativado.',
+        });
+      }
       const { data: tenant, error: tenantError } = await admin.from('locatarios')
         .select('id,nome_completo,whatsapp,email,cpf').eq('id', charge.id_locatario).eq('id_usuario', user.id).maybeSingle();
       if (tenantError || !tenant || !tenant.whatsapp) return json({ error: 'O locatário não possui WhatsApp válido cadastrado.' }, 409);
@@ -864,15 +1031,15 @@ Deno.serve(async (req) => {
       if (sentSequenceError) throw new Error('Não foi possível determinar a ordem do próximo lembrete.');
       const reminderSequence = Math.max(requestedSequence, Number(lastSentReminder?.sequence_no || 0) + 1);
       const { data: reminderUsages, error: usageError } = await admin.from('zernio_whatsapp_template_usages')
-        .select('template_id,variable_mapping,reminder_order').eq('id_usuario', user.id).eq('account_id', accountId)
+        .select('template_id,variable_mapping,reminder_order').eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId)
         .eq('is_default', true).eq('purpose', 'charge').order('reminder_order');
       if (usageError || !reminderUsages?.length) return json({ error: 'Selecione um ou mais templates aprovados para lembretes na aba Templates Meta de /mensagens.' }, 409);
       const selectedUsage = reminderUsages[(reminderSequence - 1) % reminderUsages.length];
       const { data: selectedTemplate, error: templateError } = await admin.from('zernio_whatsapp_templates')
-        .select('*').eq('id', selectedUsage.template_id).eq('id_usuario', user.id).eq('account_id', accountId).maybeSingle();
+        .select('*').eq('id', selectedUsage.template_id).eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId).maybeSingle();
       if (templateError || !selectedTemplate) return json({ error: 'O template padrão de cobrança não foi encontrado neste canal.' }, 409);
 
-      const liveTemplates = await syncTemplates(admin, apiKey, user.id, accountId);
+      const liveTemplates = await syncTemplates(admin, channel, user.id);
       const liveTemplate = liveTemplates.find((item: JsonRecord) => item.name === selectedTemplate.name && item.language === selectedTemplate.language);
       if (!liveTemplate || liveTemplate.status !== 'APPROVED' || liveTemplate.meta_template_id !== selectedTemplate.meta_template_id) {
         return json({ error: 'O template padrão não está aprovado pela Meta. Atualize a lista e escolha um template APPROVED.' }, 409);
@@ -904,6 +1071,7 @@ Deno.serve(async (req) => {
       } else {
         const { data: inserted, error: insertError } = await admin.from('zernio_whatsapp_deliveries').insert({
           id_usuario: user.id, id_cobranca: charge.id, template_id: selectedTemplate.id, account_id: accountId,
+          provider: channel.provider,
           idempotency_key: `sga-charge-${charge.id}-${reminderSequence}`, sequence_no: reminderSequence,
           status: 'sending', meta_template_id: selectedTemplate.meta_template_id,
           template_name: selectedTemplate.name, template_language: selectedTemplate.language,

@@ -128,6 +128,7 @@ export default function ZernioSchedulesCard() {
   const { profile } = useAuth();
   const [loading, setLoading] = useState(true);
   const [templates, setTemplates] = useState([]);
+  const [channel, setChannel] = useState(null);
   const [templateWarning, setTemplateWarning] = useState('');
   const [tenants, setTenants] = useState([]);
   const [schedules, setSchedules] = useState([]);
@@ -152,7 +153,8 @@ export default function ZernioSchedulesCard() {
       ]);
       if (scheduleResult.error) throw scheduleResult.error;
       const templateError = templateResult.error?.message || templateResult.data?.error || '';
-      setTemplateWarning(templateError ? 'Conecte e valide o canal WhatsApp Zernio para criar agendamentos Meta.' : '');
+      setTemplateWarning(templateError ? 'Conecte e valide o canal de WhatsApp em Configurações para criar agendamentos de templates.' : '');
+      setChannel(templateResult.data?.channel || null);
       setTemplates(templateError ? [] : (templateResult.data?.templates || []));
       setTenants(tenantResult || []);
       setSchedules(scheduleResult.data || []);
@@ -202,6 +204,13 @@ export default function ZernioSchedulesCard() {
 
       <div className="relative max-w-md"><Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600" /><input className={`${inputClass} pl-9`} placeholder="Buscar locatário ou template" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
 
+      {channel && (
+        <p className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 text-xs text-zinc-400">
+          <span className="font-bold uppercase tracking-wide text-zinc-200">{channel.providerLabel}</span>
+          <span>{channel.label}</span>
+          {channel.phoneNumber && <span className="font-mono text-zinc-600">{channel.phoneNumber}</span>}
+        </p>
+      )}
       {templateWarning && <p className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200">{templateWarning}</p>}
       {loading ? <div className="flex justify-center py-16"><Loader2 className="animate-spin text-indigo-400" /></div> : !filteredSchedules.length ? (
         <div className="rounded-2xl border border-dashed border-zinc-800 py-14 text-center"><CalendarClock className="mx-auto mb-3 text-zinc-700" size={32} /><p className="text-sm font-bold text-zinc-400">Nenhum agendamento encontrado</p><p className="mt-1 text-xs text-zinc-600">Agende um template aprovado para começar.</p></div>

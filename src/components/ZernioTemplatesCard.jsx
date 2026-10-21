@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   AlertCircle, ArrowDown, ArrowUp, CheckCircle2, FileText, Loader2, Plus, RefreshCw,
   Send, Smartphone, Trash2, X,
@@ -427,6 +428,7 @@ function TemplateForm({ busy, storageKey, onCancel, onSubmit }) {
 const ZernioTemplatesCard = () => {
   const { profile } = useAuth();
   const [templates, setTemplates] = useState([]);
+  const [channel, setChannel] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -461,6 +463,7 @@ const ZernioTemplatesCard = () => {
     try {
       const data = await invoke('list');
       setTemplates(data.templates || []);
+      if (data.channel) setChannel(data.channel);
       if (showNotice) setNotice('Status dos templates sincronizado com a Meta.');
     } catch (error) {
       setErrorMessage(error.message);
@@ -479,6 +482,7 @@ const ZernioTemplatesCard = () => {
     try {
       const data = await invoke('create_template', payload);
       setTemplates((current) => [data.template, ...current.filter((item) => item.id !== data.template.id)]);
+      if (data.channel) setChannel(data.channel);
       if (draftStorageKey) {
         try { sessionStorage.removeItem(draftStorageKey); } catch {}
       }
@@ -579,6 +583,20 @@ const ZernioTemplatesCard = () => {
         <div>
           <h2 className="text-sm font-bold text-slate-200 uppercase tracking-widest flex items-center gap-2"><FileText size={17} className="text-indigo-400" /> Templates Meta para WhatsApp</h2>
           <p className="text-xs text-slate-400 mt-2">Crie os modelos, acompanhe a análise da Meta e escolha templates aprovados para cobranças e confirmações de pagamento.</p>
+          {channel ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/40 px-3 py-2 text-xs">
+              <span className="font-bold uppercase tracking-wide text-slate-200">{channel.providerLabel}</span>
+              <span className="text-slate-400">{channel.label}</span>
+              {channel.phoneNumber && <span className="font-mono text-slate-500">{channel.phoneNumber}</span>}
+              <Link to="/configuracoes" className="ml-auto font-semibold text-indigo-300 hover:text-indigo-200">Trocar canal</Link>
+            </div>
+          ) : (
+            <p className="mt-3 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
+              Nenhum canal de WhatsApp conectado.{' '}
+              <Link to="/configuracoes" className="font-semibold underline">Conecte a Zernio ou a Meta em Configurações</Link>{' '}
+              para gerenciar os templates.
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 gap-2">
           <button type="button" onClick={() => refresh(true)} disabled={busy} className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 text-xs font-semibold flex items-center gap-2"><RefreshCw size={15} className={busy ? 'animate-spin' : ''} />Atualizar</button>
