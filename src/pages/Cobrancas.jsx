@@ -11,6 +11,7 @@ import { useBilling } from '../hooks/useBilling';
 import { cobrancasService } from '../services/cobrancas';
 import { contratosService } from '../services/contratos';
 import { locatariosService } from '../services/locatarios';
+import { supabase } from '../services/supabase';
 import { Button } from '../components/ui/Button';
 import { KpiCard } from '../components/ui/KpiCard';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -74,23 +75,40 @@ const Cobrancas = () => {
 
   const handleConfirmarBaixa = async (notificar) => {
     if (!baixaTarget) return;
+    const alvo = baixaTarget;
     setBaixaLoading(true);
     try {
-      await markAsPaid(baixaTarget.id);
+      await markAsPaid(alvo.id);
       setShowBaixaModal(false);
       if (notificar) {
-        const locatarioId = baixaTarget.contratos?.id_locatario;
-        if (locatarioId) {
-          const locData = await locatariosService.getById(locatarioId);
-          setSelectedLocatarioData(locData);
-          setIsMessageModalOpen(true);
+        // Envia a confirmacao de pagamento pelo canal ativo (Meta ou Zernio),
+        // usando o template configurado em Templates Meta.
+        const { data, error } = await supabase.functions.invoke('zernio-whatsapp', {
+          body: { action: 'send_payment_confirmation', chargeId: alvo.id },
+        });
+        if (error) throw new Error(data?.error || error.message);
+        if (data?.error) {
+          if (data.needsTemplate) {
+            const locatarioId = alvo.contratos?.id_locatario;
+            if (locatarioId) {
+              const locData = await locatariosService.getById(locatarioId);
+              setSelectedLocatarioData(locData);
+              setIsMessageModalOpen(true);
+              toast.info('Nenhum template de confirmação configurado. Escolha um template para enviar.');
+            } else {
+              toast.warning('Locatário não encontrado para notificação.');
+            }
+          } else {
+            throw new Error(data.error);
+          }
         } else {
-          toast.warning('Locatario nao encontrado para notificacao.');
+          const canal = data?.channel?.providerLabel || 'canal ativo';
+          toast.success(`Confirmação de pagamento enviada por ${data?.templateName || 'template'} (${canal}).`);
         }
       }
       setBaixaTarget(null);
     } catch (err) {
-      toast.error('Erro ao dar baixa');
+      toast.error(`Erro ao dar baixa: ${err.message}`);
     } finally {
       setBaixaLoading(false);
     }

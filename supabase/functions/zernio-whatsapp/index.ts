@@ -203,7 +203,18 @@ async function syncTemplates(admin: any, channel: Channel, ownerId: string) {
   if (rows.length) {
     const { error } = await admin.from('zernio_whatsapp_templates')
       .upsert(rows, { onConflict: 'id_usuario,provider,account_id,name,language' });
-    if (error) throw new Error('Os templates foram consultados, mas não foi possível atualizar o catálogo do SGA.');
+    if (error) {
+      // Uma linha invalida nao pode derrubar a listagem inteira: tenta uma a
+      // uma e descarta apenas o registro que falhou.
+      console.error('Template sync upsert failed, retrying row by row:', error.message, error.code);
+      for (const row of rows) {
+        const { error: rowError } = await admin.from('zernio_whatsapp_templates')
+          .upsert([row], { onConflict: 'id_usuario,provider,account_id,name,language' });
+        if (rowError) {
+          console.error('Skipping template that could not be saved:', row.name, rowError.message, rowError.code);
+        }
+      }
+    }
   }
   const { data, error } = await admin.from('zernio_whatsapp_templates')
     .select('id,meta_template_id,name,language,category,status,rejection_reason,components,variable_mapping,purpose,is_default,last_synced_at,provider')
@@ -589,6 +600,121 @@ Deno.serve(async (req) => {
 
     if (action === 'list') {
       return json({ templates: await syncTemplates(admin, channel, user.id), channel: publicChannel(channel) });
+    }
+
+    if (action === 'send_payment_confirmation') {
+      const chargeId = typeof body.chargeId === 'string' ? body.chargeId : '';
+      if (!/^[0-9a-f-]{36}$/i.test(chargeId)) return json({ error: 'Identificador da cobrança inválido.' }, 400);
+      const { data: charge, error: chargeError } = await admin.from('cobrancas')
+        .select('id,id_usuario,id_locatario,valor,data_vencimento,data_pagamento,status,tipo')
+        .eq('id', chargeId).eq('id_usuario', user.id).maybeSingle();
+      if (chargeError || !charge) return json({ error: 'Cobrança não encontrada para este locador.' }, 404);
+      if (!charge.id_locatario) return json({ error: 'Esta cobrança não tem locatário vinculado.' }, 409);
+      const { data: tenant, error: tenantError } = await admin.from('locatarios')
+        .select('id,nome_completo,whatsapp').eq('id', charge.id_locatario).eq('id_usuario', user.id).maybeSingle();
+      if (tenantError || !tenant || !tenant.whatsapp) return json({ error: 'O locatário não possui WhatsApp válido cadastrado.' }, 409);
+
+      // Usa o template de confirmacao de pagamento configurado no canal ativo.
+      const { data: usage, error: usageError } = await admin.from('zernio_whatsapp_template_usages')
+        .select('template_id,variable_mapping')
+        .eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId)
+        .eq('purpose', 'payment_confirmation').eq('is_default', true).maybeSingle();
+      if (usageError) throw new Error('Não foi possível consultar o template de confirmação de pagamento.');
+      if (!usage) {
+        return json({
+          error: 'Nenhum template de confirmação de pagamento está configurado para este canal.',
+          needsTemplate: true,
+          channel: publicChannel(channel),
+        }, 409);
+      }
+      const { data: template, error: templateError } = await admin.from('zernio_whatsapp_templates')
+        .select('id,meta_template_id,name,language,status,components,account_id')
+        .eq('id', usage.template_id).eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId)
+        .maybeSingle();
+      if (templateError || !template) return json({ error: 'O template de confirmação de pagamento não foi encontrado neste canal.' }, 404);
+      if (template.status !== 'APPROVED') return json({ error: 'O template de confirmação de pagamento não está aprovado pela Meta.' }, 409);
+
+      const paidAt = charge.data_pagamento || new Date().toISOString();
+      const values: Record<string, string> = {
+        tenant_first_name: String(tenant.nome_completo ?? '').trim().split(/\s+/)[0] || 'Olá',
+        amount: Number(charge.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
+        paid_at: new Date(paidAt).toLocaleDateString('pt-BR'),
+      };
+      const mapping = [...(usage.variable_mapping || [])].sort((a: JsonRecord, b: JsonRecord) => a.position - b.position);
+      const expectedCount = templateParameterCount(Array.isArray(template.components) ? template.components : []);
+      if (!mapping.length || mapping.length !== expectedCount || mapping.some((item: JsonRecord, index: number) =>
+        item.position !== index + 1 || !Object.hasOwn(values, item.field) || !values[item.field])) {
+        return json({ error: 'O mapeamento das variáveis do template de confirmação está incompleto. Reconfigure em Templates Meta.' }, 409);
+      }
+      const params = mapping.map((item: JsonRecord) => values[item.field]);
+
+      const idempotencyKey = `sga-payment-confirm-${charge.id}`;
+      const { data: delivery, error: deliveryError } = await admin.from('zernio_whatsapp_manual_deliveries').insert({
+        id_usuario: user.id, id_locatario: tenant.id, template_id: template.id, account_id: accountId,
+        provider: channel.provider,
+        idempotency_key: idempotencyKey, template_name: template.name, template_language: template.language,
+        status: 'sending',
+      }).select('id').single();
+      if (deliveryError) {
+        if (deliveryError.code === '23505') {
+          const { data: previous } = await admin.from('zernio_whatsapp_manual_deliveries')
+            .select('status,message_id').eq('idempotency_key', idempotencyKey).maybeSingle();
+          if (previous?.status === 'sent') {
+            return json({ success: true, alreadySent: true, messageId: previous.message_id, channel: publicChannel(channel) });
+          }
+        }
+        throw new Error('Não foi possível registrar a tentativa de envio.');
+      }
+
+      let messageId: string;
+      try {
+        if (channel.provider === 'meta') {
+          const sent = await sendMetaTemplateMessage({
+            phoneNumberId: channel.accountId,
+            token: apiKey,
+            to: phoneForWhatsApp(tenant.whatsapp),
+            templateName: template.name,
+            templateLanguage: template.language,
+            templateParams: params,
+            components: template.components || [],
+          });
+          messageId = sent.messageId;
+        } else {
+          const sentPayload = await zernioRequest('/inbox/conversations', apiKey, {
+            method: 'POST', idempotencyKey,
+            body: {
+              accountId,
+              participantId: phoneForWhatsApp(tenant.whatsapp),
+              templateName: template.name,
+              templateLanguage: template.language,
+              ...(params.length ? { templateParams: params } : {}),
+            },
+          });
+          const sentData = sentPayload.data ?? sentPayload;
+          const sentMessageId = sentData.messageId ?? sentData.message?.id;
+          if (typeof sentMessageId !== 'string' || !sentMessageId) {
+            throw new PublicError('A Zernio não retornou a identificação da mensagem enviada.', 502);
+          }
+          messageId = sentMessageId;
+        }
+      } catch (error) {
+        await admin.from('zernio_whatsapp_manual_deliveries')
+          .update({ status: 'failed', safe_error: error instanceof Error ? error.message.slice(0, 160) : 'send_failed', updated_at: new Date().toISOString() })
+          .eq('id', delivery.id).eq('status', 'sending');
+        throw error;
+      }
+
+      const sentAt = new Date().toISOString();
+      await admin.from('zernio_whatsapp_manual_deliveries')
+        .update({ status: 'sent', message_id: messageId, sent_at: sentAt, updated_at: sentAt, safe_error: null, error_code: null })
+        .eq('id', delivery.id).eq('status', 'sending');
+
+      return json({
+        success: true,
+        messageId,
+        templateName: template.name,
+        channel: publicChannel(channel),
+      });
     }
 
     if (action === 'send_template') {
@@ -1238,7 +1364,11 @@ Deno.serve(async (req) => {
     if (error instanceof PublicError) safeError = error;
     else if (error instanceof ZernioError) safeError = safeZernioError(error);
     else if (error instanceof MetaApiError) safeError = new PublicError(describeMetaError(error), error.status === 429 ? 429 : 400);
-    else safeError = new PublicError('Não foi possível concluir a operação. Confira as Configurações e tente novamente.', 500);
+    else {
+      console.error('Unexpected WhatsApp error:', error);
+      const detail = error instanceof Error ? error.message.slice(0, 200) : 'erro interno';
+      safeError = new PublicError(`Não foi possível concluir a operação. Confira as Configurações e tente novamente. (${detail})`, 500);
+    }
     if (claimedDeliveryId && admin) {
       const code = error instanceof ZernioError && error.code ? error.code : 'send_failed';
       await admin.from('zernio_whatsapp_deliveries').update({

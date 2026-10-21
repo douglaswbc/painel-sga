@@ -401,3 +401,16 @@ Permitir que o locador use a API oficial da Meta (WhatsApp Cloud API) no lugar d
 **Aviso:** o teste de arquivamento usou `aviso_boleto_01`, que e um template real da conta, e o excluiu na Meta. A Meta bloqueia o mesmo nome por 4 semanas, entao o modelo de 4 variaveis foi recriado como `aviso_boleto_03` (mesmo texto e mesmos exemplos), que volta ao estado APPROVED apos a analise. Os outros modelos da conta (`aviso_boleto_02` e `sga_confirmacao_pagamento_01`) nao foram afetados. Em producao, o teste de exclusao deve usar sempre um template criado para o teste.
 
 **Observacao:** enquanto as fases 8.3 a 8.5 nao forem entregues, os envios do SGA continuam usando exclusivamente o canal da Zernio, mesmo com `provider = 'meta'`.
+
+### Fase 8.7 — Confirmacao de pagamento pelo canal ativo em `/cobrancas`
+
+- [x] Criar a acao `send_payment_confirmation` no `zernio-whatsapp`: resolve o canal ativo, usa o template de confirmacao configurado para esse canal, preenche nome, valor e data do pagamento e envia pelo provedor ativo.
+- [x] Registrar a entrega com o `provider` e garantir idempotencia por cobranca (o segundo envio devolve `alreadySent`).
+- [x] Ligar "Dar Baixa e Notificar" em `/cobrancas` a nova acao, com fallback para o seletor de templates quando nao houver confirmacao configurada.
+- [x] Deixar o seletor de mensagens ciente do provedor ativo (rotulo e cabecalho).
+- [x] Tornar a sincronizacao de templates resistente: uma linha que falha no catalogo nao derruba mais a listagem inteira.
+- [x] Detalhar o erro inesperado na resposta, para nao voltar a mensagem generica sem informacao.
+
+**Estado:** validado na conta Meta real com o template `sga_confirmacao_pagamento_01`. A acao enviou a mensagem (wamid retornado), gravou a entrega com `provider=meta` e o segundo envio nao duplicou. O fluxo antigo (seletor de templates com valores digitados a mao) continua disponivel como fallback.
+
+**Sobre o 500 reportado:** o `list` falhava com um erro generico no catalogo de templates. O dado do locador foi restaurado e a listagem passou; a sincronizacao agora grava linha a linha quando o lote falha, entao um registro inconsistente nao impede mais a leitura do catalogo. Os dados do locador foram conferidos e estao consistentes.

@@ -24,6 +24,7 @@ export default function MessageSelectorModal({ isOpen, onClose, locatario }) {
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [templates, setTemplates] = useState([]);
+  const [channel, setChannel] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [params, setParams] = useState([]);
@@ -35,7 +36,9 @@ export default function MessageSelectorModal({ isOpen, onClose, locatario }) {
     supabase.functions.invoke('zernio-whatsapp', { body: { action: 'list' } }).then(({ data, error }) => {
       if (error) throw new Error(data?.error || error.message);
       if (data?.error) throw new Error(data.error);
-      if (active) setTemplates(data?.templates || []);
+      if (!active) return;
+      setTemplates(data?.templates || []);
+      setChannel(data?.channel || null);
     }).catch((error) => {
       if (active) toast.error(`Não foi possível carregar os templates: ${error.message}`);
     }).finally(() => { if (active) setLoading(false); });
@@ -59,7 +62,7 @@ export default function MessageSelectorModal({ isOpen, onClose, locatario }) {
       });
       if (error) throw new Error(data?.error || error.message);
       if (data?.error) throw new Error(data.error);
-      toast.success('Template enviado pelo canal Zernio.');
+      toast.success(`Template enviado pelo canal ${channel?.providerLabel || 'ativo'}.`);
       onClose();
     } catch (error) {
       toast.error(`Falha ao enviar template: ${error.message}`);
@@ -73,7 +76,7 @@ export default function MessageSelectorModal({ isOpen, onClose, locatario }) {
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm">
       <section className="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-900 shadow-2xl">
         <header className="flex items-center justify-between border-b border-zinc-800 p-6">
-          <div className="flex items-center gap-3"><span className="rounded-xl bg-indigo-500/10 p-2 text-indigo-400"><MessageSquare size={20} /></span><div><h2 className="text-lg font-black text-white">Enviar template Meta</h2><p className="text-xs text-zinc-500">Para: {locatario?.nome_completo}</p></div></div>
+          <div className="flex items-center gap-3"><span className="rounded-xl bg-indigo-500/10 p-2 text-indigo-400"><MessageSquare size={20} /></span><div><h2 className="text-lg font-black text-white">Enviar template Meta</h2><p className="text-xs text-zinc-500">Para: {locatario?.nome_completo}</p>{channel && <p className="mt-0.5 text-[10px] uppercase tracking-widest text-indigo-300">Canal: {channel.providerLabel}{channel.label ? ` · ${channel.label}` : ''}</p>}</div></div>
           <button type="button" onClick={onClose} className="text-zinc-500 hover:text-white" aria-label="Fechar"><X size={22} /></button>
         </header>
         <div className="flex-1 space-y-5 overflow-y-auto p-6">
@@ -83,7 +86,7 @@ export default function MessageSelectorModal({ isOpen, onClose, locatario }) {
           </div>
           {selectedTemplate && selectedParams.length > 0 && <div className="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4"><div><h3 className="text-xs font-black uppercase tracking-widest text-zinc-300">Variáveis do template</h3><p className="mt-1 text-[10px] text-zinc-600">Informe os valores que serão enviados nesta mensagem.</p></div>{selectedParams.map((item, index) => <label key={`${item.label}-${index}`} className="block text-[10px] font-bold uppercase tracking-widest text-zinc-500">{item.label}<input className="mt-1.5 w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm normal-case tracking-normal text-white outline-none focus:border-indigo-500" maxLength={1024} value={params[index] || ''} onChange={(event) => setParams((current) => current.map((value, currentIndex) => currentIndex === index ? event.target.value : value))} /><span className="mt-1 block text-right font-normal normal-case tracking-normal">{(params[index] || '').length} / 1024</span></label>)}</div>}
         </div>
-        <footer className="flex gap-3 border-t border-zinc-800 bg-zinc-900/70 p-6"><button type="button" onClick={onClose} className="flex-1 py-3 text-xs font-black uppercase tracking-widest text-zinc-500 hover:text-white">Cancelar</button><button type="button" disabled={!selectedTemplate || sending || loading} onClick={handleSend} className="flex-[2] rounded-2xl bg-indigo-600 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-indigo-500 disabled:opacity-50">{sending ? <Loader2 className="mx-auto animate-spin" size={17} /> : <span className="flex items-center justify-center gap-2"><Send size={15} /> Enviar pelo Zernio <CheckCircle2 size={15} /></span>}</button></footer>
+        <footer className="flex gap-3 border-t border-zinc-800 bg-zinc-900/70 p-6"><button type="button" onClick={onClose} className="flex-1 py-3 text-xs font-black uppercase tracking-widest text-zinc-500 hover:text-white">Cancelar</button><button type="button" disabled={!selectedTemplate || sending || loading} onClick={handleSend} className="flex-[2] rounded-2xl bg-indigo-600 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-indigo-500 disabled:opacity-50">{sending ? <Loader2 className="mx-auto animate-spin" size={17} /> : <span className="flex items-center justify-center gap-2"><Send size={15} /> Enviar pelo {channel?.providerLabel || 'canal ativo'} <CheckCircle2 size={15} /></span>}</button></footer>
       </section>
     </div>
   );
