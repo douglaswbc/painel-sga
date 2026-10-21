@@ -339,6 +339,26 @@ export async function createMessageTemplate(
   };
 }
 
+/**
+ * Deletes a message template from a WhatsApp Business Account. The `hsm_id`
+ * identifies the exact variant, so only that language is removed.
+ */
+export async function deleteMessageTemplate(
+  wabaId: string,
+  token: string,
+  name: string,
+  hsmId: string | null,
+): Promise<boolean> {
+  const query: Record<string, string> = { name };
+  if (hsmId) query.hsm_id = hsmId;
+  const result = await graphJson<{ success?: boolean }>(`${wabaId}/message_templates`, {
+    method: 'DELETE',
+    token,
+    query,
+  });
+  return result.success !== false;
+}
+
 /** Friendly, non technical message for a Meta API failure. */
 export function describeMetaError(error: unknown): string {
   if (!(error instanceof MetaApiError)) {

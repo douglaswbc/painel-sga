@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertCircle, CheckCircle2, CircleDollarSign, Clock3, Loader2, RefreshCw, Search, Send, XCircle } from 'lucide-react';
+import { Activity, AlertCircle, CheckCircle2, CircleDollarSign, Clock3, Copy, Loader2, RefreshCw, Search, Send, XCircle } from 'lucide-react';
 import { supabase } from '../services/supabase';
 
 const periodBounds = (period) => {
@@ -41,6 +41,15 @@ const statusPresentation = {
   sending: { label: 'Em andamento', tone: 'text-amber-700 bg-amber-50 border-amber-200', icon: Clock3 },
 };
 
+// Status devolvido pelo provedor para cada mensagem enviada.
+const deliveryPresentation = {
+  accepted: { label: 'Aceita', tone: 'text-indigo-700 bg-indigo-50 border-indigo-200' },
+  sent: { label: 'Enviada', tone: 'text-sky-700 bg-sky-50 border-sky-200' },
+  delivered: { label: 'Entregue', tone: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
+  read: { label: 'Lida', tone: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
+  failed: { label: 'Falha na entrega', tone: 'text-red-700 bg-red-50 border-red-200' },
+};
+
 export default function ZernioOperationsCard() {
   const [period, setPeriod] = useState('month');
   const [analytics, setAnalytics] = useState([]);
@@ -51,6 +60,8 @@ export default function ZernioOperationsCard() {
   const [activityTotal, setActivityTotal] = useState(0);
   const [activityTotalPages, setActivityTotalPages] = useState(1);
   const [health, setHealth] = useState(null);
+  const [callbackUrl, setCallbackUrl] = useState('');
+  const [copied, setCopied] = useState(false);
   const [analyticsError, setAnalyticsError] = useState('');
   const [analyticsNotice, setAnalyticsNotice] = useState('');
   const [activityError, setActivityError] = useState('');
@@ -93,10 +104,20 @@ export default function ZernioOperationsCard() {
     setHealth(healthResult.error || healthResult.data?.error
       ? { status: 'unavailable', message: await errorFrom(healthResult.error, healthResult.data) }
       : { status: healthResult.data?.health || 'unavailable', message: healthResult.data?.message || 'Status indisponível.' });
+    setCallbackUrl(healthResult.data?.callbackUrl || '');
     setLoading(false);
   }, [period, activityPage, searchTerm]);
 
   useEffect(() => { load(); }, [load]);
+
+  const copyCallbackUrl = async () => {
+    if (!callbackUrl) return;
+    try {
+      await navigator.clipboard.writeText(callbackUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch { /* O landlord pode selecionar e copiar manualmente. */ }
+  };
 
   const summary = useMemo(() => analytics.reduce((result, row) => ({
     volume: result.volume + (Number(row.volume) || 0),
@@ -173,14 +194,34 @@ export default function ZernioOperationsCard() {
           {health?.status === 'connected' ? <CheckCircle2 size={15} className="mt-0.5 shrink-0" /> : <AlertCircle size={15} className="mt-0.5 shrink-0" />}
           <span><b>Canal WhatsApp:</b> {loading ? 'consultando...' : health?.message || 'Status indisponível.'}</span>
         </div>
+        {callbackUrl && (
+          <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-slate-700">URL de callback entre a Meta e o SGA</p>
+              <button type="button" onClick={copyCallbackUrl} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100">
+                {copied ? <CheckCircle2 size={13} className="text-emerald-600" /> : <Copy size={13} />}
+                {copied ? 'Copiada' : 'Copiar'}
+              </button>
+            </div>
+            <p className="mt-2 break-all font-mono text-[11px] text-slate-600">{callbackUrl}</p>
+            <p className="mt-2 text-[11px] text-slate-500">
+              Endereço que a Meta chama para entregar mensagens recebidas e o status de cada envio. É o mesmo valor a usar em
+              <span className="font-mono"> Webhooks</span> no painel do App da Meta.
+            </p>
+          </div>
+        )}
         {activityError ? <div className="mt-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800"><AlertCircle size={15} className="mt-0.5 shrink-0" />{activityError}</div> : loading ? <div className="flex justify-center py-10"><Loader2 size={22} className="animate-spin text-indigo-500" /></div> : activity.length === 0 ? <p className="mt-4 rounded-lg border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">Nenhum envio registrado ainda.</p> : (
           <div className="mt-4 divide-y divide-[#e0e0e0] bg-white">
             {activity.map((item) => {
               const presentation = statusPresentation[item.status] || statusPresentation.sending;
               const StatusIcon = presentation.icon;
+              const delivery = item.metaStatus ? deliveryPresentation[item.metaStatus] : null;
               return <article key={item.id} className="flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0 last:pb-0">
                 <div className="min-w-0"><p className="truncate text-sm font-semibold text-[#1d1d1f]">{item.label}</p><p className="mt-1 text-[11px] text-[#66666a]">{({ charge: 'Cobranca', scheduled: 'Agendamento', payment: 'Confirmacao', manual: 'Envio manual' })[item.type] || 'Mensagem'} · {formatDate(item.occurredAt)}{item.category ? ` · ${item.category}` : ''}</p><p className="mt-1 text-xs text-[#4b4b4d]">Destinatario: <b>{item.recipientName}</b>{item.recipientPhone ? ` · ${item.recipientPhone}` : ''}</p>{item.error && <p className="mt-1 break-words text-xs text-red-700">{item.error}</p>}{item.messageId && <p className="mt-1 truncate font-mono text-[10px] text-[#66666a]">ID: {item.messageId}</p>}</div>
-                <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-semibold ${presentation.tone}`}><StatusIcon size={12} />{presentation.label}</span>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-semibold ${presentation.tone}`}><StatusIcon size={12} />{presentation.label}</span>
+                  {delivery && <span className={`inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-semibold ${delivery.tone}`}>{delivery.label}</span>}
+                </div>
               </article>;
             })}
           </div>

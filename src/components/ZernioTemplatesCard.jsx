@@ -507,6 +507,26 @@ const ZernioTemplatesCard = () => {
     }
   };
 
+  const deleteTemplate = async (template) => {
+    const confirmed = window.confirm(
+      `Excluir o template "${template.name}" (${template.language})?\n\nO template será removido da Meta e não poderá mais ser usado. O histórico de envios é preservado.`,
+    );
+    if (!confirmed) return;
+    setBusy(true);
+    setErrorMessage('');
+    setNotice('');
+    try {
+      const data = await invoke('delete_template', { templateId: template.id });
+      setTemplates(data.templates || []);
+      if (data.channel) setChannel(data.channel);
+      setNotice(data.message || 'Template excluído.');
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const configureDefault = (template, purpose) => {
     const slots = getTemplateParameterSlots(template.components || []);
     const availableFields = usageFields[purpose];
@@ -651,14 +671,28 @@ const ZernioTemplatesCard = () => {
               </div>
               <p className="text-[11px] text-slate-500 mt-1">{template.category}{template.rejection_reason ? ` · ${template.rejection_reason}` : ''}</p>
             </div>
-            {status === 'APPROVED' && <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={() => configureDefault(template, 'charge')} disabled={busy} className={`shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 disabled:opacity-40 ${isChargeTemplate ? 'bg-emerald-600 text-white' : 'bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-300'}`}>
-                {isChargeTemplate && <CheckCircle2 size={14} />}{isChargeTemplate ? `Editar lembrete ${chargeUsage.reminder_order || 1}º` : 'Usar em lembretes'}
-              </button>
-              <button type="button" onClick={() => configureDefault(template, 'payment_confirmation')} disabled={busy} className={`shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 disabled:opacity-40 ${isPaymentTemplate ? 'bg-sky-600 text-white' : 'bg-sky-600/10 hover:bg-sky-600/20 text-sky-300'}`}>
-                {isPaymentTemplate && <CheckCircle2 size={14} />}{isPaymentTemplate ? 'Confirmação selecionada' : 'Usar em confirmações'}
-              </button>
-            </div>}
+            <div className="flex flex-wrap items-center gap-2">
+              {status === 'APPROVED' && <>
+                <button type="button" onClick={() => configureDefault(template, 'charge')} disabled={busy} className={`shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 disabled:opacity-40 ${isChargeTemplate ? 'bg-emerald-600 text-white' : 'bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-300'}`}>
+                  {isChargeTemplate && <CheckCircle2 size={14} />}{isChargeTemplate ? `Editar lembrete ${chargeUsage.reminder_order || 1}º` : 'Usar em lembretes'}
+                </button>
+                <button type="button" onClick={() => configureDefault(template, 'payment_confirmation')} disabled={busy} className={`shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 disabled:opacity-40 ${isPaymentTemplate ? 'bg-sky-600 text-white' : 'bg-sky-600/10 hover:bg-sky-600/20 text-sky-300'}`}>
+                  {isPaymentTemplate && <CheckCircle2 size={14} />}{isPaymentTemplate ? 'Confirmação selecionada' : 'Usar em confirmações'}
+                </button>
+              </>}
+              {status !== 'DELETED' && status !== 'PENDING_DELETION' && (
+                <button
+                  type="button"
+                  onClick={() => deleteTemplate(template)}
+                  disabled={busy}
+                  title={`Excluir ${template.name}`}
+                  aria-label={`Excluir ${template.name}`}
+                  className="shrink-0 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/15 disabled:opacity-40"
+                >
+                  <Trash2 size={14} className="inline" /> Excluir
+                </button>
+              )}
+            </div>
           </article>;
         })}
       </div> : <div className="flex items-start gap-3 text-xs text-slate-500 bg-slate-900/40 border border-slate-800 rounded-lg p-3"><AlertCircle size={16} className="shrink-0" />Nenhum template encontrado neste canal. Clique em “Novo Template” para criar o primeiro.</div>}

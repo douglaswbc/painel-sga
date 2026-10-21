@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, Cloud, Loader2, MessageCircle, RefreshCw, ShieldCheck, Trash2, XCircle } from 'lucide-react';
+import { CheckCircle2, Cloud, Copy, Loader2, MessageCircle, RefreshCw, ShieldCheck, Trash2, XCircle } from 'lucide-react';
 import { supabase } from '../services/supabase';
 
 let sdkPromise = null;
@@ -37,6 +37,8 @@ const loadFacebookSdk = (appId, graphVersion) => {
 const MetaIntegrationCard = () => {
   const [app, setApp] = useState(null);
   const [integration, setIntegration] = useState(null);
+  const [callbackUrl, setCallbackUrl] = useState('');
+  const [copied, setCopied] = useState(false);
   const [mode, setMode] = useState('signup');
   const [pin, setPin] = useState('');
   const [accessToken, setAccessToken] = useState('');
@@ -71,6 +73,7 @@ const MetaIntegrationCard = () => {
         if (!active) return;
         setApp(data.app || null);
         setIntegration(data.integration || null);
+        if (data.callbackUrl) setCallbackUrl(data.callbackUrl);
         // Sem Configuration ID o Embedded Signup não é possível: o caminho
         // manual é o único disponível e passa a ser o padrão da tela.
         if (!data.app?.configurationId) setMode('manual');
@@ -212,6 +215,17 @@ const MetaIntegrationCard = () => {
     }
   };
 
+  const copyCallbackUrl = async () => {
+    if (!callbackUrl) return;
+    try {
+      await navigator.clipboard.writeText(callbackUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      setErrorMessage('Não foi possível copiar automaticamente. Selecione o texto e copie manualmente.');
+    }
+  };
+
   const disconnect = async () => {
     if (!window.confirm('Desconectar o canal da Meta? A credencial será removida do SGA.')) return;
     setBusy(true);
@@ -309,6 +323,31 @@ const MetaIntegrationCard = () => {
           )}
         </div>
       </div>
+
+      {callbackUrl && (
+        <div className="rounded-xl border border-slate-700 bg-slate-900/30 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-white">URL de callback entre a Meta e o SGA</h3>
+              <p className="mt-1 text-xs text-slate-400">
+                Endereço que a Meta chama para entregar mensagens recebidas e o status de entrega. Use o mesmo valor em
+                <span className="font-mono"> Webhooks</span> no painel do App da Meta, com o mesmo token de verificação configurado no SGA.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={copyCallbackUrl}
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+            >
+              {copied ? <CheckCircle2 size={14} className="text-emerald-400" /> : <Copy size={14} />}
+              {copied ? 'Copiada' : 'Copiar'}
+            </button>
+          </div>
+          <p className="mt-3 break-all rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 font-mono text-[11px] text-slate-300">
+            {callbackUrl}
+          </p>
+        </div>
+      )}
 
       {isConnected && (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

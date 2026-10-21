@@ -13,7 +13,7 @@ import {
   registerPhoneNumber,
   subscribeWaba,
 } from '../_shared/meta-graph.ts';
-import { activateProvider, publicIntegration } from '../_shared/whatsapp-provider.ts';
+import { activateProvider, metaWebhookUrl, publicIntegration } from '../_shared/whatsapp-provider.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -175,7 +175,11 @@ Deno.serve(async (req) => {
       .from('zernio_integracoes').select('*').eq('id_usuario', user.id).maybeSingle();
 
     if (action === 'status') {
-      return json({ integration: publicIntegration(integration), app: metaAppConfig() });
+      return json({
+        integration: publicIntegration(integration),
+        app: metaAppConfig(),
+        callbackUrl: metaWebhookUrl(),
+      });
     }
 
     if (action === 'activate') {

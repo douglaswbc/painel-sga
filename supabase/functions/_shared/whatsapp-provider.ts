@@ -113,6 +113,15 @@ export function publicIntegration(row: IntegrationRow): PublicIntegration {
 }
 
 /**
+ * Public URL that Meta calls to deliver the WhatsApp events of this
+ * installation. It is shown in the interface so the landlord can copy it.
+ */
+export function metaWebhookUrl(): string {
+  const base = (Deno.env.get('SUPABASE_URL') ?? '').replace(/\/$/, '');
+  return `${base}/functions/v1/meta-webhook`;
+}
+
+/**
  * Marks a provider as the active one. The caller must have already checked
  * that the target provider has a usable channel.
  */

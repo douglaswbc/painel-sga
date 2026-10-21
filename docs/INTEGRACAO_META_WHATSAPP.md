@@ -225,6 +225,19 @@ npm test          # npx deno test supabase/tests/
 
 `supabase/tests/meta-messages.test.ts` trava o comportamento do conversor de componentes (cada variável recebe o valor correspondente, na ordem cabeçalho → corpo → botão) e das variantes de número brasileiro.
 
+## 10. Exclusão de templates e status de entrega
+
+**Exclusão**: a ação `delete_template` remove o template no provedor ativo (na Meta, `DELETE /{waba_id}/message_templates` com `hsm_id` e `name`, para apagar apenas a variante) e tira o template da sequência de lembretes.
+
+- Template **sem** envios: a linha local é apagada.
+- Template **com** envios: a linha local é mantida com `status = 'DELETED'`, preservando o histórico (a FK das entregas é restritiva).
+
+Atenção: a Meta bloqueia a recriação de um template com o mesmo nome por 4 semanas depois de uma exclusão, e um template aprovado não pode ter o mesmo nome reutilizado por 30 dias.
+
+**Status de entrega**: o webhook grava `accepted`, `sent`, `delivered`, `read` ou `failed` na coluna `meta_status` das entregas. A aba **Custos e Operação** mostra o status ao lado do estado do SGA (Enviada / Em andamento / Falhou).
+
+**URL de callback**: a tela de integração da Meta e a aba **Custos e Operação** mostram a URL que a Meta chama para entregar os eventos, com um botão para copiar. O mesmo valor deve ser informado em **Webhooks**, no painel do App da Meta, junto do token de verificação configurado no SGA.
+
 ## 7. Referências
 
 - [WhatsApp Business Platform — Cloud API](https://developers.facebook.com/documentation/business-messaging/whatsapp)

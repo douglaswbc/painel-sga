@@ -386,10 +386,18 @@ Permitir que o locador use a API oficial da Meta (WhatsApp Cloud API) no lugar d
 
 **Correcao durante a implementacao:** o `id_usuario` do evento de status era enviado vazio (coluna uuid) e quebrava o webhook com HTTP 500; agora o dono e localizado pela entrega. A busca do dono tambem deixou de usar `maybeSingle`, que falhava silenciosamente quando o mesmo numero estava conectado em mais de uma conta.
 
-### Fase 8.6 — Exclusao de templates e status na interface
+### Fase 8.6 — Exclusao de templates, status de entrega e URL de callback
 
-- [ ] Implementar a exclusao de templates pela Graph API (`DELETE /{waba_id}/message_templates?name=...`), ja validada na conta real mas ainda sem controle na interface.
-- [ ] Exibir o status de entrega da Meta (`accepted`, `sent`, `delivered`, `read`, `failed`) na aba **Custos e Operacao** e na lista de entregas.
-- [ ] Permitir escolher o provedor por locatario em lote, para quem usa a mesma conta Meta em mais de um cadastro.
+- [x] Criar a migration `028_activity_log_delivery_status.sql` com a coluna `meta_status` em `zernio_payment_notifications` e a view `zernio_whatsapp_activity_log` recriada com o status de entrega.
+- [x] Criar a acao `delete_template` no `zernio-whatsapp`: apaga o template no provedor ativo (Meta: `DELETE /{waba_id}/message_templates` com `hsm_id` e `name`) e remove o uso na sequencia de lembretes.
+- [x] Preservar o historico quando o template ja tem envios: a linha local passa a `status = 'DELETED'` em vez de ser apagada (a FK das entregas e restritiva).
+- [x] Adicionar o botao **Excluir** na lista de templates de `/mensagens`, com confirmacao.
+- [x] Exibir o status de entrega (`accepted`, `sent`, `delivered`, `read`, `failed`) na aba **Custos e Operacao**.
+- [x] Exibir a URL de callback entre a Meta e o SGA na aba de integracao da Meta e em **Custos e Operacao**, com botao para copiar.
+- [x] Publicar `zernio-whatsapp` e `meta-integration` e aplicar a migration 028.
+
+**Estado:** validado na conta Meta real. A exclusao removeu o template da conta e da base; o caminho de arquivamento preservou a entrega ja registrada e marcou o template como `DELETED`. A URL de callback e devolvida por `meta-integration` (`status`) e por `zernio-whatsapp` (`health`).
+
+**Aviso:** o teste de arquivamento usou `aviso_boleto_01`, que e um template real da conta, e o excluiu na Meta. A Meta bloqueia o mesmo nome por 4 semanas, entao o modelo de 4 variaveis foi recriado como `aviso_boleto_03` (mesmo texto e mesmos exemplos), que volta ao estado APPROVED apos a analise. Os outros modelos da conta (`aviso_boleto_02` e `sga_confirmacao_pagamento_01`) nao foram afetados. Em producao, o teste de exclusao deve usar sempre um template criado para o teste.
 
 **Observacao:** enquanto as fases 8.3 a 8.5 nao forem entregues, os envios do SGA continuam usando exclusivamente o canal da Zernio, mesmo com `provider = 'meta'`.

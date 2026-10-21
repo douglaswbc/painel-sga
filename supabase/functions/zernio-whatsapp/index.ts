@@ -4,11 +4,12 @@ import { sendMetaTemplateMessage } from '../_shared/meta-messages.ts';
 import {
   MetaApiError,
   createMessageTemplate,
+  deleteMessageTemplate,
   describeMetaError,
   getPhoneNumberDetails,
   listMessageTemplates,
 } from '../_shared/meta-graph.ts';
-import { normalizeProvider, type WhatsappProvider } from '../_shared/whatsapp-provider.ts';
+import { normalizeProvider, metaWebhookUrl, type WhatsappProvider } from '../_shared/whatsapp-provider.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -474,6 +475,8 @@ Deno.serve(async (req) => {
             message: connected
               ? `Canal WhatsApp conectado na Meta${details.displayPhoneNumber ? ` (${details.displayPhoneNumber})` : ''}.`
               : 'O numero da Meta ainda nao foi registrado para uso pela API.',
+            callbackUrl: metaWebhookUrl(),
+            provider: 'meta',
           });
         } catch (error) {
           const message = error instanceof MetaApiError ? describeMetaError(error) : 'Nao foi possivel consultar o canal da Meta agora.';
@@ -493,7 +496,7 @@ Deno.serve(async (req) => {
           const profileId = typeof item.profileId === 'object' ? item.profileId?._id ?? item.profileId?.id : item.profileId;
           return !profileId || profileId === integration.zernio_profile_id;
         });
-        return json({ health: connected ? 'connected' : 'attention', message: connected ? 'Canal WhatsApp conectado e ativo na Zernio.' : 'O canal nao esta ativo no perfil Zernio configurado.' });
+        return json({ health: connected ? 'connected' : 'attention', message: connected ? 'Canal WhatsApp conectado e ativo na Zernio.' : 'O canal nao esta ativo no perfil Zernio configurado.', callbackUrl: metaWebhookUrl(), provider: 'zernio' });
       } catch (error) {
         const message = error instanceof ZernioError ? safeZernioError(error).message : 'Nao foi possivel consultar o canal Zernio agora.';
         return json({ health: 'unavailable', message });
@@ -518,7 +521,7 @@ Deno.serve(async (req) => {
       }
       const search = typeof body.search === 'string' ? body.search.trim().slice(0, 100) : '';
       let query = admin.from('zernio_whatsapp_activity_log')
-        .select('type,source_id,status,template_name,template_language,category,recipient_name,recipient_phone,occurred_at,message_id,error', { count: 'exact' })
+        .select('type,source_id,status,template_name,template_language,category,recipient_name,recipient_phone,occurred_at,message_id,error,meta_status', { count: 'exact' })
         .eq('id_usuario', user.id)
         .order('occurred_at', { ascending: false });
       if (startDate && endDate) query = query.gte('occurred_at', startDate.toISOString()).lte('occurred_at', endDate.toISOString());
@@ -537,6 +540,7 @@ Deno.serve(async (req) => {
         occurredAt: row.occurred_at,
         messageId: row.message_id,
         error: row.error,
+        metaStatus: row.meta_status ?? null,
       }));
       return json({ activity, page, pageSize, total: count || 0, totalPages: Math.max(1, Math.ceil((count || 0) / pageSize)) });
     }
@@ -841,6 +845,70 @@ Deno.serve(async (req) => {
         .single();
       if (saveError || !saved) throw new Error('O template foi enviado à Meta, mas não foi possível salvá-lo no SGA. Atualize a lista.');
       return json({ template: saved, channel: publicChannel(channel) });
+    }
+
+    if (action === 'delete_template') {
+      const templateId = typeof body.templateId === 'string' ? body.templateId : '';
+      if (!/^[0-9a-f-]{36}$/i.test(templateId)) return json({ error: 'Selecione um template válido.' }, 400);
+      const { data: template, error: templateError } = await admin.from('zernio_whatsapp_templates')
+        .select('id,meta_template_id,name,language,status')
+        .eq('id', templateId).eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId).maybeSingle();
+      if (templateError || !template) return json({ error: 'O template não pertence a este locador ou canal.' }, 404);
+      if (['DELETED', 'PENDING_DELETION'].includes(String(template.status ?? '').toUpperCase())) {
+        return json({ error: 'Este template já foi excluído.' }, 409);
+      }
+
+      // Remove o template da sequencia de lembretes e das confirmacoes.
+      const { error: usageError } = await admin.from('zernio_whatsapp_template_usages')
+        .delete().eq('template_id', template.id).eq('id_usuario', user.id);
+      if (usageError) throw new Error('Não foi possível remover o template da sequência de lembretes.');
+
+      if (channel.provider === 'meta') {
+        try {
+          await deleteMessageTemplate(channel.wabaId as string, apiKey, template.name, template.meta_template_id ?? null);
+        } catch (error) {
+          if (error instanceof MetaApiError) {
+            throw new PublicError(describeMetaError(error), error.status === 429 ? 429 : 400);
+          }
+          throw error;
+        }
+      } else {
+        try {
+          const query = new URLSearchParams({ accountId, language: template.language });
+          await zernioRequest(`/whatsapp/templates/${encodeURIComponent(template.name)}?${query.toString()}`, apiKey, { method: 'DELETE' });
+        } catch (error) {
+          if (error instanceof ZernioError) throw safeZernioError(error);
+          throw error;
+        }
+      }
+
+      // Entregas antigas referenciam o template, entao a linha local e
+      // preservada apenas como registro do historico.
+      const { data: deliveries } = await admin.from('zernio_whatsapp_deliveries')
+        .select('id').eq('template_id', template.id).eq('id_usuario', user.id).limit(1);
+      if (deliveries?.length) {
+        await admin.from('zernio_whatsapp_templates')
+          .update({ status: 'DELETED', updated_at: new Date().toISOString() })
+          .eq('id', template.id).eq('id_usuario', user.id);
+        return json({
+          success: true,
+          archived: true,
+          message: 'Template excluído na Meta. O histórico de envios foi preservado.',
+          templates: await syncTemplates(admin, channel, user.id),
+          channel: publicChannel(channel),
+        });
+      }
+
+      const { error: deleteError } = await admin.from('zernio_whatsapp_templates')
+        .delete().eq('id', template.id).eq('id_usuario', user.id);
+      if (deleteError) throw new Error('O template foi excluído na Meta, mas não foi possível removê-lo do SGA.');
+      return json({
+        success: true,
+        archived: false,
+        message: 'Template excluído.',
+        templates: await syncTemplates(admin, channel, user.id),
+        channel: publicChannel(channel),
+      });
     }
 
     if (action === 'set_default') {
