@@ -121,8 +121,8 @@ O SGA valida as duas regras no formulário e no backend antes de chamar a Meta, 
 | Fase | Escopo |
 | --- | --- |
 | 2 | Coluna `provider` nas tabelas de templates e envios; `list`, `create_template`, `set_default` e `save_charge_order` despachando para a Graph API; conversor de `components` (formato de criação → formato de envio). **Entregue** (ver seção 5). |
-| 3 | `send_charge`, envio manual, `zernio-message-scheduler` e confirmação de pagamento usando o provedor ativo. |
-| 4 | Edge Function `meta-webhook` (verificação `GET`, assinatura `X-Hub-Signature-256`, inbound `messages` para o OTP das fechaduras e `statuses` de entrega). |
+| 3 | `send_charge`, envio manual, `zernio-message-scheduler` e confirmação de pagamento usando o provedor ativo. **Entregue** (ver seção 7). |
+| 4 | Edge Function `meta-webhook` (verificação `GET`, assinatura `X-Hub-Signature-256`, inbound `messages` para o OTP das fechaduras e `statuses` de entrega). **Entregue** (ver seção 8). |
 
 ## 6. Templates por provedor (Fase 2, entregue)
 
@@ -170,7 +170,52 @@ A numeração `{{n}}` é **global no template**: o cabeçalho usa os primeiros n
 
 A idempotência local (`zernio_whatsapp_deliveries`, `zernio_whatsapp_scheduled_deliveries` e `zernio_payment_notifications`) impede mensagem duplicada quando o cron e o botão manual correm ao mesmo tempo.
 
-## 8. Testes
+## 8. Webhooks da Meta (Fase 4, entregue)
+
+A Edge Function `meta-webhook` (`verify_jwt = false`) recebe os eventos da conta de WhatsApp.
+
+**Endpoint**: `https://<PROJECT_REF>.supabase.co/functions/v1/meta-webhook`
+
+### Verificação e assinatura
+
+| Situação | Resposta |
+| --- | --- |
+| `GET ?hub.mode=subscribe&hub.verify_token=<META_WEBHOOK_VERIFY_TOKEN>&hub.challenge=<valor>` | devolve o `hub.challenge` (200) |
+| `GET` com token errado | 403 |
+| `POST` sem `X-Hub-Signature-256` ou com assinatura inválida | 401 |
+
+A assinatura é o HMAC-SHA256 do corpo bruto usando `META_APP_SECRET`.
+
+### Eventos tratados
+
+- **`messages` recebidas**: o SGA identifica o locador pelo `metadata.phone_number_id`, aplica o fluxo de acesso às fechaduras (`abrir <porta>` e o código de 6 dígitos) e responde por mensagem de texto.
+- **`statuses`**: `accepted`, `sent`, `delivered`, `read` e `failed` são gravados em `meta_status` na tabela de entregas; `failed` também marca a entrega como falha, com o motivo devolvido pela Meta.
+
+A deduplicação usa a tabela `whatsapp_webhook_events`: as mensagens são identificadas pelo `wamid` e os status pela combinação `wamid + status` (a Meta repete o mesmo evento quando não recebe HTTP 200).
+
+### Registro do webhook na Meta
+
+Feito por API, sem depender do painel:
+
+```bash
+# no nível do App (recebe os eventos de todas as contas)
+POST /v26.0/<APP_ID>/subscriptions
+  object=whatsapp_business_account&callback_url=<URL>&verify_token=<TOKEN>&fields=messages
+
+# e na conta
+POST /v26.0/<WABA_ID>/subscribed_apps
+POST /v26.0/<WABA_ID>/subscribed_apps  (com override_callback_uri e verify_token)
+```
+
+O secret `META_WEBHOOK_VERIFY_TOKEN` precisa estar configurado no Supabase.
+
+### Número compartilhado entre contas
+
+O mesmo número do WhatsApp pode estar conectado em mais de uma conta do SGA. O webhook considera todos os donos conectados: a resposta de acesso (`abrir`) é enviada por quem tiver a porta e o locatário autorizado, e as respostas negativas ("porta não encontrada", "sem autorização") só saem se nenhum dono atender.
+
+O fluxo de fechaduras vive em `supabase/functions/_shared/lock-otp.ts` e é compartilhado pelos webhooks da Zernio e da Meta.
+
+## 9. Testes
 
 O repositório tem um conjunto de testes das Edge Functions em Deno:
 

@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { handleLockOtp } from '../_shared/lock-otp.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -112,70 +113,14 @@ Deno.serve(async (req) => {
 
     const apiKey = await decrypt(integration.api_key_ciphertext, integration.id_usuario)
     const phoneDigits = phone.replace(/\D/g, '')
-    const senderVariants = normalizePhoneNumber(phoneDigits)
     const cleanMsg = messageContent.trim().toLowerCase()
     const reply = (text: string) => replyToConversation(apiKey, accountId, conversationId, text)
 
-    if (cleanMsg.startsWith('abrir')) {
-      const identificador = cleanMsg.replace('abrir', '').trim()
-      const { data: fechadura } = await supabase.from('fechaduras').select('id,nome')
-        .eq('id_usuario', integration.id_usuario).eq('identificador', identificador).maybeSingle()
-      if (!fechadura) {
-        await reply(`⚠️ Porta "${identificador}" não encontrada.`)
-        return new Response('ok')
-      }
-
-      const { data: locatario } = await supabase.from('locatarios').select('id,nome_completo,ativo')
-        .eq('id_usuario', integration.id_usuario).in('whatsapp', senderVariants).eq('ativo', true).limit(1).maybeSingle()
-      if (!locatario) {
-        await reply('❌ Você não tem autorização para abrir esta porta ou seu cadastro está inativo.')
-        return new Response('ok')
-      }
-
-      const otp = Math.floor(100000 + Math.random() * 900000).toString()
-      const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString()
-      await supabase.from('fechadura_verificacoes').delete().in('whatsapp', senderVariants)
-      const { error: insertError } = await supabase.from('fechadura_verificacoes').insert({
-        whatsapp: phoneDigits, id_fechadura: fechadura.id, codigo_otp: otp, expires_at: expiresAt,
-      })
-      if (insertError) throw insertError
-      await supabase.from('fechadura_logs').insert({
-        id_usuario: integration.id_usuario, id_locatario: locatario.id, id_fechadura: fechadura.id,
-        whatsapp: phoneDigits, evento: 'solicitado', detalhes: `Solicitou abertura da porta: ${fechadura.nome}`,
-      })
-      await reply(`🔐 *Solicitação de Abertura*\nPorta: ${fechadura.nome}\n\nPara confirmar, responda apenas com o código de 6 dígitos: *${otp}*`)
-      return new Response('ok')
-    }
-
-    if (/^\d{6}$/.test(cleanMsg)) {
-      const { data: verificacao } = await supabase.from('fechadura_verificacoes').select('*,fechaduras(nome,id_usuario)')
-        .in('whatsapp', senderVariants).gt('expires_at', new Date().toISOString()).maybeSingle()
-      if (!verificacao) return new Response('ok')
-      if (verificacao.codigo_otp === cleanMsg) {
-        const token = Math.random().toString(36).substring(2, 10).toUpperCase()
-        const expiresAt = new Date(Date.now() + 60 * 1000).toISOString()
-        await supabase.from('fechadura_comandos').insert({ id_fechadura: verificacao.id_fechadura, token_acesso: token, expires_at: expiresAt })
-        await supabase.from('fechadura_verificacoes').delete().eq('id', verificacao.id)
-        await supabase.from('fechadura_logs').insert({
-          id_usuario: integration.id_usuario, id_fechadura: verificacao.id_fechadura, whatsapp: phoneDigits,
-          evento: 'otp_validado', detalhes: `Acesso autorizado para a porta: ${verificacao.fechaduras.nome}`,
-        })
-        await reply('✅ *Acesso Autorizado!*\nA porta será liberada agora. Você tem 1 minuto.')
-      } else {
-        await reply('❌ Código incorreto. Tente novamente ou peça um novo código.')
-      }
-    }
+    const outcome = await handleLockOtp(supabase, integration.id_usuario, phoneDigits, cleanMsg)
+    if (outcome.handled && outcome.reply) await reply(outcome.reply)
     return new Response('ok')
   } catch (error) {
     console.error('Lock webhook error:', error)
     return new Response(JSON.stringify({ error: 'Webhook processing failed' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
   }
 })
-
-function normalizePhoneNumber(phone: string): string[] {
-  const clean = phone.replace(/\D/g, '')
-  const variants = [clean]
-  if (clean.startsWith('55') && clean.length === 12) variants.push(`55${clean.slice(2, 4)}9${clean.slice(4)}`)
-  else if (clean.startsWith('55') && clean.length === 13) variants.push(`55${clean.slice(0, 4)}${clean.slice(5)}`)
-  return [...new Set(variants)]
-}

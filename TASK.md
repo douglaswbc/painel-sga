@@ -372,8 +372,24 @@ Permitir que o locador use a API oficial da Meta (WhatsApp Cloud API) no lugar d
 
 ### Fase 8.5 — Webhooks da Meta
 
-- [ ] Criar a Edge Function `meta-webhook` (`verify_jwt = false`) com a verificacao `GET` (`hub.mode`, `hub.verify_token`, `hub.challenge`) e a assinatura `X-Hub-Signature-256` sobre o corpo cru.
-- [ ] Tratar o inbound `messages` reaproveitando a logica de OTP das fechaduras, extraida de `webhook-fechadura` para `_shared`.
-- [ ] Tratar `statuses` (`sent`, `delivered`, `read`, `failed`) e atualizar o status das entregas registradas.
+- [x] Criar a migration `027_whatsapp_meta_webhooks.sql` com a tabela `whatsapp_webhook_events` (deduplicacao) e a coluna `meta_status` nas tabelas de entregas.
+- [x] Criar a Edge Function `meta-webhook` (`verify_jwt = false`) com a verificacao `GET` (`hub.mode`, `hub.verify_token`, `hub.challenge`) e a validacao da assinatura `X-Hub-Signature-256` com `META_APP_SECRET`.
+- [x] Tratar as mensagens recebidas: identificar o locador pelo `metadata.phone_number_id`, aplicar o fluxo de OTP das fechaduras e responder por mensagem de texto.
+- [x] Tratar os status de entrega (`accepted`, `sent`, `delivered`, `read`, `failed`), gravando em `meta_status` e marcando a entrega como falha quando a Meta recusar.
+- [x] Extrair o fluxo de OTP das fechaduras para `supabase/functions/_shared/lock-otp.ts`, compartilhado entre os webhooks da Zernio e da Meta.
+- [x] Tratar o mesmo numero conectado em mais de uma conta: quem tem a porta e o locatario autorizado responde primeiro.
+- [x] Registrar o webhook na Meta por API (`POST /{app_id}/subscriptions`, `POST /{waba_id}/subscribed_apps` e o `override_callback_uri` da WABA).
+- [x] Configurar o secret `META_WEBHOOK_VERIFY_TOKEN`.
+- [ ] Exibir o status de entrega da Meta na aba **Custos e Operacao** de `/mensagens`.
+
+**Estado:** validado com um payload no formato exato da Meta. A verificacao `GET` devolve o `hub.challenge` e recusa token errado (403); o `POST` com assinatura invalida responde 401 e com assinatura valida processa. O inbound `abrir portao-teste` gerou a verificacao com OTP de 6 digitos, gravou o log da fechadura e respondeu no WhatsApp (`inbound: 1`). Os status `delivered` e `read` atualizaram `meta_status` e o evento repetido foi deduplicado (2 eventos registrados para 3 envios). Todos os registros de teste foram removidos.
+
+**Correcao durante a implementacao:** o `id_usuario` do evento de status era enviado vazio (coluna uuid) e quebrava o webhook com HTTP 500; agora o dono e localizado pela entrega. A busca do dono tambem deixou de usar `maybeSingle`, que falhava silenciosamente quando o mesmo numero estava conectado em mais de uma conta.
+
+### Fase 8.6 — Exclusao de templates e status na interface
+
+- [ ] Implementar a exclusao de templates pela Graph API (`DELETE /{waba_id}/message_templates?name=...`), ja validada na conta real mas ainda sem controle na interface.
+- [ ] Exibir o status de entrega da Meta (`accepted`, `sent`, `delivered`, `read`, `failed`) na aba **Custos e Operacao** e na lista de entregas.
+- [ ] Permitir escolher o provedor por locatario em lote, para quem usa a mesma conta Meta em mais de um cadastro.
 
 **Observacao:** enquanto as fases 8.3 a 8.5 nao forem entregues, os envios do SGA continuam usando exclusivamente o canal da Zernio, mesmo com `provider = 'meta'`.

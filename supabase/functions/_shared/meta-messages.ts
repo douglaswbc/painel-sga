@@ -93,6 +93,49 @@ export function buildTemplateComponents(components: JsonRecord[] = [], params: s
 }
 
 /**
+ * Sends a free text message through the WhatsApp Cloud API.
+ *
+ * Free text is only accepted inside the 24 hour customer service window, so
+ * it is used to answer a message that the tenant just sent.
+ */
+export async function sendMetaTextMessage(
+  phoneNumberId: string,
+  token: string,
+  to: string,
+  text: string,
+): Promise<{ messageId: string }> {
+  const variants = whatsappNumberVariants(to);
+  let lastError: unknown = null;
+  for (const recipient of variants) {
+    try {
+      const result = await graphJson<{ messages?: { id?: string }[] }>(`/${phoneNumberId}/messages`, {
+        method: 'POST',
+        token,
+        body: {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: recipient,
+          type: 'text',
+          text: { body: text },
+        },
+      });
+      const messageId = result.messages?.[0]?.id;
+      if (typeof messageId !== 'string' || !messageId) {
+        throw new Error('A Meta aceitou o envio, mas não retornou o identificador da mensagem.');
+      }
+      return { messageId };
+    } catch (error) {
+      lastError = error;
+      const invalidRecipient = error instanceof MetaApiError
+        && error.status === 400
+        && (error.code === 100 || error.subcode === 33);
+      if (!invalidRecipient) throw error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('A Meta recusou o envio para o número informado.');
+}
+
+/**
  * Sends an approved template through the WhatsApp Cloud API and returns the
  * WhatsApp message id (`wamid...`).
  *
