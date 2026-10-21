@@ -71,6 +71,9 @@ const MetaIntegrationCard = () => {
         if (!active) return;
         setApp(data.app || null);
         setIntegration(data.integration || null);
+        // Sem Configuration ID o Embedded Signup não é possível: o caminho
+        // manual é o único disponível e passa a ser o padrão da tela.
+        if (!data.app?.configurationId) setMode('manual');
       })
       .catch((error) => {
         if (active) setErrorMessage(error.message);
@@ -384,6 +387,11 @@ const MetaIntegrationCard = () => {
 
           {mode === 'signup' ? (
             <div className="space-y-3">
+              {!app?.configurationId && (
+                <p className="text-xs rounded-lg p-3 text-amber-300 bg-amber-500/10 border border-amber-500/20">
+                  O App da Meta ainda não tem um <span className="font-mono">Configuration ID</span> configurado no SGA, então o cadastro embutido não está disponível. Use a opção “Token e número manuais” ou peça ao responsável para configurar o App Meta.
+                </p>
+              )}
               <label className="block text-xs text-slate-400" htmlFor="meta-pin">
                 PIN de 6 dígitos da verificação em duas etapas
               </label>
@@ -402,7 +410,7 @@ const MetaIntegrationCard = () => {
                 <button
                   type="button"
                   onClick={connectWithMeta}
-                  disabled={busy || !/^\d{6}$/.test(pin)}
+                  disabled={busy || !/^\d{6}$/.test(pin) || !app?.configurationId}
                   className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-5 py-2.5 rounded-lg font-bold flex items-center justify-center gap-2"
                 >
                   {busy ? <Loader2 className="animate-spin" size={17} /> : <ShieldCheck size={17} />}

@@ -346,11 +346,18 @@ Permitir que o locador use a API oficial da Meta (WhatsApp Cloud API) no lugar d
 
 **Estado:** migration 026 aplicada e registrada no projeto `cobranca_car`; as três constraints foram conferidas remotamente. `zernio-whatsapp` e `enviar-lembretes-cobranca` republicadas. Um teste de fumaca com locador descartavel confirmou o despacho: `provider=zernio` sem chave responde 409 pedindo chave Zernio, `provider=meta` sem credencial responde 409 pedindo numero da Meta, `health` responde `attention` e `validate_manual` com token falso devolve erro sanitizado da Meta sem vazar o token. O envio pela Meta continua bloqueado ate a fase 8.4. O frontend precisa ser publicado no Cloudflare Pages.
 
+**Validacao com a conta Meta real** (WABA `1493104652592138`, numero `1177949292067294` / +55 11 92217-5013, quality GREEN, limite TIER_2K, nameStatus APPROVED): os secrets `META_APP_ID`, `META_APP_SECRET` e `META_GRAPH_VERSION=26` foram cadastrados; `validate_manual` conectou o canal; `list` devolveu os 8 templates da conta com os componentes preservados; `create_template` gravou um template novo com status PENDING e o `meta_template_id` correto. Todos os templates de teste foram removidos da conta (restaram os 8 originais). As duas regras de analise de template da Meta foram medidas empiricamente e implementadas na validacao do SGA.
+
 ### Fase 8.4 — Envio por provedor
 
+- [x] Normalizar `META_GRAPH_VERSION` para aceitar `26` ou `v26.0`.
+- [x] Validar no SGA as duas regras de analise de template da Meta (variavel no inicio ou no fim do corpo; corpo curto demais para o numero de variaveis) e repassar o `error_user_msg` da Meta.
+- [x] Adicionar retry com backoff para as chamadas idempotentes da Graph API, que responde com erro transitorio logo apos um POST.
+- [x] Atribuir o system user a WABA (`POST /{waba_id}/assigned_users?user=...&tasks=['MANAGE']`), exigido para excluir templates.
 - [ ] Criar o conversor de `components` do formato de criacao (`BODY`, `HEADER`, `BUTTONS` com `{{1}}`) para o formato de envio (`body`, `header`, `button` com `parameters`).
 - [ ] Fazer `send_charge`, o envio manual, `zernio-message-scheduler` e a confirmacao de pagamento usarem o provedor ativo, preservando a idempotencia atual.
 - [ ] Adaptar `zernio-whatsapp` e `zernio-message-scheduler` para resolver a credencial e o canal de acordo com `provider`.
+- [ ] Implementar a exclusao de templates pela Graph API (`DELETE /{waba_id}/message_templates?name=...`), hoje validada na conta real mas ainda sem controle na interface.
 
 ### Fase 8.5 — Webhooks da Meta
 

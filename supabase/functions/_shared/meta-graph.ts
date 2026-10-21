@@ -9,20 +9,28 @@
 
 const GRAPH_BASE = 'https://graph.facebook.com';
 
-export const graphVersion = (): string => Deno.env.get('META_GRAPH_VERSION') || 'v23.0';
+export const graphVersion = (): string => {
+  const raw = (Deno.env.get('META_GRAPH_VERSION') || 'v23.0').trim();
+  const normalized = raw.startsWith('v') ? raw : `v${raw}`;
+  return /\.\d+$/.test(normalized) ? normalized : `${normalized}.0`;
+};
 
 export class MetaApiError extends Error {
   status: number;
   code: number | null;
   subcode: number | null;
   type: string | null;
+  userMessage: string | null;
+  userTitle: string | null;
 
-  constructor(status: number, message: string, code: number | null = null, subcode: number | null = null, type: string | null = null) {
+  constructor(status: number, message: string, code: number | null = null, subcode: number | null = null, type: string | null = null, userMessage: string | null = null, userTitle: string | null = null) {
     super(message);
     this.status = status;
     this.code = code;
     this.subcode = subcode;
     this.type = type;
+    this.userMessage = userMessage;
+    this.userTitle = userTitle;
   }
 }
 
@@ -56,26 +64,39 @@ function parseError(status: number, payload: unknown): MetaApiError {
   const code = typeof error.code === 'number' ? error.code : null;
   const subcode = typeof error.error_subcode === 'number' ? error.error_subcode : null;
   const type = typeof error.type === 'string' ? error.type.slice(0, 60) : null;
-  return new MetaApiError(status, message, code, subcode, type);
+  const userMessage = sanitizeProviderMessage(error.error_user_msg) || null;
+  const userTitle = sanitizeProviderMessage(error.error_user_title) || null;
+  return new MetaApiError(status, message, code, subcode, type, userMessage, userTitle);
 }
+
+const TRANSIENT_STATUSES = new Set([429, 500, 502, 503, 504]);
 
 async function graphFetchUrl(
   url: string,
   options: { method?: string; token?: string; body?: unknown; timeoutMs?: number } = {},
+  attempt = 0,
 ): Promise<{ payload: unknown; text: string }> {
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (options.token) headers.Authorization = `Bearer ${options.token}`;
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
 
+  // Only idempotent calls are retried: a POST can create a duplicate template.
+  const method = options.method ?? 'GET';
+  const retryable = attempt < 2 && (method === 'GET' || method === 'DELETE');
+
   let response: Response;
   try {
     response = await fetch(url, {
-      method: options.method ?? 'GET',
+      method,
       headers,
       ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
       signal: AbortSignal.timeout(options.timeoutMs ?? 20000),
     });
   } catch {
+    if (retryable) {
+      await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)));
+      return graphFetchUrl(url, options, attempt + 1);
+    }
     throw new MetaApiError(503, 'Não foi possível conectar à Meta agora. Tente novamente.');
   }
 
@@ -84,7 +105,14 @@ async function graphFetchUrl(
   if (text) {
     try { payload = JSON.parse(text); } catch { payload = text; }
   }
-  if (!response.ok) throw parseError(response.status, payload);
+  if (!response.ok) {
+    // The Graph API can answer with a transient error right after a write.
+    if (retryable && TRANSIENT_STATUSES.has(response.status)) {
+      await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)));
+      return graphFetchUrl(url, options, attempt + 1);
+    }
+    throw parseError(response.status, payload);
+  }
   return { payload, text };
 }
 
@@ -319,11 +347,19 @@ export function describeMetaError(error: unknown): string {
   if (error.status === 400 && error.subcode === 2388024) {
     return 'Já existe um template com esse nome e idioma nesta conta. Escolha outro nome ou apague o template existente.';
   }
+  if (error.status === 400 && error.subcode === 2388299) {
+    return 'A Meta não aceita variáveis no início ou no fim do corpo da mensagem. Reescreva o texto.';
+  }
+  if (error.status === 400 && error.subcode === 2388293) {
+    return 'A Meta achou o corpo curto demais para o número de variáveis. Reduza as variáveis ou amplie a mensagem.';
+  }
   if (error.status === 400 && error.subcode === 33) {
     return 'A Meta não encontrou o objeto informado. Confira o Phone Number ID e o WABA ID.';
   }
   if (error.status === 400 && error.code === 100) {
-    return 'A Meta recusou os dados informados. Revise o identificador e tente novamente.';
+    return error.userMessage
+      ? `A Meta recusou o template: ${error.userMessage}`
+      : 'A Meta recusou os dados informados. Revise o identificador e tente novamente.';
   }
   if (error.status === 401 || error.status === 403) {
     return 'O token da Meta não autorizou esta operação. Gere um token com as permissões whatsapp_business_management e whatsapp_business_messaging.';

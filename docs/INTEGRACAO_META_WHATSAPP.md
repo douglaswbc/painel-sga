@@ -67,6 +67,8 @@ POST /{waba_id}/subscribed_apps     assina o webhook da WABA
 
 Preencha **Token de acesso do sistema**, **Phone Number ID** e **WABA ID**. O SGA valida tudo na Graph API (`GET /{waba_id}`, `GET /{waba_id}/phone_numbers`, `GET /{phone_number_id}`) antes de gravar, e só então ativa o canal.
 
+É o caminho usado hoje pela conta "Suporte Douglas" (WABA `1493104652592138`, número `1177949292067294`), já que o App ainda não tem `configuration_id` e o cadastro embutido depende dele.
+
 ## 4. Trocar de provedor
 
 - O provedor ativo fica em `zernio_integracoes.provider` (`'zernio'` ou `'meta'`).
@@ -81,7 +83,40 @@ Preencha **Token de acesso do sistema**, **Phone Number ID** e **WABA ID**. O SG
 - A verificação do negócio é feita pelo próprio locador no Meta Business e define o limite de mensagens e o selo de conta oficial.
 - A partir de um mês, relatórios da Meta exigem Template de Marketing aprovado. A tela de modelos do SGA segue sendo a fonte de verdade dos templates (`zernio_whatsapp_templates`).
 
-## 6. Fases seguintes
+## 4.1 Permissões do system user na conta WhatsApp
+
+O token usado pelo SGA é um **system user token** com `whatsapp_business_management`, `whatsapp_business_messaging` e `whatsapp_business_manage_events`.
+
+Para as operações que exigem vínculo direto com a conta (por exemplo, **excluir** templates), o system user precisa ser atribuído à WABA:
+
+```bash
+curl -X POST "https://graph.facebook.com/v26.0/<WABA_ID>/assigned_users?user=<SYSTEM_USER_ID>&tasks=['MANAGE']" \
+  -H "Authorization: Bearer <SYSTEM_USER_TOKEN>"
+```
+
+Sem essa atribuição, a listagem e a criação de templates funcionam, mas a exclusão responde `#100 Need permission on either WhatsApp Business Account or owner/shared business`.
+
+Para excluir templates, a API usa o identificador do template (`hsm_id`), não o idioma:
+
+```bash
+# um template
+DELETE /v26.0/<WABA_ID>/message_templates?name=<NOME>
+# vários de uma vez (até 100)
+DELETE /v26.0/<WABA_ID>/message_templates?hsm_ids=["<ID1>","<ID2>"]
+```
+
+## 4.2 Regras de análise de template da Meta
+
+A Meta recusa templates antes mesmo de salvá-los. As duas regras foram medidas na conta real:
+
+| Regra | Subcode | Exemplo recusado |
+| --- | --- | --- |
+| A variável não pode estar no início nem no fim do corpo (nem seguida apenas de pontuação) | `2388299` | `Olá {{1}}, sua cobrança vence em {{2}}.` |
+| O corpo precisa de ao menos 3 palavras por variável (contando os marcadores) | `2388293` | `Olá {{1}}` |
+
+O SGA valida as duas regras no formulário e no backend antes de chamar a Meta, com mensagem em português. A Meta também envia `error_user_msg` em português, que é repassado ao usuário quando a recusa vem de outra regra.
+
+## 5. Fases seguintes
 
 | Fase | Escopo |
 | --- | --- |
@@ -89,7 +124,7 @@ Preencha **Token de acesso do sistema**, **Phone Number ID** e **WABA ID**. O SG
 | 3 | `send_charge`, envio manual, `zernio-message-scheduler` e confirmação de pagamento usando o provedor ativo. |
 | 4 | Edge Function `meta-webhook` (verificação `GET`, assinatura `X-Hub-Signature-256`, inbound `messages` para o OTP das fechaduras e `statuses` de entrega). |
 
-## 5. Templates por provedor (Fase 2, entregue)
+## 6. Templates por provedor (Fase 2, entregue)
 
 A rota `/mensagens` já lê o provedor ativo e gerencia os templates do canal correspondente.
 

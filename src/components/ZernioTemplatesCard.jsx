@@ -52,6 +52,14 @@ const hasUnsupportedVariableSyntax = (text) => {
 };
 const isSequential = (variables) => variables.every((value, index) => value === index + 1);
 
+// A Meta rejeita variaveis no inicio ou no fim do corpo (subcode 2388299).
+const startsWithVariable = (text) => /^\s*\{\{\d+\}\}/.test(String(text || ''));
+const endsWithVariable = (text) => /\{\{\d+\}\}\s*[.,;:!?…]*\s*$/.test(String(text || ''));
+
+// A Meta exige cerca de 3 palavras por variavel (subcode 2388293).
+const templateTokenCount = (text) => String(text || '').trim().split(/\s+/).filter(Boolean).length;
+const minimumTokensFor = (variableCount) => variableCount * 3 + 1;
+
 const getTemplateParameterSlots = (components = []) => {
   const ordered = [
     ...components.filter((component) => String(component.type).toUpperCase() === 'HEADER'),
@@ -178,6 +186,10 @@ function TemplateForm({ busy, storageKey, onCancel, onSubmit }) {
     else if (draft.body.length > 1024) result.body = 'O corpo ultrapassou 1.024 caracteres.';
     else if (!isSequential(variables)) result.body = 'Use variáveis sequenciais: {{1}}, {{2}}, {{3}}... sem pular números.';
     else if (hasUnsupportedVariableSyntax(draft.body)) result.body = 'Variável inválida. Use o formato {{1}}, {{2}}, {{3}}...';
+    else if (startsWithVariable(draft.body) || endsWithVariable(draft.body)) result.body = 'A Meta não aceita variáveis no início ou no fim do corpo. Reescreva a mensagem.';
+    else if (variables.length && templateTokenCount(draft.body) < minimumTokensFor(variables.length)) {
+      result.body = `O corpo é curto demais para ${variables.length} variável${variables.length > 1 ? 'e' : 'is'}. A Meta pede ao menos ${minimumTokensFor(variables.length) - variables.length} palavras além das variáveis.`;
+    }
     if (variables.some((variable) => !(draft.examples[variable] || '').trim())) result.examples = 'Preencha um exemplo para cada variável do corpo.';
     if (variables.some((variable) => (draft.examples[variable] || '').length > 60)) result.examples = 'Cada exemplo pode ter no máximo 60 caracteres.';
     if (draft.headerType === 'text') {

@@ -324,6 +324,28 @@ function templateParameterCount(components: JsonRecord[] = []): number {
   return count;
 }
 
+/**
+ * The Meta template review rejects two shapes before the template is even
+ * stored: variables at the beginning or the end of the body (2388299) and a
+ * body with too few words for the number of variables (2388293).
+ */
+function assertMetaBodyRules(bodyText: string): void {
+  const text = String(bodyText ?? '');
+  const variableCount = [...new Set([...text.matchAll(/\{\{(\d+)\}\}/g)].map((match) => Number(match[1])))].length;
+  if (!variableCount) return;
+  if (/^\s*\{\{\d+\}\}/.test(text) || /\{\{\d+\}\}\s*[.,;:!?…]*\s*$/.test(text)) {
+    throw new PublicError('A Meta não aceita variáveis no início ou no fim do corpo da mensagem. Reescreva o texto.', 400);
+  }
+  const tokens = text.trim().split(/\s+/).filter(Boolean).length;
+  const minimum = variableCount * 3 + 1;
+  if (tokens < minimum) {
+    throw new PublicError(
+      `A Meta exige um corpo mais longo: ${variableCount} variável${variableCount > 1 ? 'e' : ''} precisa de ao menos ${minimum} palavras.`,
+      400,
+    );
+  }
+}
+
 function billingTemplateParams(template: JsonRecord, mapping: JsonRecord[], tenantName: string, amount: number, dueDate: string, paymentLink: string): string[] {
   const values: Record<string, string> = {
     tenant_first_name: tenantName.trim().split(/\s+/)[0],
@@ -676,6 +698,7 @@ Deno.serve(async (req) => {
         return json({ error: 'O template precisa ter um corpo de mensagem válido com até 1.024 caracteres.' }, 400);
       }
       const bodyText = bodyComponents[0].text as string;
+      assertMetaBodyRules(bodyText);
       const unparsedVariableText = bodyText.replace(/\{\{\d+\}\}/g, '');
       if (unparsedVariableText.includes('{{') || unparsedVariableText.includes('}}')) {
         return json({ error: 'Use somente variáveis no formato {{1}}, {{2}}, {{3}}...' }, 400);
