@@ -27,8 +27,9 @@ import ExpirationTimer from '../components/ExpirationTimer';
 const PAGE_SIZE = 8;
 const FILTERS = [
   { value: 'all', label: 'Todas' },
-  { value: 'atrasado', label: 'Atrasadas' },
   { value: 'pendente', label: 'Pendentes' },
+  { value: 'atrasado', label: 'Atrasadas' },
+  { value: 'pago', label: 'Pagas' },
 ];
 
 const currency = (value) => Number(value || 0).toLocaleString('pt-BR', {
@@ -39,6 +40,27 @@ const dateLabel = (date) => {
   if (!date) return 'Sem vencimento';
   const parsed = new Date(`${date}T00:00:00`);
   return Number.isNaN(parsed.getTime()) ? 'Sem vencimento' : parsed.toLocaleDateString('pt-BR');
+};
+
+const formatCreatedAt = (dateString) => {
+  if (!dateString) return null;
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'America/Sao_Paulo',
+  }).format(date);
+};
+
+const isRecentlyGenerated = (dateString) => {
+  if (!dateString) return false;
+  const date = new Date(dateString).getTime();
+  if (Number.isNaN(date)) return false;
+  const diffHours = (Date.now() - date) / (1000 * 60 * 60);
+  return diffHours >= 0 && diffHours <= 24;
 };
 
 const pixExpiration = (charge) => {
@@ -78,13 +100,23 @@ const ChargeIdentity = ({ charge }) => {
     || charge.contratos?.locatarios?.nome_completo
     || 'Cobrança avulsa';
   const plate = charge.contratos?.veiculos?.placa;
+  const createdDate = formatCreatedAt(charge.created_at);
+  const recent = isRecentlyGenerated(charge.created_at);
 
   return (
     <div className="min-w-0">
-      <p className="truncate font-semibold text-white">{tenantName}</p>
+      <div className="flex items-center gap-2">
+        <p className="truncate font-semibold text-white">{tenantName}</p>
+        {recent && (
+          <span className="shrink-0 rounded-md border border-indigo-500/30 bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-300">
+            Mais recente
+          </span>
+        )}
+      </div>
       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
         {plate && <span className="rounded-md border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 font-mono text-zinc-300">{plate}</span>}
         {charge.categoria && <span className="capitalize">{charge.categoria}</span>}
+        {createdDate && <span className="text-zinc-400">Gerada em {createdDate}</span>}
         <span>{charge.tentativas_envio || 0} lembrete(s)</span>
       </div>
     </div>
@@ -115,6 +147,17 @@ const ChargeActions = ({ charge, processing, onSend, onOpenLink, compact = false
   const expiresAt = pixExpiration(charge);
   const pixExpired = usePixExpired(expiresAt);
   const name = charge.locatario_cobranca?.nome_completo || charge.contratos?.locatarios?.nome_completo || 'Cobrança avulsa';
+  const isPaid = charge.status === 'pago';
+
+  if (isPaid) {
+    return (
+      <div className={compact ? 'flex items-center gap-2' : 'flex items-center justify-end gap-2'}>
+        <span className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-300 ring-1 ring-emerald-500/20">
+          <CheckCircle2 size={15} aria-hidden="true" /> Cobrança paga
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div className={compact ? 'flex flex-wrap items-center gap-2' : 'flex items-center justify-end gap-2'}>
@@ -354,10 +397,10 @@ const Dashboard = () => {
           <div>
             <div className="flex items-center gap-2">
               <Clock3 size={18} className="text-amber-300" aria-hidden="true" />
-              <h2 className="text-base font-bold text-white sm:text-lg">Cobranças que precisam de ação</h2>
+              <h2 className="text-base font-bold text-white sm:text-lg">Cobranças geradas e pendências</h2>
             </div>
             <p className="mt-1 text-sm text-zinc-500">
-              {statusCounts.atrasado} atrasada(s) · {statusCounts.pendente} pendente(s)
+              {statusCounts.atrasado || 0} atrasada(s) · {statusCounts.pendente || 0} pendente(s) · Mais recentes primeiro
             </p>
           </div>
           <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrar cobranças">
@@ -391,8 +434,16 @@ const Dashboard = () => {
             <div className="mb-4 rounded-2xl bg-emerald-500/10 p-4 text-emerald-300">
               <CheckCircle2 size={26} aria-hidden="true" />
             </div>
-            <h3 className="font-semibold text-white">{filter === 'all' ? 'Tudo em dia' : `Nenhuma cobrança ${filter === 'atrasado' ? 'atrasada' : 'pendente'}`}</h3>
-            <p className="mt-1 max-w-md text-sm text-zinc-500">Não há cobranças em aberto para mostrar neste filtro.</p>
+            <h3 className="font-semibold text-white">
+              {filter === 'all'
+                ? 'Tudo em dia'
+                : `Nenhuma cobrança ${filter === 'atrasado' ? 'atrasada' : filter === 'pendente' ? 'pendente' : 'paga'}`}
+            </h3>
+            <p className="mt-1 max-w-md text-sm text-zinc-500">
+              {filter === 'all'
+                ? 'Não há cobranças em aberto para mostrar neste filtro.'
+                : `Não foram encontradas cobranças com status "${filter}".`}
+            </p>
             <Link to="/cobrancas" className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-lg border border-zinc-700 px-3 text-sm font-semibold text-zinc-200 hover:bg-zinc-800">
               Abrir cobranças <ArrowUpRight size={15} aria-hidden="true" />
             </Link>
