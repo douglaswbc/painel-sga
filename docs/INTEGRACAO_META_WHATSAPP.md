@@ -254,6 +254,56 @@ A resposta de erro inclui `detail` (HTTP, `code`, `subcode`, endpoint e mensagem
 
 **Templates apagados na Meta**: ao sincronizar, o SGA marca como `DELETED` as linhas locais que não existem mais na conta e remove os usos delas. Assim a sequência de lembretes não tenta enviar um template inexistente — sem isso, o lembrete falha com `#100 Invalid parameter` ou com o aviso de template não aprovado.
 
+## 12. Link de pagamento como botão no template
+
+### Por que o link no corpo não é clicável
+
+O WhatsApp não transforma em hyperlink uma URL escrita no corpo de um template: o texto chega como texto comum. Como o link do Mercado Pago é longo (`https://www.mercadopago.com.br/payments/.../ticket?caller_id=...&hash=...`), ele fica quebrado em várias linhas e não abre ao toque. A forma correta é um **botão de URL**.
+
+### Regra da Meta para botões de URL
+
+- O botão é do tipo `URL`, com rótulo de até 25 caracteres (ex.: `Pagar com PIX`).
+- A URL tem uma parte **fixa** e no máximo **uma variável, sempre no fim**: `https://painel-sga.pages.dev/pagar/{{1}}`.
+- A variável também pode vir depois de `?`, desde que seja o último trecho: `https://exemplo.com/pagar?t={{1}}`.
+- Não é possível enviar a URL inteira do Mercado Pago dentro do botão — só o trecho dinâmico final.
+- Um template **já aprovado não aceita botão novo**. É preciso criar outro template, com nome novo (o nome anterior fica bloqueado por 30 dias). Por isso os templates atuais (`aviso_boleto_02` e `aviso_boleto_03`) continuam com o link no corpo até serem substituídos.
+
+### Como o SGA resolve o link dinâmico
+
+1. Cada cobrança tem um `pay_token` (uuid único, migration `029_charge_pay_token.sql`).
+2. O template aponta para `https://painel-sga.pages.dev/pagar/{{1}}`.
+3. O `public/_redirects` do Cloudflare Pages encaminha `/pagar/:token` para a Edge Function pública `pay-link`.
+4. A `pay-link` responde `302` para o `payment_link` real do Mercado Pago. Se a cobrança estiver paga, cancelada, com PIX expirado ou o token for inválido, redireciona para a página pública `/pagar/aviso/<motivo>` do SGA, que explica o que aconteceu.
+
+A página de aviso fica no Cloudflare Pages porque o Supabase reescreve respostas `text/html` de Edge Functions para `text/plain`.
+
+O token só revela o link daquela cobrança: nenhum dado do locatário é devolvido e não há acesso ao painel. O redirecionamento não é cacheado (`Cache-Control: no-store`).
+
+### Passo a passo para criar o template com botão
+
+1. Em `/mensagens` → **Templates Meta** → **Novo Template**.
+2. Use um nome novo, por exemplo `aviso_boleto_04`.
+3. Categoria `UTILITY`, idioma `pt_BR`.
+4. No corpo, repita o texto do template atual **sem o link** (ex.: "Para pagar, toque no botão abaixo."). Mantenha as variáveis `{{1}}` nome, `{{2}}` valor e `{{3}}` vencimento.
+5. Em **Tipo de botão**, escolha **Site** e **Dinâmica**:
+   - URL: `https://painel-sga.pages.dev/pagar/{{1}}`
+   - Exemplo do trecho dinâmico: `00000000-0000-4000-8000-000000000000`
+   - Texto do botão: `Pagar com PIX`
+6. Envie para análise. Depois de `APPROVED`, clique em **Selecionar para cobrança** e associe:
+   - `{{1}}` → Primeiro nome do locatário
+   - `{{2}}` → Valor da cobrança
+   - `{{3}}` → Data de vencimento
+   - `{{4}}` → **Código do botão "Pagar" (link curto)**
+
+A variável que vem de um botão de URL já aparece pré-selecionada como **Código do botão "Pagar"**.
+
+### Limites e manutenção
+
+- O PIX gerado pelo Mercado Pago vale **4 horas**. Depois disso o cron marca `pix_expired_at` e o botão mostra "Link expirado"; é preciso gerar um novo PIX para o locatário.
+- A base `painel-sga.pages.dev/pagar/` é estável: trocar o projeto Supabase ou a URL da função exige alterar apenas o `_redirects`, sem recriar o template.
+- A `pay-link` usa a variável `SGA_PUBLIC_URL` (padrão `https://painel-sga.pages.dev`) para montar a página de aviso. Se o painel mudar de domínio, defina a variável nos secrets do Supabase.
+- Para conferir o redirecionamento sem gerar cobrança: `curl -I https://painel-sga.pages.dev/pagar/<pay_token>` deve responder `302` com `location` do Mercado Pago (ou uma página explicativa, se o PIX estiver vencido).
+
 ## 7. Referências
 
 - [WhatsApp Business Platform — Cloud API](https://developers.facebook.com/documentation/business-messaging/whatsapp)

@@ -1,1 +1,2 @@
+/pagar/:token https://ykvmzelwpodjmvoujumf.supabase.co/functions/v1/pay-link?t=:token 302
 /* /index.html   200

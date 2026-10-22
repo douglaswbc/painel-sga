@@ -379,12 +379,13 @@ function assertMetaBodyRules(bodyText: string): void {
   }
 }
 
-function billingTemplateParams(template: JsonRecord, mapping: JsonRecord[], tenantName: string, amount: number, dueDate: string, paymentLink: string): string[] {
+function billingTemplateParams(template: JsonRecord, mapping: JsonRecord[], tenantName: string, amount: number, dueDate: string, paymentLink: string, payToken: string): string[] {
   const values: Record<string, string> = {
     tenant_first_name: tenantName.trim().split(/\s+/)[0],
     amount: new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(amount),
     due_date: dueDatePtBr(dueDate),
     payment_link: paymentLink,
+    payment_token: payToken,
   };
   const orderedMapping = [...mapping].sort((a: JsonRecord, b: JsonRecord) => a.position - b.position);
   const expectedCount = templateParameterCount(Array.isArray(template.components) ? template.components : []);
@@ -392,7 +393,13 @@ function billingTemplateParams(template: JsonRecord, mapping: JsonRecord[], tena
     item.position !== index + 1 || !Object.hasOwn(values, item.field))) {
     throw new PublicError('O mapeamento das variáveis deste template de cobrança está incompleto. Configure novamente na aba Templates Meta.', 409);
   }
-  return orderedMapping.map((item: JsonRecord) => values[item.field]);
+  return orderedMapping.map((item: JsonRecord) => {
+    const value = values[item.field];
+    if (item.field === 'payment_token' && !String(value ?? '').trim()) {
+      throw new PublicError('Não foi possível montar o botão de pagamento: esta cobrança está sem o código público do link. Atualize a página e tente novamente.', 409);
+    }
+    return value;
+  });
 }
 
 async function generatePaymentLink(admin: any, ownerId: string, charge: JsonRecord, tenant: JsonRecord): Promise<string> {
@@ -1066,7 +1073,7 @@ Deno.serve(async (req) => {
       if (selected.status !== 'APPROVED') return json({ error: 'A Meta só permite usar templates com status APPROVED.' }, 409);
       const expectedCount = templateParameterCount(Array.isArray(selected.components) ? selected.components : []);
       const allowedFields = purpose === 'charge'
-        ? new Set(['tenant_first_name', 'amount', 'due_date', 'payment_link'])
+        ? new Set(['tenant_first_name', 'amount', 'due_date', 'payment_link', 'payment_token'])
         : new Set(['tenant_first_name', 'amount', 'paid_at']);
       const requestedMapping = Array.isArray(body.variableMapping) ? body.variableMapping : [];
       const variableMapping = requestedMapping.map((item: JsonRecord, index: number) => ({
@@ -1224,7 +1231,7 @@ Deno.serve(async (req) => {
       const chargeId = body.chargeId;
       if (typeof chargeId !== 'string' || !/^[0-9a-f-]{36}$/i.test(chargeId)) return json({ error: 'Identificador da cobrança inválido.' }, 400);
       const { data: charge, error: chargeError } = await admin.from('cobrancas')
-        .select('id,id_usuario,id_locatario,id_contrato,valor,data_vencimento,status,tipo,payment_link,mercado_pago_id,tentativas_envio,created_at,pix_expires_at,pix_expired_at,reminder_interval_minutes')
+        .select('id,id_usuario,id_locatario,id_contrato,valor,data_vencimento,status,tipo,payment_link,pay_token,mercado_pago_id,tentativas_envio,created_at,pix_expires_at,pix_expired_at,reminder_interval_minutes')
         .eq('id', chargeId).eq('id_usuario', user.id).maybeSingle();
       if (chargeError || !charge) return json({ error: 'Cobrança não encontrada para este locador.' }, 404);
       if (!['pendente', 'atrasado'].includes(charge.status) || charge.tipo === 'despesa') {
@@ -1290,7 +1297,7 @@ Deno.serve(async (req) => {
       const paymentLink = charge.payment_link || await generatePaymentLink(admin, user.id, charge, tenant);
       const pixExpiresAt = charge.pix_expires_at || storedPixExpiry;
       const participantId = phoneForWhatsApp(tenant.whatsapp);
-      const params = billingTemplateParams(selectedTemplate, selectedUsage.variable_mapping || [], tenant.nome_completo, Number(charge.valor), charge.data_vencimento, paymentLink);
+      const params = billingTemplateParams(selectedTemplate, selectedUsage.variable_mapping || [], tenant.nome_completo, Number(charge.valor), charge.data_vencimento, paymentLink, String(charge.pay_token ?? ''));
       const { data: existing, error: existingError } = await admin.from('zernio_whatsapp_deliveries')
         .select('*').eq('id_usuario', user.id).eq('id_cobranca', charge.id).eq('sequence_no', reminderSequence).maybeSingle();
       if (existingError) throw new Error('Não foi possível verificar o histórico de envio desta cobrança.');

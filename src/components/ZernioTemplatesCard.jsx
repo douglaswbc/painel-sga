@@ -70,11 +70,11 @@ const getTemplateParameterSlots = (components = []) => {
   for (const component of ordered) {
     const type = String(component.type).toUpperCase();
     const texts = type === 'BUTTONS'
-      ? (component.buttons || []).map((button, index) => ({ text: button.url, label: `Botão de site ${index + 1}` }))
-      : [{ text: component.text, label: type === 'HEADER' ? 'Cabeçalho' : 'Corpo' }];
+      ? (component.buttons || []).map((button, index) => ({ text: button.url, label: `Botão de site ${index + 1}`, kind: 'button' }))
+      : [{ text: component.text, label: type === 'HEADER' ? 'Cabeçalho' : 'Corpo', kind: 'text' }];
     for (const item of texts) {
       const variables = [...new Set([...(String(item.text || '').matchAll(/\{\{(\d+)\}\}/g))].map((match) => Number(match[1])))].sort((a, b) => a - b);
-      for (const variable of variables) slots.push({ position: slots.length + 1, variable, label: `${item.label} · variável {{${variable}}}` });
+      for (const variable of variables) slots.push({ position: slots.length + 1, variable, kind: item.kind, label: `${item.label} · variável {{${variable}}}` });
     }
   }
   return slots;
@@ -85,7 +85,8 @@ const usageFields = {
     ['tenant_first_name', 'Primeiro nome do locatário'],
     ['amount', 'Valor da cobrança'],
     ['due_date', 'Data de vencimento'],
-    ['payment_link', 'Link PIX da cobrança'],
+    ['payment_link', 'Link PIX da cobrança (corpo)'],
+    ['payment_token', 'Código do botão "Pagar" (link curto)'],
   ],
   payment_confirmation: [
     ['tenant_first_name', 'Primeiro nome do locatário'],
@@ -531,11 +532,16 @@ const ZernioTemplatesCard = () => {
     const slots = getTemplateParameterSlots(template.components || []);
     const availableFields = usageFields[purpose];
     const existing = template.usages?.find((usage) => usage.purpose === purpose)?.variable_mapping || [];
-    const mapping = slots.map((slot, index) => {
+    const hasPayToken = availableFields.some(([value]) => value === 'payment_token');
+    const textFields = availableFields.filter(([value]) => value !== 'payment_token');
+    let textIndex = 0;
+    const mapping = slots.map((slot) => {
       const savedField = existing.find((item) => Number(item.position) === slot.position)?.field;
-      const field = availableFields.some(([value]) => value === savedField)
-        ? savedField
-        : availableFields[index % availableFields.length][0];
+      if (availableFields.some(([value]) => value === savedField)) return { position: slot.position, field: savedField };
+      // O trecho dinamico do botao de URL recebe o token do link curto /pagar/<token>.
+      if (slot.kind === 'button' && hasPayToken) return { position: slot.position, field: 'payment_token' };
+      const field = textFields[textIndex % textFields.length][0];
+      textIndex += 1;
       return { position: slot.position, field };
     });
     setSelection({ template, purpose, slots });

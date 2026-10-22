@@ -426,3 +426,14 @@ Permitir que o locador use a API oficial da Meta (WhatsApp Cloud API) no lugar d
 - [x] Validar de ponta a ponta: lembrete 1, lembrete 2 e confirmacao de pagamento retornaram `wamid`; o webhook registrou o status (`Message undeliverable` quando o destino e o proprio numero do canal).
 
 **Estado:** `zernio-whatsapp` e `meta-integration` publicados. Com os dados atuais todas as chamadas a Meta respondem 200/400 esperados; o 404 nao e mais traduzido como "WABA/Phone Number ID errado" e, se voltar, a resposta traz `detail` com o endpoint exato.
+
+### Fase 8.9 - Link de pagamento como botao de URL
+
+- [ ] Criar a migration `029_charge_pay_token.sql` com `pay_token` (uuid unico) em `cobrancas`.
+- [ ] Criar a Edge Function publica `pay-link` (`verify_jwt = false`): resolve `?t=<token>` e responde `302` para o link do Mercado Pago, com pagina explicativa para cobranca paga, cancelada, PIX expirado ou token invalido.
+- [ ] Expor a base estavel `https://painel-sga.pages.dev/pagar/<token>` pelo `public/_redirects` (placeholders do Cloudflare Pages) e encaminhar para a funcao.
+- [ ] Adicionar o campo `payment_token` ao mapeamento de variaveis do template de cobranca (backend e UI), com pre-selecao automatica em variaveis de botao de URL.
+- [ ] Documentar na secao 12 de `docs/INTEGRACAO_META_WHATSAPP.md` por que o link no corpo nao e clicavel, a regra de uma variavel no fim da URL e o passo a passo do template com botao.
+- [ ] Validar o redirecionamento com uma cobranca real sem efetuar pagamento.
+
+**Estado:** implementacao local concluida; falta aplicar a migration, publicar `pay-link` e `zernio-whatsapp`, publicar o frontend e validar o `302`.
