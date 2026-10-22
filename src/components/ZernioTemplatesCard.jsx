@@ -118,6 +118,63 @@ const getUrlButton = (template) => {
 
 const EDITABLE_BUTTON_STATUSES = new Set(['APPROVED', 'REJECTED', 'PAUSED']);
 
+// Converte os componentes que a Meta devolve na lista para o rascunho do
+// formulario, permitindo editar o template inteiro pelo SGA.
+const draftFromTemplate = (template) => {
+  const components = template?.components || [];
+  const header = components.find((item) => String(item.type).toUpperCase() === 'HEADER');
+  const body = components.find((item) => String(item.type).toUpperCase() === 'BODY');
+  const footer = components.find((item) => String(item.type).toUpperCase() === 'FOOTER');
+  const buttons = (components.find((item) => String(item.type).toUpperCase() === 'BUTTONS')?.buttons) || [];
+  const bodyText = String(body?.text || '');
+  const variables = getVariables(bodyText);
+  const examples = {};
+  const bodyExamples = body?.example?.body_text?.[0];
+  if (Array.isArray(bodyExamples)) {
+    variables.forEach((variable, index) => { examples[variable] = String(bodyExamples[index] || ''); });
+  }
+  const headerFormat = String(header?.format || '').toUpperCase();
+  const quickReplies = buttons.filter((button) => String(button.type).toUpperCase() === 'QUICK_REPLY').map((button) => String(button.text || ''));
+  const ctaButtons = buttons.filter((button) => ['URL', 'PHONE_NUMBER'].includes(String(button.type).toUpperCase()));
+  const site = ctaButtons.find((button) => String(button.type).toUpperCase() === 'URL');
+  const phone = ctaButtons.find((button) => String(button.type).toUpperCase() === 'PHONE_NUMBER');
+  const siteUrl = String(site?.url || '');
+  const phoneDigits = String(phone?.phone_number || '').replace(/\D/g, '');
+  let countryCode = '+55';
+  let phoneNumber = '';
+  if (phoneDigits) {
+    if (phoneDigits.startsWith('55') && phoneDigits.length >= 11) {
+      phoneNumber = phoneDigits.slice(2);
+    } else {
+      countryCode = `+${phoneDigits.slice(0, 2)}`;
+      phoneNumber = phoneDigits.slice(2);
+    }
+  }
+  return {
+    ...initialDraft(),
+    name: template?.name || '',
+    category: template?.category || 'UTILITY',
+    language: template?.language || 'pt_BR',
+    headerType: header ? (headerFormat === 'TEXT' ? 'text' : 'media') : 'none',
+    headerText: headerFormat === 'TEXT' ? String(header?.text || '') : '',
+    headerFormat: headerFormat && headerFormat !== 'TEXT' ? headerFormat : 'IMAGE',
+    headerHandle: String(header?.example?.header_handle?.[0] || ''),
+    body: bodyText,
+    examples,
+    footer: String(footer?.text || ''),
+    buttonMode: quickReplies.length ? 'quick' : ctaButtons.length ? 'cta' : 'none',
+    quickReplies: quickReplies.length ? quickReplies : [''],
+    ctaTypes: [phone ? 'phone' : '', site ? 'website' : ''].filter(Boolean),
+    phoneLabel: String(phone?.text || ''),
+    countryCode,
+    phoneNumber,
+    websiteLabel: String(site?.text || ''),
+    websiteMode: /\{\{\d+\}\}/.test(siteUrl) ? 'dynamic' : 'static',
+    websiteUrl: siteUrl,
+    websiteExample: Array.isArray(site?.example) ? String(site.example[0] || '') : '',
+  };
+};
+
 const hasSavedDraft = (storageKey) => {
   if (!storageKey) return false;
   try { return Boolean(sessionStorage.getItem(storageKey)); } catch { return false; }
@@ -179,15 +236,16 @@ function TemplateAssociationPreview({ template }) {
   );
 }
 
-function TemplateForm({ busy, storageKey, onCancel, onSubmit }) {
-  const [draft, setDraft] = useState(() => readSavedDraft(storageKey));
+function TemplateForm({ busy, storageKey, initialDraft: providedDraft, editing = false, status = '', onCancel, onSubmit }) {
+  const [draft, setDraft] = useState(() => providedDraft || readSavedDraft(storageKey));
   const [attempted, setAttempted] = useState(false);
   const variables = useMemo(() => getVariables(draft.body), [draft.body]);
 
   useEffect(() => {
-    if (!storageKey) return;
+    // O editor nao sobrescreve o rascunho de criacao salvo na aba.
+    if (!storageKey || editing) return;
     try { sessionStorage.setItem(storageKey, JSON.stringify(draft)); } catch {}
-  }, [draft, storageKey]);
+  }, [draft, storageKey, editing]);
 
   const update = (field, value) => setDraft((current) => ({ ...current, [field]: value }));
   const setQuickReply = (index, value) => setDraft((current) => ({
@@ -313,27 +371,29 @@ function TemplateForm({ busy, storageKey, onCancel, onSubmit }) {
       <div className="space-y-5">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-base font-bold text-white">Novo template Meta</h3>
-            <p className="text-xs text-slate-400 mt-1">Configure a mensagem e revise a prévia antes de enviar para análise. O rascunho fica salvo nesta aba se você navegar para outra tela.</p>
+            <h3 className="text-base font-bold text-white">{editing ? 'Editar template Meta' : 'Novo template Meta'}</h3>
+            <p className="text-xs text-slate-400 mt-1">{editing ? 'Altere o conteúdo e envie para a Meta revisar. Nome e idioma não podem ser alterados.' : 'Configure a mensagem e revise a prévia antes de enviar para análise. O rascunho fica salvo nesta aba se você navegar para outra tela.'}</p>
           </div>
-          <button type="button" onClick={onCancel} className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800" aria-label="Cancelar criação"><X size={18} /></button>
+          <button type="button" onClick={onCancel} className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800" aria-label={editing ? 'Cancelar edição' : 'Cancelar criação'}><X size={18} /></button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div>
             <FieldLabel htmlFor="template-category">Categoria *</FieldLabel>
-            <select id="template-category" value={draft.category} onChange={(event) => update('category', event.target.value)} className={inputClass(Boolean(errors.category))}>
+            <select id="template-category" value={draft.category} onChange={(event) => update('category', event.target.value)} disabled={editing && status === 'APPROVED'} className={`${inputClass(Boolean(errors.category))} disabled:opacity-60`}>
               <option value="MARKETING">MARKETING</option><option value="UTILITY">UTILITY (Utilidade)</option><option value="AUTHENTICATION">AUTHENTICATION (Autenticação)</option>
             </select>
+            {editing && status === 'APPROVED' && <p className="mt-1 text-[11px] text-slate-500">A Meta não permite mudar a categoria de um template aprovado.</p>}
           </div>
           <div>
             <FieldLabel htmlFor="template-name" right={<Counter value={draft.name} limit={512} />}>Nome do modelo *</FieldLabel>
-            <input id="template-name" value={draft.name} onChange={(event) => update('name', event.target.value)} className={`${inputClass(Boolean(errors.name))} font-mono`} autoComplete="off" />
+            <input id="template-name" value={draft.name} onChange={(event) => update('name', event.target.value)} disabled={editing} className={`${inputClass(Boolean(errors.name))} font-mono disabled:opacity-60`} autoComplete="off" />
+            {editing && <p className="mt-1 text-[11px] text-slate-500">O nome não pode ser alterado depois da criação.</p>}
             {shownError('name')}
           </div>
           <div>
             <FieldLabel htmlFor="template-language">Idioma *</FieldLabel>
-            <select id="template-language" value={draft.language} onChange={(event) => update('language', event.target.value)} className={inputClass(Boolean(errors.language))}>
+            <select id="template-language" value={draft.language} onChange={(event) => update('language', event.target.value)} disabled={editing} className={`${inputClass(Boolean(errors.language))} disabled:opacity-60`}>
               {orderedLanguages.map(([code, label]) => <option value={code} key={code}>{label} · {code}</option>)}
             </select>
           </div>
@@ -427,12 +487,14 @@ function TemplateForm({ busy, storageKey, onCancel, onSubmit }) {
           </div>}
         </section>
 
-        <p className="rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-[11px] text-slate-400">Depois que a Meta aprovar o template, você poderá selecioná-lo para lembretes de cobrança ou confirmações de pagamento e associar cada variável aos dados correspondentes.</p>
+        <p className="rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-[11px] text-slate-400">{editing
+          ? 'Ao salvar, a Meta reavalia o template automaticamente. Templates aprovados aceitam 1 edição a cada 24 horas e até 10 edições em 30 dias; rejeitados e pausados podem ser editados sem esse limite.'
+          : 'Depois que a Meta aprovar o template, você poderá selecioná-lo para lembretes de cobrança ou confirmações de pagamento e associar cada variável aos dados correspondentes.'}</p>
 
         <div className="flex flex-wrap justify-end gap-2 border-t border-slate-800 pt-4">
           {!formIsValid && <p className="mr-auto self-center text-[11px] text-slate-500">Preencha os campos obrigatórios e corrija os limites para enviar.</p>}
           <button type="button" onClick={onCancel} disabled={busy} className="rounded-lg border border-slate-700 px-4 py-2.5 text-sm font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-50">Cancelar</button>
-          <button type="submit" disabled={busy || !formIsValid} className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"><Send size={15} />{busy ? 'Enviando...' : 'Enviar para Análise'}</button>
+          <button type="submit" disabled={busy || !formIsValid} className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"><Send size={15} />{busy ? (editing ? 'Salvando...' : 'Enviando...') : (editing ? 'Salvar e enviar para análise' : 'Enviar para Análise')}</button>
         </div>
       </div>
 
@@ -472,7 +534,7 @@ const ZernioTemplatesCard = () => {
   const [notice, setNotice] = useState('');
   const [selection, setSelection] = useState(null);
   const [variableMapping, setVariableMapping] = useState([]);
-  const [buttonEditor, setButtonEditor] = useState(null);
+  const [editingTemplate, setEditingTemplate] = useState(null);
   const draftStorageKey = profile?.id ? `sga-zernio-template-draft-${profile.id}` : null;
 
   useEffect(() => {
@@ -512,19 +574,28 @@ const ZernioTemplatesCard = () => {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  const createTemplate = async (payload) => {
+  const saveTemplate = async (payload) => {
     setBusy(true);
     setErrorMessage('');
     setNotice('');
     try {
-      const data = await invoke('create_template', payload);
-      setTemplates((current) => [data.template, ...current.filter((item) => item.id !== data.template.id)]);
-      if (data.channel) setChannel(data.channel);
-      if (draftStorageKey) {
-        try { sessionStorage.removeItem(draftStorageKey); } catch {}
+      if (editingTemplate) {
+        const data = await invoke('update_template', { templateId: editingTemplate.id, ...payload });
+        setTemplates(data.templates || []);
+        if (data.channel) setChannel(data.channel);
+        setShowForm(false);
+        setEditingTemplate(null);
+        setNotice(data.message || 'Template enviado para análise da Meta.');
+      } else {
+        const data = await invoke('create_template', payload);
+        setTemplates((current) => [data.template, ...current.filter((item) => item.id !== data.template.id)]);
+        if (data.channel) setChannel(data.channel);
+        if (draftStorageKey) {
+          try { sessionStorage.removeItem(draftStorageKey); } catch {}
+        }
+        setShowForm(false);
+        setNotice(`Template ${data.template.name} enviado à Meta com status ${data.template.status}.`);
       }
-      setShowForm(false);
-      setNotice(`Template ${data.template.name} enviado à Meta com status ${data.template.status}.`);
     } catch (error) {
       setErrorMessage(error.message);
     } finally {
@@ -552,60 +623,11 @@ const ZernioTemplatesCard = () => {
     }
   };
 
-  const openButtonEditor = (template) => {
-    const info = getUrlButton(template);
-    if (!info) return;
-    setButtonEditor({ template, label: info.label, url: info.url, example: info.example, error: '' });
+  const openEditor = (template) => {
+    setEditingTemplate(template);
+    setShowForm(true);
     setErrorMessage('');
     setNotice('');
-  };
-
-  const updateButtonField = (field, value) => setButtonEditor((current) => (
-    current ? { ...current, [field]: value, error: '' } : current
-  ));
-
-  const saveButton = async (event) => {
-    event.preventDefault();
-    if (!buttonEditor) return;
-    const label = buttonEditor.label.trim();
-    const url = buttonEditor.url.trim();
-    let example = buttonEditor.example.trim();
-    const variables = [...url.matchAll(/\{\{(\d+)\}\}/g)];
-    const fail = (message) => setButtonEditor((current) => (current ? { ...current, error: message } : current));
-
-    if (!label || label.length > 25) return fail('O texto do botão precisa ter de 1 a 25 caracteres.');
-    if (!/^https:\/\//i.test(url)) return fail('A URL do botão precisa começar com https://.');
-    if (url.length > 2000) return fail('A URL do botão pode ter no máximo 2.000 caracteres.');
-    if (variables.length > 1 || (variables.length === 1 && variables[0][1] !== '1')) {
-      return fail('Use apenas a variável {{1}} no endereço do botão.');
-    }
-    if (variables.length === 1) {
-      if (!url.endsWith('{{1}}')) return fail('A variável {{1}} precisa ficar no final da URL.');
-      if (/%7B|%7D/i.test(url)) return fail('A URL tem a variável codificada (%7B%7B1%7D%7D). Digite {{1}} uma vez no final.');
-      const staticPart = url.slice(0, -5);
-      if (/[{}]/.test(staticPart)) return fail('Remova as chaves extras: use somente {{1}} no final da URL.');
-      // Aceita o exemplo antigo em formato de URL completa e guarda so o sufixo.
-      if (staticPart && example.startsWith(staticPart)) example = example.slice(staticPart.length);
-      if (!example || example.length > 200 || /\s/.test(example)) {
-        return fail('Informe o exemplo da variável (até 200 caracteres, sem espaços).');
-      }
-    } else {
-      example = '';
-    }
-
-    setBusy(true);
-    try {
-      const data = await invoke('update_template_button', {
-        templateId: buttonEditor.template.id, label, url, example,
-      });
-      setTemplates(data.templates || []);
-      setButtonEditor(null);
-      setNotice(data.message || 'Botão do template atualizado.');
-    } catch (error) {
-      fail(error.message);
-    } finally {
-      setBusy(false);
-    }
   };
 
   const configureDefault = (template, purpose) => {
@@ -696,10 +718,11 @@ const ZernioTemplatesCard = () => {
   };
 
   const cancelTemplate = () => {
-    if (draftStorageKey) {
+    if (!editingTemplate && draftStorageKey) {
       try { sessionStorage.removeItem(draftStorageKey); } catch {}
     }
     setShowForm(false);
+    setEditingTemplate(null);
   };
 
   if (loading) return <div className="bg-card border border-slate-700 rounded-xl p-6 flex justify-center"><Loader2 className="animate-spin text-accent" size={24} /></div>;
@@ -727,11 +750,11 @@ const ZernioTemplatesCard = () => {
         </div>
         <div className="flex shrink-0 gap-2">
           <button type="button" onClick={() => refresh(true)} disabled={busy} className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 text-xs font-semibold flex items-center gap-2"><RefreshCw size={15} className={busy ? 'animate-spin' : ''} />Atualizar</button>
-          {!showForm && <button type="button" onClick={() => { setErrorMessage(''); setNotice(''); setShowForm(true); }} className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-2"><Plus size={15} />Novo Template</button>}
+          {!showForm && <button type="button" onClick={() => { setEditingTemplate(null); setErrorMessage(''); setNotice(''); setShowForm(true); }} className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-2"><Plus size={15} />Novo Template</button>}
         </div>
       </div>
 
-      {showForm && <div className="rounded-xl border border-slate-800 bg-slate-950/30 p-4 md:p-5"><TemplateForm busy={busy} storageKey={draftStorageKey} onCancel={cancelTemplate} onSubmit={createTemplate} /></div>}
+      {showForm && <div className="rounded-xl border border-slate-800 bg-slate-950/30 p-4 md:p-5"><TemplateForm key={editingTemplate ? `edit-${editingTemplate.id}` : 'create'} busy={busy} storageKey={editingTemplate ? null : draftStorageKey} initialDraft={editingTemplate ? draftFromTemplate(editingTemplate) : null} editing={Boolean(editingTemplate)} status={editingTemplate ? String(editingTemplate.status || '').toUpperCase() : ''} onCancel={cancelTemplate} onSubmit={saveTemplate} /></div>}
 
       {!showForm && <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 space-y-2">
         <h3 className="text-xs font-bold uppercase tracking-wide text-slate-300">Como funcionam os templates</h3>
@@ -766,7 +789,7 @@ const ZernioTemplatesCard = () => {
                 {isPaymentTemplate && <span className="inline-flex items-center rounded-full border border-sky-400/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-200">Confirmação de pagamento</span>}
               </div>
               <p className="text-[11px] text-slate-500 mt-1">{template.category}{template.rejection_reason ? ` · ${template.rejection_reason}` : ''}</p>
-              {urlButton?.needsFix && <p className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-300"><AlertCircle size={12} /> O botão de URL está com endereço inválido. Corrija em “Editar botão”.</p>}
+              {urlButton?.needsFix && <p className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-300"><AlertCircle size={12} /> O botão de URL está com endereço inválido. Corrija em “Editar template”.</p>}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {status === 'APPROVED' && <>
@@ -777,15 +800,15 @@ const ZernioTemplatesCard = () => {
                   {isPaymentTemplate && <CheckCircle2 size={14} />}{isPaymentTemplate ? 'Confirmação selecionada' : 'Usar em confirmações'}
                 </button>
               </>}
-              {urlButton && EDITABLE_BUTTON_STATUSES.has(status) && (
+              {template.provider === 'meta' && EDITABLE_BUTTON_STATUSES.has(status) && (
                 <button
                   type="button"
-                  onClick={() => openButtonEditor(template)}
+                  onClick={() => openEditor(template)}
                   disabled={busy}
-                  title={`Editar o botão de URL de ${template.name}`}
-                  className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-40 ${urlButton.needsFix ? 'border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20' : 'border-slate-700 bg-slate-800/60 text-slate-200 hover:bg-slate-800'}`}
+                  title={`Editar o template ${template.name}`}
+                  className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-40 ${urlButton?.needsFix ? 'border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20' : 'border-slate-700 bg-slate-800/60 text-slate-200 hover:bg-slate-800'}`}
                 >
-                  <Pencil size={14} className="inline" /> Editar botão
+                  <Pencil size={14} className="inline" /> Editar template
                 </button>
               )}
               {status !== 'DELETED' && status !== 'PENDING_DELETION' && (
@@ -839,45 +862,8 @@ const ZernioTemplatesCard = () => {
         </form>
       </div>}
 
-      {buttonEditor && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setButtonEditor(null); }}>
-        <form onSubmit={saveButton} className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-950 p-5 shadow-2xl">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h3 className="text-base font-bold text-white">Editar botão de URL</h3>
-              <p className="mt-1 text-xs text-slate-400">{buttonEditor.template.name} <span className="font-mono text-[10px] text-slate-500">{buttonEditor.template.language}</span></p>
-            </div>
-            <button type="button" onClick={() => setButtonEditor(null)} disabled={busy} className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white" aria-label="Fechar"><X size={18} /></button>
-          </div>
-
-          <div className="mt-4 space-y-4">
-            <label className="block">
-              <span className="mb-1.5 flex items-center justify-between gap-3 text-xs font-semibold text-slate-300"><span>Texto do botão</span><Counter value={buttonEditor.label} limit={25} /></span>
-              <input value={buttonEditor.label} onChange={(event) => updateButtonField('label', event.target.value)} maxLength={30} placeholder="Pagar com PIX" className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white" />
-            </label>
-            <label className="block">
-              <span className="mb-1.5 flex items-center justify-between gap-3 text-xs font-semibold text-slate-300"><span>Endereço do botão</span><Counter value={buttonEditor.url} limit={2000} /></span>
-              <input value={buttonEditor.url} onChange={(event) => updateButtonField('url', event.target.value)} placeholder="https://sga.emoveentregas.com/pagar/{{1}}" spellCheck={false} className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-xs text-white" />
-            </label>
-            <p className="text-[11px] text-slate-500">Use <span className="rounded bg-indigo-500/20 px-1 font-mono text-indigo-200">{'{{1}}'}</span> uma única vez, sempre no final da URL. O SGA envia o código do link de pagamento nessa variável.</p>
-            {/\{\{\d+\}\}/.test(buttonEditor.url) && <label className="block">
-              <span className="mb-1.5 flex items-center justify-between gap-3 text-xs font-semibold text-slate-300"><span>Exemplo da variável</span><Counter value={buttonEditor.example} limit={200} /></span>
-              <input value={buttonEditor.example} onChange={(event) => updateButtonField('example', event.target.value)} placeholder="00000000-0000-4000-8000-000000000000" spellCheck={false} className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-xs text-white" />
-              <span className="mt-1 block text-[11px] text-slate-500">A Meta usa esse valor só na revisão; o cliente recebe o código real.</span>
-            </label>}
-            {/\{\{1\}\}/.test(buttonEditor.url) && buttonEditor.example.trim() && <p className="break-all rounded-lg border border-slate-800 bg-slate-900/60 p-2 font-mono text-[11px] text-slate-400">Exemplo: {buttonEditor.url.replace('{{1}}', buttonEditor.example.trim())}</p>}
-          </div>
-
-          <p className="mt-4 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-[11px] text-amber-200">A Meta reavalia o template automaticamente. Cada template aceita uma edição a cada 24 horas e até 10 edições em 30 dias.</p>
-          {buttonEditor.error && <p className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-300">{buttonEditor.error}</p>}
-
-          <div className="mt-5 flex justify-end gap-2 border-t border-slate-800 pt-4">
-            <button type="button" onClick={() => setButtonEditor(null)} disabled={busy} className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800">Cancelar</button>
-            <button type="submit" disabled={busy} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-500 disabled:opacity-50">{busy ? 'Salvando...' : 'Salvar botão'}</button>
-          </div>
-        </form>
-      </div>}
-
-      {(errorMessage || notice) && <p className={`text-xs rounded-lg p-3 ${errorMessage ? 'text-red-300 bg-red-500/10 border border-red-500/20' : 'text-emerald-300 bg-emerald-500/10 border border-emerald-500/20'}`}>{errorMessage || notice}</p>}
+      
+{(errorMessage || notice) && <p className={`text-xs rounded-lg p-3 ${errorMessage ? 'text-red-300 bg-red-500/10 border border-red-500/20' : 'text-emerald-300 bg-emerald-500/10 border border-emerald-500/20'}`}>{errorMessage || notice}</p>}
     </section>
   );
 };

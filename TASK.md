@@ -450,3 +450,14 @@ Permitir que o locador use a API oficial da Meta (WhatsApp Cloud API) no lugar d
 - [x] Corrigir o mapeamento de `aviso_boleto_02` (posicao 2 = `payment_token`) e documentar a edicao pela interface na secao 12 de `docs/INTEGRACAO_META_WHATSAPP.md`.
 
 **Estado:** `zernio-whatsapp` publicado com a nova acao. A Meta recusou a correcao de `aviso_boleto_02` e `aviso_boleto_03` hoje por limite de edicao (1 vez a cada 24 horas, pois ambos foram editados no Manager nas ultimas 24h). Os dois aparecem com o aviso ambar em **Editar botao** e podem ser corrigidos pelo SGA assim que a janela abrir. `aviso_boleto_04` (URL correta) esta na ordem 1 da sequencia, `_02` na 2 e `_03` na 3.
+
+### Fase 8.11 - Edicao completa de template pelo SGA
+
+- [x] Extrair as validacoes de componentes de `create_template` para `validateTemplateComponents` (regras unicas para criar e editar) e normalizar os tipos em maiusculas com `normalizeTemplateComponents`.
+- [x] Criar a acao `update_template` em `zernio-whatsapp` (somente Meta): aceita categoria e componentes completos, valida status `APPROVED`/`REJECTED`/`PAUSED`, bloqueia troca de categoria em template aprovado, envia `POST /{template_id}` via `editMessageTemplate` e sincroniza a lista.
+- [x] Remover mapeamentos de variaveis desatualizados quando o numero de variaveis muda, avisando o locador para selecionar o template novamente.
+- [x] Transformar o formulario de template em editor: abre preenchido (`draftFromTemplate`), mantem nome/idioma bloqueados, desabilita a categoria de template aprovado, nao sobrescreve o rascunho de criacao e envia para analise.
+- [x] Liberar `update_template` para chamadas de servico com `ownerId`, no mesmo caminho do `send_charge`.
+- [x] Atualizar a secao 12 de `docs/INTEGRACAO_META_WHATSAPP.md` com o fluxo de edicao completa e os limites da Meta.
+
+**Estado:** `zernio-whatsapp` publicado e frontend com o botao **Editar template** para status aprovado, rejeitado ou pausado. Validado por chamada de servico: troca de categoria em aprovado (409), corpo vazio (400), URL codificada (400) e payload completo chegando na Meta (bloqueado apenas pelo limite de 1 edicao/24h de `aviso_boleto_02` e `_03`). O modal **Editar botao** foi substituido pelo editor completo; a acao `update_template_button` permanece disponivel para automacao.

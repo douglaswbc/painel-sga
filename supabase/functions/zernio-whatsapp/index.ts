@@ -380,6 +380,113 @@ function assertMetaBodyRules(bodyText: string): void {
   }
 }
 
+/** Uppercases component and button types so the Meta API accepts the payload. */
+function normalizeTemplateComponents(components: JsonRecord[]): JsonRecord[] {
+  return components.map((component) => {
+    const next: JsonRecord = { ...component, type: String(component.type).toUpperCase() };
+    if (next.format) next.format = String(next.format).toUpperCase();
+    if (Array.isArray(next.buttons)) {
+      next.buttons = next.buttons.map((button: JsonRecord) => ({ ...button, type: String(button.type).toUpperCase() }));
+    }
+    return next;
+  });
+}
+
+/** Shared component rules for template creation and edition. Returns a user-facing error or null. */
+function validateTemplateComponents(components: JsonRecord[]): string | null {
+  if (components.some((item: JsonRecord) => !['HEADER', 'BODY', 'FOOTER', 'BUTTONS'].includes(String(item?.type).toUpperCase()))) {
+    return 'O template contém um componente não suportado.';
+  }
+  const bodyComponents = components.filter((item: JsonRecord) => String(item?.type).toUpperCase() === 'BODY');
+  if (bodyComponents.length !== 1 || typeof bodyComponents[0]?.text !== 'string' || !bodyComponents[0].text.trim() || bodyComponents[0].text.length > 1024) {
+    return 'O template precisa ter um corpo de mensagem válido com até 1.024 caracteres.';
+  }
+  const bodyText = bodyComponents[0].text as string;
+  assertMetaBodyRules(bodyText);
+  const unparsedVariableText = bodyText.replace(/\{\{\d+\}\}/g, '');
+  if (unparsedVariableText.includes('{{') || unparsedVariableText.includes('}}')) {
+    return 'Use somente variáveis no formato {{1}}, {{2}}, {{3}}...';
+  }
+  const bodyVariables = [...new Set([...bodyText.matchAll(/\{\{(\d+)\}\}/g)].map((match: RegExpMatchArray) => Number(match[1])))].sort((a: number, b: number) => a - b);
+  if (bodyVariables.some((value: number, index: number) => value !== index + 1)) {
+    return 'As variáveis do corpo precisam ser sequenciais: {{1}}, {{2}}, {{3}}...';
+  }
+  if (bodyVariables.length && (!Array.isArray(bodyComponents[0]?.example?.body_text?.[0])
+    || bodyComponents[0].example.body_text[0].length !== bodyVariables.length
+    || bodyComponents[0].example.body_text[0].some((value: unknown) => typeof value !== 'string' || !value.trim() || value.length > 60))) {
+    return 'Informe um exemplo de até 60 caracteres para cada variável do corpo.';
+  }
+  if (components.length > 4) return 'O template contém componentes duplicados ou não suportados.';
+  const header = components.find((item: JsonRecord) => String(item?.type).toUpperCase() === 'HEADER');
+  if (components.filter((item: JsonRecord) => String(item?.type).toUpperCase() === 'HEADER').length > 1
+    || components.filter((item: JsonRecord) => String(item?.type).toUpperCase() === 'FOOTER').length > 1
+    || components.filter((item: JsonRecord) => String(item?.type).toUpperCase() === 'BUTTONS').length > 1) {
+    return 'O template aceita somente um cabeçalho, rodapé e grupo de botões.';
+  }
+  if (header && !['TEXT', 'IMAGE', 'VIDEO', 'DOCUMENT', 'LOCATION'].includes(String(header.format).toUpperCase())) {
+    return 'Selecione um formato válido para o cabeçalho.';
+  }
+  if (String(header?.format).toUpperCase() === 'TEXT' && (typeof header.text !== 'string' || header.text.length > 60 || /\{\{|\}\}/.test(header.text))) {
+    return 'O cabeçalho de texto aceita até 60 caracteres e não permite variáveis.';
+  }
+  if (header && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(String(header.format).toUpperCase())
+    && (typeof header.example?.header_handle?.[0] !== 'string' || !header.example.header_handle[0].trim())) {
+    return 'Informe o handle de mídia de exemplo exigido pela Meta.';
+  }
+  if (header && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(String(header.format).toUpperCase())) {
+    try {
+      if (new URL(header.example.header_handle[0]).protocol !== 'https:') throw new Error('invalid header media URL');
+    } catch { return 'A mídia de exemplo precisa ser uma URL pública HTTPS.'; }
+  }
+  const footer = components.find((item: JsonRecord) => String(item?.type).toUpperCase() === 'FOOTER');
+  if (footer && (typeof footer.text !== 'string' || footer.text.length > 60 || /\{\{|\}\}/.test(footer.text))) {
+    return 'O rodapé pode ter no máximo 60 caracteres.';
+  }
+  const buttonComponent = components.find((item: JsonRecord) => String(item?.type).toUpperCase() === 'BUTTONS');
+  const buttons = Array.isArray(buttonComponent?.buttons) ? buttonComponent.buttons : [];
+  if (buttons.some((item: JsonRecord) => typeof item.text !== 'string' || !item.text.trim() || item.text.length > 25)) {
+    return 'Cada botão precisa ter um texto de até 25 caracteres.';
+  }
+  if (buttons.some((item: JsonRecord) => !['QUICK_REPLY', 'URL', 'PHONE_NUMBER'].includes(String(item.type).toUpperCase()))) {
+    return 'Tipo de botão não suportado neste formulário.';
+  }
+  if (buttons.filter((item: JsonRecord) => String(item.type).toUpperCase() === 'QUICK_REPLY').length > 3) {
+    return 'São permitidas no máximo 3 respostas rápidas.';
+  }
+  if (buttons.length > 2 && buttons.some((item: JsonRecord) => ['URL', 'PHONE_NUMBER'].includes(String(item.type).toUpperCase()))) {
+    return 'São permitidos no máximo 2 botões de chamada para ação.';
+  }
+  const ctaButtons = buttons.filter((item: JsonRecord) => ['URL', 'PHONE_NUMBER'].includes(String(item.type).toUpperCase()));
+  const quickReplyButtons = buttons.filter((item: JsonRecord) => String(item.type).toUpperCase() === 'QUICK_REPLY');
+  if (ctaButtons.length && quickReplyButtons.length) {
+    return 'Escolha respostas rápidas ou botões CTA, sem misturar os dois tipos.';
+  }
+  if (ctaButtons.length === 2 && new Set(ctaButtons.map((item: JsonRecord) => String(item.type).toUpperCase())).size !== 2) {
+    return 'Os botões CTA precisam ser um de telefone e um de site.';
+  }
+  if (ctaButtons.some((item: JsonRecord) => /%7B|%7D/i.test(String(item.url ?? '')))) {
+    return 'A URL do botão contém a variável codificada (%7B%7B1%7D%7D). Use literalmente {{1}}, uma única vez, no final.';
+  }
+  const invalidCta = ctaButtons.some((item: JsonRecord) => {
+    const type = String(item.type).toUpperCase();
+    if (type === 'PHONE_NUMBER') return !/^\d{8,15}$/.test(String(item.phone_number ?? ''));
+    if (typeof item.url !== 'string' || item.url.length > 2000) return true;
+    try {
+      const url = new URL(item.url.replace(/\{\{1\}\}/g, 'example'));
+      if (url.protocol !== 'https:') return true;
+    } catch { return true; }
+    if (/\{\{\d+\}\}/.test(item.url)) {
+      if (!item.url.endsWith('{{1}}') || !Array.isArray(item.example) || typeof item.example[0] !== 'string') return true;
+      return !item.example[0].trim();
+    }
+    return false;
+  });
+  if (invalidCta) {
+    return 'Confira o número de telefone ou informe uma URL HTTPS válida com exemplo quando dinâmica.';
+  }
+  return null;
+}
+
 function billingTemplateParams(template: JsonRecord, mapping: JsonRecord[], tenantName: string, amount: number, dueDate: string, paymentLink: string, payToken: string): string[] {
   const values: Record<string, string> = {
     tenant_first_name: tenantName.trim().split(/\s+/)[0],
@@ -470,7 +577,7 @@ Deno.serve(async (req) => {
     let user: { id: string } | null = null;
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
     if (serviceCall) {
-      const serviceActions = new Set(['send_charge', 'update_template_button']);
+      const serviceActions = new Set(['send_charge', 'update_template_button', 'update_template']);
       if (!serviceActions.has(String(body?.action)) || !/^[0-9a-f-]{36}$/i.test(String(body?.ownerId || ''))) {
         return json({ error: 'Service credentials may only run automated maintenance actions for a specified owner.' }, 403);
       }
@@ -853,7 +960,7 @@ Deno.serve(async (req) => {
       const name = typeof body.name === 'string' ? body.name.trim().toLowerCase() : '';
       const language = typeof body.language === 'string' ? body.language.trim() : '';
       const category = typeof body.category === 'string' ? body.category.trim().toUpperCase() : '';
-      const components = Array.isArray(body.components) ? body.components : [];
+      const components = normalizeTemplateComponents(Array.isArray(body.components) ? body.components : []);
       // Templates only become transactional defaults after the Meta approves them
       // and the owner explicitly maps their variables in set_default.
       const purpose = 'general';
@@ -866,93 +973,8 @@ Deno.serve(async (req) => {
       if (!['UTILITY', 'MARKETING', 'AUTHENTICATION'].includes(category)) {
         return json({ error: 'Selecione uma categoria válida para o template.' }, 400);
       }
-      if (components.some((item: JsonRecord) => !['HEADER', 'BODY', 'FOOTER', 'BUTTONS'].includes(String(item?.type).toUpperCase()))) {
-        return json({ error: 'O template contém um componente não suportado.' }, 400);
-      }
-      const bodyComponents = components.filter((item: JsonRecord) => String(item?.type).toUpperCase() === 'BODY');
-      if (bodyComponents.length !== 1 || typeof bodyComponents[0]?.text !== 'string' || !bodyComponents[0].text.trim() || bodyComponents[0].text.length > 1024) {
-        return json({ error: 'O template precisa ter um corpo de mensagem válido com até 1.024 caracteres.' }, 400);
-      }
-      const bodyText = bodyComponents[0].text as string;
-      assertMetaBodyRules(bodyText);
-      const unparsedVariableText = bodyText.replace(/\{\{\d+\}\}/g, '');
-      if (unparsedVariableText.includes('{{') || unparsedVariableText.includes('}}')) {
-        return json({ error: 'Use somente variáveis no formato {{1}}, {{2}}, {{3}}...' }, 400);
-      }
-      const bodyVariables = [...new Set([...bodyText.matchAll(/\{\{(\d+)\}\}/g)].map((match: RegExpMatchArray) => Number(match[1])))].sort((a: number, b: number) => a - b);
-      if (bodyVariables.some((value: number, index: number) => value !== index + 1)) {
-        return json({ error: 'As variáveis do corpo precisam ser sequenciais: {{1}}, {{2}}, {{3}}...' }, 400);
-      }
-      if (bodyVariables.length && (!Array.isArray(bodyComponents[0]?.example?.body_text?.[0])
-        || bodyComponents[0].example.body_text[0].length !== bodyVariables.length
-        || bodyComponents[0].example.body_text[0].some((value: unknown) => typeof value !== 'string' || !value.trim() || value.length > 60))) {
-        return json({ error: 'Informe um exemplo de até 60 caracteres para cada variável do corpo.' }, 400);
-      }
-      if (components.length > 4) return json({ error: 'O template contém componentes duplicados ou não suportados.' }, 400);
-      const header = components.find((item: JsonRecord) => String(item?.type).toUpperCase() === 'HEADER');
-      if (components.filter((item: JsonRecord) => String(item?.type).toUpperCase() === 'HEADER').length > 1
-        || components.filter((item: JsonRecord) => String(item?.type).toUpperCase() === 'FOOTER').length > 1
-        || components.filter((item: JsonRecord) => String(item?.type).toUpperCase() === 'BUTTONS').length > 1) {
-        return json({ error: 'O template aceita somente um cabeçalho, rodapé e grupo de botões.' }, 400);
-      }
-      if (header && !['TEXT', 'IMAGE', 'VIDEO', 'DOCUMENT', 'LOCATION'].includes(String(header.format).toUpperCase())) {
-        return json({ error: 'Selecione um formato válido para o cabeçalho.' }, 400);
-      }
-      if (String(header?.format).toUpperCase() === 'TEXT' && (typeof header.text !== 'string' || header.text.length > 60 || /\{\{|\}\}/.test(header.text))) {
-        return json({ error: 'O cabeçalho de texto aceita até 60 caracteres e não permite variáveis.' }, 400);
-      }
-      if (header && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(String(header.format).toUpperCase())
-        && (typeof header.example?.header_handle?.[0] !== 'string' || !header.example.header_handle[0].trim())) {
-        return json({ error: 'Informe o handle de mídia de exemplo exigido pela Meta.' }, 400);
-      }
-      if (header && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(String(header.format).toUpperCase())) {
-        try {
-          if (new URL(header.example.header_handle[0]).protocol !== 'https:') throw new Error('invalid header media URL');
-        } catch { return json({ error: 'A mídia de exemplo precisa ser uma URL pública HTTPS.' }, 400); }
-      }
-      const footer = components.find((item: JsonRecord) => String(item?.type).toUpperCase() === 'FOOTER');
-      if (footer && (typeof footer.text !== 'string' || footer.text.length > 60 || /\{\{|\}\}/.test(footer.text))) {
-        return json({ error: 'O rodapé pode ter no máximo 60 caracteres.' }, 400);
-      }
-      const buttonComponent = components.find((item: JsonRecord) => String(item?.type).toUpperCase() === 'BUTTONS');
-      const buttons = Array.isArray(buttonComponent?.buttons) ? buttonComponent.buttons : [];
-      if (buttons.some((item: JsonRecord) => typeof item.text !== 'string' || !item.text.trim() || item.text.length > 25)) {
-        return json({ error: 'Cada botão precisa ter um texto de até 25 caracteres.' }, 400);
-      }
-      if (buttons.some((item: JsonRecord) => !['QUICK_REPLY', 'URL', 'PHONE_NUMBER'].includes(String(item.type).toUpperCase()))) {
-        return json({ error: 'Tipo de botão não suportado neste formulário.' }, 400);
-      }
-      if (buttons.filter((item: JsonRecord) => String(item.type).toUpperCase() === 'QUICK_REPLY').length > 3) {
-        return json({ error: 'São permitidas no máximo 3 respostas rápidas.' }, 400);
-      }
-      if (buttons.length > 2 && buttons.some((item: JsonRecord) => ['URL', 'PHONE_NUMBER'].includes(String(item.type).toUpperCase()))) {
-        return json({ error: 'São permitidos no máximo 2 botões de chamada para ação.' }, 400);
-      }
-      const ctaButtons = buttons.filter((item: JsonRecord) => ['URL', 'PHONE_NUMBER'].includes(String(item.type).toUpperCase()));
-      const quickReplyButtons = buttons.filter((item: JsonRecord) => String(item.type).toUpperCase() === 'QUICK_REPLY');
-      if (ctaButtons.length && quickReplyButtons.length) {
-        return json({ error: 'Escolha respostas rápidas ou botões CTA, sem misturar os dois tipos.' }, 400);
-      }
-      if (ctaButtons.length === 2 && new Set(ctaButtons.map((item: JsonRecord) => String(item.type).toUpperCase())).size !== 2) {
-        return json({ error: 'Os botões CTA precisam ser um de telefone e um de site.' }, 400);
-      }
-      const invalidCta = ctaButtons.some((item: JsonRecord) => {
-        const type = String(item.type).toUpperCase();
-        if (type === 'PHONE_NUMBER') return !/^\d{8,15}$/.test(String(item.phone_number ?? ''));
-        if (typeof item.url !== 'string' || item.url.length > 2000) return true;
-        try {
-          const url = new URL(item.url.replace(/\{\{1\}\}/g, 'example'));
-          if (url.protocol !== 'https:') return true;
-        } catch { return true; }
-        if (/\{\{\d+\}\}/.test(item.url)) {
-          if (!item.url.endsWith('{{1}}') || !Array.isArray(item.example) || typeof item.example[0] !== 'string') return true;
-          return !item.example[0].trim();
-        }
-        return false;
-      });
-      if (invalidCta) {
-        return json({ error: 'Confira o número de telefone ou informe uma URL HTTPS válida com exemplo quando dinâmica.' }, 400);
-      }
+      const componentError = validateTemplateComponents(components);
+      if (componentError) return json({ error: componentError }, 400);
       let remoteTemplate: JsonRecord | null = null;
       if (channel.provider === 'meta') {
         try {
@@ -1000,6 +1022,71 @@ Deno.serve(async (req) => {
         .single();
       if (saveError || !saved) throw new Error('O template foi enviado à Meta, mas não foi possível salvá-lo no SGA. Atualize a lista.');
       return json({ template: saved, channel: publicChannel(channel) });
+    }
+
+    if (action === 'update_template') {
+      const templateId = typeof body.templateId === 'string' ? body.templateId : '';
+      const category = typeof body.category === 'string' ? body.category.trim().toUpperCase() : '';
+      const components = normalizeTemplateComponents(Array.isArray(body.components) ? body.components : []);
+      if (!/^[0-9a-f-]{36}$/i.test(templateId)) return json({ error: 'Selecione um template válido.' }, 400);
+      if (channel.provider !== 'meta') {
+        return json({ error: 'A edição de templates pela interface está disponível para contas Meta Cloud API.' }, 409);
+      }
+      const { data: template, error: templateError } = await admin.from('zernio_whatsapp_templates')
+        .select('id,meta_template_id,name,language,status,category')
+        .eq('id', templateId).eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId).maybeSingle();
+      if (templateError || !template) return json({ error: 'O template não pertence a este locador ou canal.' }, 404);
+      if (!template.meta_template_id) return json({ error: 'Este template não tem identificação na Meta. Atualize a lista.' }, 409);
+      const status = String(template.status ?? '').toUpperCase();
+      if (!['APPROVED', 'REJECTED', 'PAUSED'].includes(status)) {
+        return json({ error: 'A Meta só permite editar templates aprovados, rejeitados ou pausados.' }, 409);
+      }
+      if (!['UTILITY', 'MARKETING', 'AUTHENTICATION'].includes(category)) {
+        return json({ error: 'Selecione uma categoria válida para o template.' }, 400);
+      }
+      const categoryChanged = category !== String(template.category ?? '').toUpperCase();
+      if (categoryChanged && status !== 'REJECTED' && status !== 'PAUSED') {
+        return json({ error: 'A Meta não permite alterar a categoria de um template aprovado.' }, 409);
+      }
+      const componentError = validateTemplateComponents(components);
+      if (componentError) return json({ error: componentError }, 400);
+
+      try {
+        await editMessageTemplate(template.meta_template_id, apiKey, components, categoryChanged ? category : undefined);
+      } catch (error) {
+        if (error instanceof MetaApiError) {
+          throw new PublicError(describeMetaError(error), error.status === 429 ? 429 : 400);
+        }
+        throw error;
+      }
+
+      // A Meta nao devolve o template editado: guarda o que foi enviado e
+      // sincroniza em seguida para refletir o novo status de revisao.
+      const { error: saveError } = await admin.from('zernio_whatsapp_templates')
+        .update({ components, category, rejection_reason: null, updated_at: new Date().toISOString() })
+        .eq('id', template.id).eq('id_usuario', user.id);
+      if (saveError) throw new Error('A Meta aceitou a edição, mas não foi possível salvá-la no SGA. Atualize a lista.');
+
+      // Se o numero de variaveis mudou, o mapeamento antigo deixa de servir:
+      // remove os usos para nao enviar parametros fora de ordem e avisa o locador.
+      const expectedCount = templateParameterCount(components);
+      const { data: usages } = await admin.from('zernio_whatsapp_template_usages')
+        .select('id,variable_mapping').eq('template_id', template.id).eq('id_usuario', user.id);
+      const staleUsages = (usages ?? []).filter((usage: JsonRecord) =>
+        !Array.isArray(usage.variable_mapping) || usage.variable_mapping.length !== expectedCount);
+      if (staleUsages.length) {
+        await admin.from('zernio_whatsapp_template_usages')
+          .delete().in('id', staleUsages.map((usage: JsonRecord) => usage.id)).eq('id_usuario', user.id);
+      }
+
+      return json({
+        success: true,
+        message: staleUsages.length
+          ? 'Template enviado para análise da Meta. O número de variáveis mudou, então o mapeamento antigo foi removido — selecione o template novamente em lembretes ou confirmações.'
+          : 'Template enviado para análise da Meta. O status é atualizado automaticamente.',
+        templates: await syncTemplates(admin, channel, user.id),
+        channel: publicChannel(channel),
+      });
     }
 
     if (action === 'delete_template') {

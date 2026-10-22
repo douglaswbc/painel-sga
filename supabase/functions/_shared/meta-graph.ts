@@ -368,11 +368,14 @@ export async function editMessageTemplate(
   templateId: string,
   token: string,
   components: unknown[],
+  category?: string,
 ): Promise<boolean> {
+  const payload: Record<string, unknown> = { components };
+  if (category) payload.category = category;
   const result = await graphJson<{ success?: boolean }>(templateId, {
     method: 'POST',
     token,
-    body: { components },
+    body: payload,
   });
   return result.success !== false;
 }

@@ -266,7 +266,7 @@ O WhatsApp não transforma em hyperlink uma URL escrita no corpo de um template:
 - A URL tem uma parte **fixa** e no máximo **uma variável, sempre no fim**: `https://sga.emoveentregas.com/pagar/{{1}}`.
 - A variável também pode vir depois de `?`, desde que seja o último trecho: `https://exemplo.com/pagar?t={{1}}`.
 - Não é possível enviar a URL inteira do Mercado Pago dentro do botão — só o trecho dinâmico final.
-- O **WhatsApp Manager trava o botão** de um template já aprovado: a tela só oferece descartar ou reenviar partes editáveis, sem alterar a URL. Pela **Graph API** a Meta aceita substituir os componentes (`POST /{template_id}`), com reavaliação automática — é o que o botão **Editar botão** do SGA faz.
+- O **WhatsApp Manager trava o botão** de um template já aprovado: a tela só oferece descartar ou reenviar partes editáveis, sem alterar a URL. Pela **Graph API** a Meta aceita substituir os componentes (`POST /{template_id}`), com reavaliação automática — é o que o botão **Editar template** do SGA faz, inclusive para corpo, cabeçalho, rodapé e botões.
 - Cada template aprovado aceita **uma edição a cada 24 horas** e até **10 edições em 30 dias**. Ao atingir o limite, espere o prazo ou use outro template.
 
 ### Como o SGA resolve o link dinâmico
@@ -298,16 +298,22 @@ O token só revela o link daquela cobrança: nenhum dado do locatário é devolv
 
 A variável que vem de um botão de URL já aparece pré-selecionada como **Código do botão "Pagar"**.
 
-### Corrigir o botão de um template já aprovado (pelo SGA)
+### Editar o template inteiro pelo SGA
 
-1. Em `/mensagens` → **Templates Meta**, localize o template com botão de URL.
-2. Clique em **Editar botão** (o botão fica âmbar quando o SGA detecta URL inválida).
-3. Ajuste o texto (até 25 caracteres), a URL e o exemplo da variável:
-   - A URL precisa ser HTTPS e usar `{{1}}` **uma única vez, no fim**.
-   - O exemplo é o valor que substitui `{{1}}` (ex.: um uuid). A Meta usa só na revisão.
-4. Clique em **Salvar botão**. A função `zernio-whatsapp` reconstrói todos os componentes (preservando cabeçalho, corpo e exemplos) e envia `POST /{template_id}` para a Meta. O template volta para análise e é reavaliado automaticamente.
+1. Em `/mensagens` → **Templates Meta**, localize o template e clique em **Editar template** (o botão fica âmbar quando o SGA detecta URL de botão inválida).
+2. O formulário abre preenchido com o conteúdo atual: categoria, cabeçalho, corpo (com os exemplos das variáveis), rodapé e botões. Nome e idioma ficam bloqueados — a Meta não permite alterá-los.
+3. Ajuste o que precisar e clique em **Salvar e enviar para análise**. A função `zernio-whatsapp` valida os componentes com as mesmas regras da criação e envia `POST /{template_id}` para a Meta com **todos** os componentes (a Meta substitui o conjunto inteiro, não edita um campo isolado).
+4. A Meta reavalia automaticamente. O SGA sincroniza o novo status logo depois do envio.
 
-O card mostra **"O botão de URL está com endereço inválido"** quando a URL contém `%7B%7B1%7D%7D` (variável codificada) ou mais de um `{{1}}` — foi o que aconteceu com `aviso_boleto_02` e `aviso_boleto_03`, editados no Manager com o trecho codificado e outro `{{1}}` colado no fim.
+Regras da Meta aplicadas pelo SGA:
+
+- Só é possível editar templates com status `APPROVED`, `REJECTED` ou `PAUSED`.
+- **Não** é possível mudar a categoria de um template aprovado (o campo fica desabilitado).
+- Templates aprovados aceitam **1 edição a cada 24 horas** e até **10 edições em 30 dias**. Rejeitados e pausados podem ser editados sem esse limite.
+- Se o número de variáveis mudar, o mapeamento antigo de lembretes/confirmações é removido e o SGA avisa para selecionar o template novamente — assim nenhum envio sai com parâmetros fora de ordem.
+- A URL do botão precisa ser HTTPS e usar `{{1}}` **uma única vez, no fim**. O SGA rejeita a variável codificada (`%7B%7B1%7D%7D`), que foi a causa do botão quebrado do `aviso_boleto_02` e do `aviso_boleto_03`.
+
+O card mostra **"O botão de URL está com endereço inválido"** quando a URL contém `%7B%7B1%7D%7D` ou mais de um `{{1}}`.
 
 ### Limites e manutenção
 
