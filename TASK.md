@@ -429,11 +429,13 @@ Permitir que o locador use a API oficial da Meta (WhatsApp Cloud API) no lugar d
 
 ### Fase 8.9 - Link de pagamento como botao de URL
 
-- [ ] Criar a migration `029_charge_pay_token.sql` com `pay_token` (uuid unico) em `cobrancas`.
-- [ ] Criar a Edge Function publica `pay-link` (`verify_jwt = false`): resolve `?t=<token>` e responde `302` para o link do Mercado Pago, com pagina explicativa para cobranca paga, cancelada, PIX expirado ou token invalido.
-- [ ] Expor a base estavel `https://painel-sga.pages.dev/pagar/<token>` pelo `public/_redirects` (placeholders do Cloudflare Pages) e encaminhar para a funcao.
-- [ ] Adicionar o campo `payment_token` ao mapeamento de variaveis do template de cobranca (backend e UI), com pre-selecao automatica em variaveis de botao de URL.
-- [ ] Documentar na secao 12 de `docs/INTEGRACAO_META_WHATSAPP.md` por que o link no corpo nao e clicavel, a regra de uma variavel no fim da URL e o passo a passo do template com botao.
-- [ ] Validar o redirecionamento com uma cobranca real sem efetuar pagamento.
+- [x] Criar a migration `029_charge_pay_token.sql` com `pay_token` (uuid unico) em `cobrancas`.
+- [x] Criar a Edge Function publica `pay-link` (`verify_jwt = false`): resolve `?t=<token>` e responde `302` para o link do Mercado Pago; cobranca paga, cancelada, PIX expirado ou token invalido redirecionam para a pagina publica `/pagar/aviso/<motivo>` do SGA.
+- [x] Expor a base estavel `https://painel-sga.pages.dev/pagar/<token>` pelo `public/_redirects` (placeholders do Cloudflare Pages) e encaminhar para a funcao.
+- [x] Adicionar o campo `payment_token` ao mapeamento de variaveis do template de cobranca (backend e UI), com pre-selecao automatica em variaveis de botao de URL.
+- [x] Documentar na secao 12 de `docs/INTEGRACAO_META_WHATSAPP.md` por que o link no corpo nao e clicavel, a regra de uma variavel no fim da URL e o passo a passo do template com botao.
+- [x] Validar o redirecionamento com uma cobranca real sem efetuar pagamento.
 
-**Estado:** implementacao local concluida; falta aplicar a migration, publicar `pay-link` e `zernio-whatsapp`, publicar o frontend e validar o `302`.
+**Estado:** migration 029 aplicada (934 cobrancas, 934 tokens distintos, nenhum nulo). `pay-link` (versao 2, `verify_jwt = false`) e `zernio-whatsapp` (versao 38) publicados e o frontend no ar. Validacao real: `/pagar/<token>` no Cloudflare Pages responde `302` para `/functions/v1/pay-link`, que responde `302` para o ticket do Mercado Pago; cobranca paga, PIX expirado e token inexistente caem em `/pagar/aviso/{pago,expirado,invalido}` (200, HTML). Nenhum pagamento foi efetuado.
+
+**Nota:** o Supabase reescreve respostas `text/html` de Edge Functions para `text/plain`, por isso as paginas de aviso ficam no SPA do Cloudflare Pages (`src/pages/PaymentNotice.jsx`) e a funcao so redireciona. O template com botao ainda precisa ser criado na conta Meta (`aviso_boleto_04`) e aprovado.
