@@ -6,6 +6,7 @@ import {
   createMessageTemplate,
   deleteMessageTemplate,
   describeMetaError,
+  editMessageTemplate,
   getPhoneNumberDetails,
   listMessageTemplates,
   metaErrorDetail,
@@ -469,8 +470,9 @@ Deno.serve(async (req) => {
     let user: { id: string } | null = null;
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
     if (serviceCall) {
-      if (body?.action !== 'send_charge' || !/^[0-9a-f-]{36}$/i.test(String(body?.ownerId || ''))) {
-        return json({ error: 'Service credentials may only send an automatic charge for a specified owner.' }, 403);
+      const serviceActions = new Set(['send_charge', 'update_template_button']);
+      if (!serviceActions.has(String(body?.action)) || !/^[0-9a-f-]{36}$/i.test(String(body?.ownerId || ''))) {
+        return json({ error: 'Service credentials may only run automated maintenance actions for a specified owner.' }, 403);
       }
       user = { id: body.ownerId };
     } else {
@@ -1059,6 +1061,101 @@ Deno.serve(async (req) => {
         success: true,
         archived: false,
         message: 'Template excluído.',
+        templates: await syncTemplates(admin, channel, user.id),
+        channel: publicChannel(channel),
+      });
+    }
+
+    if (action === 'update_template_button') {
+      const templateId = typeof body.templateId === 'string' ? body.templateId : '';
+      if (!/^[0-9a-f-]{36}$/i.test(templateId)) return json({ error: 'Selecione um template válido.' }, 400);
+      if (channel.provider !== 'meta') {
+        return json({ error: 'A edição de templates pela interface está disponível para contas Meta Cloud API.' }, 409);
+      }
+      const { data: template, error: templateError } = await admin.from('zernio_whatsapp_templates')
+        .select('id,meta_template_id,name,language,status,components')
+        .eq('id', templateId).eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId).maybeSingle();
+      if (templateError || !template) return json({ error: 'O template não pertence a este locador ou canal.' }, 404);
+      if (!template.meta_template_id) return json({ error: 'Este template não tem identificação na Meta. Atualize a lista.' }, 409);
+      if (!['APPROVED', 'REJECTED', 'PAUSED'].includes(String(template.status ?? '').toUpperCase())) {
+        return json({ error: 'A Meta só permite editar templates aprovados, rejeitados ou pausados.' }, 409);
+      }
+
+      const components: JsonRecord[] = Array.isArray(template.components)
+        ? JSON.parse(JSON.stringify(template.components)) : [];
+      const buttonsComponent = components.find((item) => String(item?.type).toUpperCase() === 'BUTTONS');
+      const buttons: JsonRecord[] = buttonsComponent && Array.isArray(buttonsComponent.buttons)
+        ? buttonsComponent.buttons : [];
+      const urlIndexes = buttons
+        .map((button, index) => (String(button?.type).toUpperCase() === 'URL' ? index : -1))
+        .filter((index) => index >= 0);
+      if (!buttonsComponent || !urlIndexes.length) {
+        return json({ error: 'Este template não tem botão de URL para editar.' }, 409);
+      }
+      const requestedIndex = Number.isInteger(Number(body.buttonIndex)) ? Number(body.buttonIndex) : 0;
+      if (requestedIndex < 0 || requestedIndex >= urlIndexes.length) {
+        return json({ error: 'Botão de URL inválido para este template.' }, 400);
+      }
+      const button = buttons[urlIndexes[requestedIndex]];
+      const currentLabel = typeof button.text === 'string' ? button.text : '';
+      const label = typeof body.label === 'string' && body.label.trim() ? body.label.trim() : currentLabel;
+      if (!label || label.length > 25) {
+        return json({ error: 'O texto do botão precisa ter de 1 a 25 caracteres.' }, 400);
+      }
+      const rawUrl = typeof body.url === 'string' ? body.url.trim() : '';
+      if (!rawUrl || rawUrl.length > 2000) {
+        return json({ error: 'Informe a URL do botão com até 2.000 caracteres.' }, 400);
+      }
+      const variables = [...rawUrl.matchAll(/\{\{(\d+)\}\}/g)].map((match) => match[1]);
+      const isDynamic = variables.length > 0;
+      if (isDynamic && (variables.length !== 1 || variables[0] !== '1' || !rawUrl.endsWith('{{1}}'))) {
+        return json({ error: 'O botão dinâmico aceita uma única variável {{1}}, sempre no final da URL.' }, 400);
+      }
+      const staticPart = isDynamic ? rawUrl.slice(0, rawUrl.lastIndexOf('{{1}}')) : rawUrl;
+      if (staticPart.includes('{{') || staticPart.includes('}}') || staticPart.includes('{') || staticPart.includes('}')) {
+        return json({ error: 'Use somente a variável {{1}} no endereço do botão.' }, 400);
+      }
+      try {
+        if (new URL(isDynamic ? `${staticPart}example` : rawUrl).protocol !== 'https:') {
+          return json({ error: 'A URL do botão precisa ser HTTPS.' }, 400);
+        }
+      } catch {
+        return json({ error: 'Informe uma URL HTTPS válida.' }, 400);
+      }
+      let example = '';
+      if (isDynamic) {
+        example = typeof body.example === 'string' ? body.example.trim() : '';
+        // Aceita tambem o exemplo antigo no formato de URL completa.
+        if (staticPart && example.startsWith(staticPart)) example = example.slice(staticPart.length);
+        if (!example || example.length > 200 || /\s/.test(example)) {
+          return json({ error: 'Informe um exemplo de até 200 caracteres, sem espaços, para a variável do botão.' }, 400);
+        }
+      }
+
+      button.text = label;
+      button.url = rawUrl;
+      if (isDynamic) button.example = [example];
+      else delete button.example;
+
+      try {
+        await editMessageTemplate(template.meta_template_id, apiKey, components);
+      } catch (error) {
+        if (error instanceof MetaApiError) {
+          throw new PublicError(describeMetaError(error), error.status === 429 ? 429 : 400);
+        }
+        throw error;
+      }
+
+      // A Meta nao devolve o template editado: guarda os componentes enviados
+      // e sincroniza em seguida para refletir o novo status de revisao.
+      const { error: saveError } = await admin.from('zernio_whatsapp_templates')
+        .update({ components, updated_at: new Date().toISOString() })
+        .eq('id', template.id).eq('id_usuario', user.id);
+      if (saveError) throw new Error('A Meta aceitou a edição, mas não foi possível salvá-la no SGA. Atualize a lista.');
+
+      return json({
+        success: true,
+        message: 'Botão atualizado. A Meta reavalia o template automaticamente.',
         templates: await syncTemplates(admin, channel, user.id),
         channel: publicChannel(channel),
       });

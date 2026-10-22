@@ -358,6 +358,26 @@ export async function createMessageTemplate(
 }
 
 /**
+ * Edits an existing message template. Meta replaces the whole component set,
+ * so the caller must send every component (not only the changed one). Only
+ * templates with APPROVED, REJECTED or PAUSED status can be edited, and each
+ * edit counts against the account's editing quota and is resubmitted for
+ * review automatically.
+ */
+export async function editMessageTemplate(
+  templateId: string,
+  token: string,
+  components: unknown[],
+): Promise<boolean> {
+  const result = await graphJson<{ success?: boolean }>(templateId, {
+    method: 'POST',
+    token,
+    body: { components },
+  });
+  return result.success !== false;
+}
+
+/**
  * Deletes a message template from a WhatsApp Business Account. The `hsm_id`
  * identifies the exact variant, so only that language is removed.
  */
@@ -391,6 +411,12 @@ export function describeMetaError(error: unknown): string {
   }
   if (error.status === 400 && error.subcode === 2388293) {
     return 'A Meta achou o corpo curto demais para o número de variáveis. Reduza as variáveis ou amplie a mensagem.';
+  }
+  if (/uma vez a cada 24 horas|once every 24 hours/i.test(`${error.message} ${error.userMessage ?? ''}`)) {
+    return 'A Meta permite editar cada template aprovado apenas uma vez a cada 24 horas. Tente novamente depois desse prazo.';
+  }
+  if (/(10|dez)\s*(vezes|times).*(30|trinta)/i.test(`${error.message} ${error.userMessage ?? ''}`)) {
+    return 'A Meta limita a 10 edições de template em 30 dias. Aguarde para editar este template novamente.';
   }
   if (error.subcode === 2593002 || /modelo de mensagem n[ãa]o encontrado|message template .*not found/i.test(error.userMessage ?? '')) {
     return `${error.userMessage || 'A Meta não encontrou este template na conta.'} Atualize a lista em Templates Meta e escolha outro template aprovado.`;

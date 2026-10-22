@@ -438,4 +438,15 @@ Permitir que o locador use a API oficial da Meta (WhatsApp Cloud API) no lugar d
 
 **Estado:** migration 029 aplicada (934 cobrancas, 934 tokens distintos, nenhum nulo). `pay-link` (versao 2, `verify_jwt = false`) e `zernio-whatsapp` (versao 38) publicados e o frontend no ar. Validacao real: `/pagar/<token>` no Cloudflare Pages responde `302` para `/functions/v1/pay-link`, que responde `302` para o ticket do Mercado Pago; cobranca paga, PIX expirado e token inexistente caem em `/pagar/aviso/{pago,expirado,invalido}` (200, HTML). Nenhum pagamento foi efetuado.
 
-**Nota:** o Supabase reescreve respostas `text/html` de Edge Functions para `text/plain`, por isso as paginas de aviso ficam no SPA do Cloudflare Pages (`src/pages/PaymentNotice.jsx`) e a funcao so redireciona. O template com botao ainda precisa ser criado na conta Meta (`aviso_boleto_04`) e aprovado.
+**Nota:** o Supabase reescreve respostas `text/html` de Edge Functions para `text/plain`, por isso as paginas de aviso ficam no SPA do Cloudflare Pages (`src/pages/PaymentNotice.jsx`) e a funcao so redireciona. O template com botao (`aviso_boleto_04`) foi aprovado e e o primeiro da sequencia de lembretes.
+
+### Fase 8.10 - Edicao do botao de URL do template pelo SGA
+
+- [x] Adicionar `editMessageTemplate` em `_shared/meta-graph.ts` (`POST /{template_id}` com `components`; a Meta reavalia o template automaticamente).
+- [x] Criar a acao `update_template_button` em `zernio-whatsapp` (somente provedor Meta): valida status `APPROVED`/`REJECTED`/`PAUSED`, reconstroi todos os componentes preservando cabecalho, corpo e exemplos, aceita exemplo antigo em formato de URL completa e sincroniza a lista ao final.
+- [x] Permitir a acao em chamadas de servico com `ownerId`, no mesmo caminho do `send_charge`.
+- [x] Adicionar o modal **Editar botao** em `ZernioTemplatesCard.jsx`, com validacao de HTTPS, uma unica variavel `{{1}}` no fim da URL e exemplo obrigatorio; o card sinaliza em ambar o botao com `%7B%7B1%7D%7D` ou `{{1}}` duplicado.
+- [x] Traduzir os limites da Meta em mensagens amigaveis (1 edicao por template a cada 24h; 10 edicoes em 30 dias).
+- [x] Corrigir o mapeamento de `aviso_boleto_02` (posicao 2 = `payment_token`) e documentar a edicao pela interface na secao 12 de `docs/INTEGRACAO_META_WHATSAPP.md`.
+
+**Estado:** `zernio-whatsapp` publicado com a nova acao. A Meta recusou a correcao de `aviso_boleto_02` e `aviso_boleto_03` hoje por limite de edicao (1 vez a cada 24 horas, pois ambos foram editados no Manager nas ultimas 24h). Os dois aparecem com o aviso ambar em **Editar botao** e podem ser corrigidos pelo SGA assim que a janela abrir. `aviso_boleto_04` (URL correta) esta na ordem 1 da sequencia, `_02` na 2 e `_03` na 3.

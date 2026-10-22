@@ -263,15 +263,16 @@ O WhatsApp não transforma em hyperlink uma URL escrita no corpo de um template:
 ### Regra da Meta para botões de URL
 
 - O botão é do tipo `URL`, com rótulo de até 25 caracteres (ex.: `Pagar com PIX`).
-- A URL tem uma parte **fixa** e no máximo **uma variável, sempre no fim**: `https://painel-sga.pages.dev/pagar/{{1}}`.
+- A URL tem uma parte **fixa** e no máximo **uma variável, sempre no fim**: `https://sga.emoveentregas.com/pagar/{{1}}`.
 - A variável também pode vir depois de `?`, desde que seja o último trecho: `https://exemplo.com/pagar?t={{1}}`.
 - Não é possível enviar a URL inteira do Mercado Pago dentro do botão — só o trecho dinâmico final.
-- Um template **já aprovado não aceita botão novo**. É preciso criar outro template, com nome novo (o nome anterior fica bloqueado por 30 dias). Por isso os templates atuais (`aviso_boleto_02` e `aviso_boleto_03`) continuam com o link no corpo até serem substituídos.
+- O **WhatsApp Manager trava o botão** de um template já aprovado: a tela só oferece descartar ou reenviar partes editáveis, sem alterar a URL. Pela **Graph API** a Meta aceita substituir os componentes (`POST /{template_id}`), com reavaliação automática — é o que o botão **Editar botão** do SGA faz.
+- Cada template aprovado aceita **uma edição a cada 24 horas** e até **10 edições em 30 dias**. Ao atingir o limite, espere o prazo ou use outro template.
 
 ### Como o SGA resolve o link dinâmico
 
 1. Cada cobrança tem um `pay_token` (uuid único, migration `029_charge_pay_token.sql`).
-2. O template aponta para `https://painel-sga.pages.dev/pagar/{{1}}`.
+2. O template aponta para `https://sga.emoveentregas.com/pagar/{{1}}`.
 3. O `public/_redirects` do Cloudflare Pages encaminha `/pagar/:token` para a Edge Function pública `pay-link`.
 4. A `pay-link` responde `302` para o `payment_link` real do Mercado Pago. Se a cobrança estiver paga, cancelada, com PIX expirado ou o token for inválido, redireciona para a página pública `/pagar/aviso/<motivo>` do SGA, que explica o que aconteceu.
 
@@ -286,7 +287,7 @@ O token só revela o link daquela cobrança: nenhum dado do locatário é devolv
 3. Categoria `UTILITY`, idioma `pt_BR`.
 4. No corpo, repita o texto do template atual **sem o link** (ex.: "Para pagar, toque no botão abaixo."). Mantenha as variáveis `{{1}}` nome, `{{2}}` valor e `{{3}}` vencimento.
 5. Em **Tipo de botão**, escolha **Site** e **Dinâmica**:
-   - URL: `https://painel-sga.pages.dev/pagar/{{1}}`
+   - URL: `https://sga.emoveentregas.com/pagar/{{1}}`
    - Exemplo do trecho dinâmico: `00000000-0000-4000-8000-000000000000`
    - Texto do botão: `Pagar com PIX`
 6. Envie para análise. Depois de `APPROVED`, clique em **Selecionar para cobrança** e associe:
@@ -297,12 +298,23 @@ O token só revela o link daquela cobrança: nenhum dado do locatário é devolv
 
 A variável que vem de um botão de URL já aparece pré-selecionada como **Código do botão "Pagar"**.
 
+### Corrigir o botão de um template já aprovado (pelo SGA)
+
+1. Em `/mensagens` → **Templates Meta**, localize o template com botão de URL.
+2. Clique em **Editar botão** (o botão fica âmbar quando o SGA detecta URL inválida).
+3. Ajuste o texto (até 25 caracteres), a URL e o exemplo da variável:
+   - A URL precisa ser HTTPS e usar `{{1}}` **uma única vez, no fim**.
+   - O exemplo é o valor que substitui `{{1}}` (ex.: um uuid). A Meta usa só na revisão.
+4. Clique em **Salvar botão**. A função `zernio-whatsapp` reconstrói todos os componentes (preservando cabeçalho, corpo e exemplos) e envia `POST /{template_id}` para a Meta. O template volta para análise e é reavaliado automaticamente.
+
+O card mostra **"O botão de URL está com endereço inválido"** quando a URL contém `%7B%7B1%7D%7D` (variável codificada) ou mais de um `{{1}}` — foi o que aconteceu com `aviso_boleto_02` e `aviso_boleto_03`, editados no Manager com o trecho codificado e outro `{{1}}` colado no fim.
+
 ### Limites e manutenção
 
 - O PIX gerado pelo Mercado Pago vale **4 horas**. Depois disso o cron marca `pix_expired_at` e o botão mostra "Link expirado"; é preciso gerar um novo PIX para o locatário.
-- A base `painel-sga.pages.dev/pagar/` é estável: trocar o projeto Supabase ou a URL da função exige alterar apenas o `_redirects`, sem recriar o template.
-- A `pay-link` usa a variável `SGA_PUBLIC_URL` (padrão `https://painel-sga.pages.dev`) para montar a página de aviso. Se o painel mudar de domínio, defina a variável nos secrets do Supabase.
-- Para conferir o redirecionamento sem gerar cobrança: `curl -I https://painel-sga.pages.dev/pagar/<pay_token>` deve responder `302` com `location` do Mercado Pago (ou uma página explicativa, se o PIX estiver vencido).
+- A base `sga.emoveentregas.com/pagar/` é estável: trocar o projeto Supabase ou a URL da função exige alterar apenas o `_redirects`, sem recriar o template.
+- A `pay-link` usa a variável `SGA_PUBLIC_URL` (`https://sga.emoveentregas.com`) para montar a página de aviso.
+- Para conferir o redirecionamento sem gerar cobrança: `curl -I https://sga.emoveentregas.com/pagar/<pay_token>` deve responder `302` com `location` do Mercado Pago (ou uma página explicativa, se o PIX estiver vencido).
 
 ## 7. Referências
 

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertCircle, ArrowDown, ArrowUp, CheckCircle2, FileText, Loader2, Plus, RefreshCw,
+  AlertCircle, ArrowDown, ArrowUp, CheckCircle2, FileText, Loader2, Pencil, Plus, RefreshCw,
   Send, Smartphone, Trash2, X,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -94,6 +94,29 @@ const usageFields = {
     ['paid_at', 'Data do pagamento'],
   ],
 };
+
+// Templates da Meta com botao de URL podem ser corrigidos pelo SGA: o Manager
+// trava o botao depois da aprovacao, mas a Graph API aceita substituir os
+// componentes (com reavaliacao automatica).
+const getUrlButton = (template) => {
+  const component = (template?.components || []).find((item) => String(item.type).toUpperCase() === 'BUTTONS');
+  const urlButtons = (component?.buttons || []).filter((button) => String(button.type).toUpperCase() === 'URL');
+  if (!urlButtons.length) return null;
+  const button = urlButtons[0];
+  const url = String(button.url || '');
+  const occurrences = (url.match(/\{\{\d+\}\}/g) || []).length;
+  const needsFix = occurrences > 1 || url.includes('%7B%7B') || url.includes('%7D%7D')
+    || (occurrences === 1 && !url.endsWith('{{1}}'));
+  return {
+    label: String(button.text || ''),
+    url,
+    example: Array.isArray(button.example) ? String(button.example[0] || '') : '',
+    needsFix,
+    dynamic: occurrences > 0,
+  };
+};
+
+const EDITABLE_BUTTON_STATUSES = new Set(['APPROVED', 'REJECTED', 'PAUSED']);
 
 const hasSavedDraft = (storageKey) => {
   if (!storageKey) return false;
@@ -449,6 +472,7 @@ const ZernioTemplatesCard = () => {
   const [notice, setNotice] = useState('');
   const [selection, setSelection] = useState(null);
   const [variableMapping, setVariableMapping] = useState([]);
+  const [buttonEditor, setButtonEditor] = useState(null);
   const draftStorageKey = profile?.id ? `sga-zernio-template-draft-${profile.id}` : null;
 
   useEffect(() => {
@@ -523,6 +547,61 @@ const ZernioTemplatesCard = () => {
       setNotice(data.message || 'Template excluído.');
     } catch (error) {
       setErrorMessage(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openButtonEditor = (template) => {
+    const info = getUrlButton(template);
+    if (!info) return;
+    setButtonEditor({ template, label: info.label, url: info.url, example: info.example, error: '' });
+    setErrorMessage('');
+    setNotice('');
+  };
+
+  const updateButtonField = (field, value) => setButtonEditor((current) => (
+    current ? { ...current, [field]: value, error: '' } : current
+  ));
+
+  const saveButton = async (event) => {
+    event.preventDefault();
+    if (!buttonEditor) return;
+    const label = buttonEditor.label.trim();
+    const url = buttonEditor.url.trim();
+    let example = buttonEditor.example.trim();
+    const variables = [...url.matchAll(/\{\{(\d+)\}\}/g)];
+    const fail = (message) => setButtonEditor((current) => (current ? { ...current, error: message } : current));
+
+    if (!label || label.length > 25) return fail('O texto do botão precisa ter de 1 a 25 caracteres.');
+    if (!/^https:\/\//i.test(url)) return fail('A URL do botão precisa começar com https://.');
+    if (url.length > 2000) return fail('A URL do botão pode ter no máximo 2.000 caracteres.');
+    if (variables.length > 1 || (variables.length === 1 && variables[0][1] !== '1')) {
+      return fail('Use apenas a variável {{1}} no endereço do botão.');
+    }
+    if (variables.length === 1) {
+      if (!url.endsWith('{{1}}')) return fail('A variável {{1}} precisa ficar no final da URL.');
+      const staticPart = url.slice(0, -5);
+      if (/[{}]/.test(staticPart)) return fail('Remova as chaves extras: use somente {{1}} no final da URL.');
+      // Aceita o exemplo antigo em formato de URL completa e guarda so o sufixo.
+      if (staticPart && example.startsWith(staticPart)) example = example.slice(staticPart.length);
+      if (!example || example.length > 200 || /\s/.test(example)) {
+        return fail('Informe o exemplo da variável (até 200 caracteres, sem espaços).');
+      }
+    } else {
+      example = '';
+    }
+
+    setBusy(true);
+    try {
+      const data = await invoke('update_template_button', {
+        templateId: buttonEditor.template.id, label, url, example,
+      });
+      setTemplates(data.templates || []);
+      setButtonEditor(null);
+      setNotice(data.message || 'Botão do template atualizado.');
+    } catch (error) {
+      fail(error.message);
     } finally {
       setBusy(false);
     }
@@ -675,6 +754,7 @@ const ZernioTemplatesCard = () => {
           const chargeUsage = template.usages?.find((usage) => usage.purpose === 'charge' && usage.is_default);
           const isChargeTemplate = Boolean(chargeUsage);
           const isPaymentTemplate = template.usages?.some((usage) => usage.purpose === 'payment_confirmation' && usage.is_default) || false;
+          const urlButton = template.provider === 'meta' ? getUrlButton(template) : null;
           return <article key={template.id} className="flex flex-col md:flex-row md:items-center justify-between gap-3 rounded-lg border border-slate-800 p-3">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -685,6 +765,7 @@ const ZernioTemplatesCard = () => {
                 {isPaymentTemplate && <span className="inline-flex items-center rounded-full border border-sky-400/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-200">Confirmação de pagamento</span>}
               </div>
               <p className="text-[11px] text-slate-500 mt-1">{template.category}{template.rejection_reason ? ` · ${template.rejection_reason}` : ''}</p>
+              {urlButton?.needsFix && <p className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-300"><AlertCircle size={12} /> O botão de URL está com endereço inválido. Corrija em “Editar botão”.</p>}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {status === 'APPROVED' && <>
@@ -695,6 +776,17 @@ const ZernioTemplatesCard = () => {
                   {isPaymentTemplate && <CheckCircle2 size={14} />}{isPaymentTemplate ? 'Confirmação selecionada' : 'Usar em confirmações'}
                 </button>
               </>}
+              {urlButton && EDITABLE_BUTTON_STATUSES.has(status) && (
+                <button
+                  type="button"
+                  onClick={() => openButtonEditor(template)}
+                  disabled={busy}
+                  title={`Editar o botão de URL de ${template.name}`}
+                  className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-40 ${urlButton.needsFix ? 'border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20' : 'border-slate-700 bg-slate-800/60 text-slate-200 hover:bg-slate-800'}`}
+                >
+                  <Pencil size={14} className="inline" /> Editar botão
+                </button>
+              )}
               {status !== 'DELETED' && status !== 'PENDING_DELETION' && (
                 <button
                   type="button"
@@ -742,6 +834,44 @@ const ZernioTemplatesCard = () => {
           <div className="mt-5 flex justify-end gap-2 border-t border-slate-800 pt-4">
             <button type="button" onClick={() => setSelection(null)} disabled={busy} className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800">Cancelar</button>
             <button type="submit" disabled={busy || variableMapping.some((item) => !item.field)} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-500 disabled:opacity-50">{busy ? 'Salvando...' : 'Salvar seleção'}</button>
+          </div>
+        </form>
+      </div>}
+
+      {buttonEditor && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setButtonEditor(null); }}>
+        <form onSubmit={saveButton} className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-950 p-5 shadow-2xl">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-base font-bold text-white">Editar botão de URL</h3>
+              <p className="mt-1 text-xs text-slate-400">{buttonEditor.template.name} <span className="font-mono text-[10px] text-slate-500">{buttonEditor.template.language}</span></p>
+            </div>
+            <button type="button" onClick={() => setButtonEditor(null)} disabled={busy} className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white" aria-label="Fechar"><X size={18} /></button>
+          </div>
+
+          <div className="mt-4 space-y-4">
+            <label className="block">
+              <span className="mb-1.5 flex items-center justify-between gap-3 text-xs font-semibold text-slate-300"><span>Texto do botão</span><Counter value={buttonEditor.label} limit={25} /></span>
+              <input value={buttonEditor.label} onChange={(event) => updateButtonField('label', event.target.value)} maxLength={30} placeholder="Pagar com PIX" className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white" />
+            </label>
+            <label className="block">
+              <span className="mb-1.5 flex items-center justify-between gap-3 text-xs font-semibold text-slate-300"><span>Endereço do botão</span><Counter value={buttonEditor.url} limit={2000} /></span>
+              <input value={buttonEditor.url} onChange={(event) => updateButtonField('url', event.target.value)} placeholder="https://sga.emoveentregas.com/pagar/{{1}}" spellCheck={false} className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-xs text-white" />
+            </label>
+            <p className="text-[11px] text-slate-500">Use <span className="rounded bg-indigo-500/20 px-1 font-mono text-indigo-200">{'{{1}}'}</span> uma única vez, sempre no final da URL. O SGA envia o código do link de pagamento nessa variável.</p>
+            {/\{\{\d+\}\}/.test(buttonEditor.url) && <label className="block">
+              <span className="mb-1.5 flex items-center justify-between gap-3 text-xs font-semibold text-slate-300"><span>Exemplo da variável</span><Counter value={buttonEditor.example} limit={200} /></span>
+              <input value={buttonEditor.example} onChange={(event) => updateButtonField('example', event.target.value)} placeholder="00000000-0000-4000-8000-000000000000" spellCheck={false} className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-xs text-white" />
+              <span className="mt-1 block text-[11px] text-slate-500">A Meta usa esse valor só na revisão; o cliente recebe o código real.</span>
+            </label>}
+            {/\{\{1\}\}/.test(buttonEditor.url) && buttonEditor.example.trim() && <p className="break-all rounded-lg border border-slate-800 bg-slate-900/60 p-2 font-mono text-[11px] text-slate-400">Exemplo: {buttonEditor.url.replace('{{1}}', buttonEditor.example.trim())}</p>}
+          </div>
+
+          <p className="mt-4 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-[11px] text-amber-200">A Meta reavalia o template automaticamente. Cada template aceita uma edição a cada 24 horas e até 10 edições em 30 dias.</p>
+          {buttonEditor.error && <p className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-300">{buttonEditor.error}</p>}
+
+          <div className="mt-5 flex justify-end gap-2 border-t border-slate-800 pt-4">
+            <button type="button" onClick={() => setButtonEditor(null)} disabled={busy} className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800">Cancelar</button>
+            <button type="submit" disabled={busy} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-500 disabled:opacity-50">{busy ? 'Salvando...' : 'Salvar botão'}</button>
           </div>
         </form>
       </div>}
