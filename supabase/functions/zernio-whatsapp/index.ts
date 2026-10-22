@@ -1112,6 +1112,9 @@ Deno.serve(async (req) => {
         return json({ error: 'O botão dinâmico aceita uma única variável {{1}}, sempre no final da URL.' }, 400);
       }
       const staticPart = isDynamic ? rawUrl.slice(0, rawUrl.lastIndexOf('{{1}}')) : rawUrl;
+      if (/%7B|%7D/i.test(rawUrl)) {
+        return json({ error: 'A URL contém a variável codificada (%7B%7B1%7D%7D). Use literalmente {{1}}, uma única vez, no final.' }, 400);
+      }
       if (staticPart.includes('{{') || staticPart.includes('}}') || staticPart.includes('{') || staticPart.includes('}')) {
         return json({ error: 'Use somente a variável {{1}} no endereço do botão.' }, 400);
       }

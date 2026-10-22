@@ -581,6 +581,7 @@ const ZernioTemplatesCard = () => {
     }
     if (variables.length === 1) {
       if (!url.endsWith('{{1}}')) return fail('A variável {{1}} precisa ficar no final da URL.');
+      if (/%7B|%7D/i.test(url)) return fail('A URL tem a variável codificada (%7B%7B1%7D%7D). Digite {{1}} uma vez no final.');
       const staticPart = url.slice(0, -5);
       if (/[{}]/.test(staticPart)) return fail('Remova as chaves extras: use somente {{1}} no final da URL.');
       // Aceita o exemplo antigo em formato de URL completa e guarda so o sufixo.
