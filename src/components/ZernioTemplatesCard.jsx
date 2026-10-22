@@ -175,11 +175,6 @@ const draftFromTemplate = (template) => {
   };
 };
 
-const hasSavedDraft = (storageKey) => {
-  if (!storageKey) return false;
-  try { return Boolean(sessionStorage.getItem(storageKey)); } catch { return false; }
-};
-
 const readSavedDraft = (storageKey) => {
   if (!storageKey) return initialDraft();
   try {
@@ -236,7 +231,7 @@ function TemplateAssociationPreview({ template }) {
   );
 }
 
-function TemplateForm({ busy, storageKey, initialDraft: providedDraft, editing = false, status = '', onCancel, onSubmit }) {
+function TemplateForm({ busy, storageKey, initialDraft: providedDraft, editing = false, status = '', onClose, onCancel, onSubmit }) {
   const [draft, setDraft] = useState(() => providedDraft || readSavedDraft(storageKey));
   const [attempted, setAttempted] = useState(false);
   const variables = useMemo(() => getVariables(draft.body), [draft.body]);
@@ -374,7 +369,7 @@ function TemplateForm({ busy, storageKey, initialDraft: providedDraft, editing =
             <h3 className="text-base font-bold text-white">{editing ? 'Editar template Meta' : 'Novo template Meta'}</h3>
             <p className="text-xs text-slate-400 mt-1">{editing ? 'Altere o conteúdo e envie para a Meta revisar. Nome e idioma não podem ser alterados.' : 'Configure a mensagem e revise a prévia antes de enviar para análise. O rascunho fica salvo nesta aba se você navegar para outra tela.'}</p>
           </div>
-          <button type="button" onClick={onCancel} className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800" aria-label={editing ? 'Cancelar edição' : 'Cancelar criação'}><X size={18} /></button>
+          <button type="button" onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800" aria-label="Fechar formulário"><X size={18} /></button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -537,9 +532,24 @@ const ZernioTemplatesCard = () => {
   const [editingTemplate, setEditingTemplate] = useState(null);
   const draftStorageKey = profile?.id ? `sga-zernio-template-draft-${profile.id}` : null;
 
+  // O formulário abre como popup: trava o scroll da página e permite fechar
+  // com Esc ou clicando fora, como os demais modais do SGA.
   useEffect(() => {
-    if (hasSavedDraft(draftStorageKey)) setShowForm(true);
-  }, [draftStorageKey]);
+    if (!showForm) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' && !busy) {
+        setShowForm(false);
+        setEditingTemplate(null);
+      }
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [showForm, busy]);
 
   const invoke = useCallback(async (action, payload = {}) => {
     const { data, error } = await supabase.functions.invoke('zernio-whatsapp', { body: { action, ...payload } });
@@ -717,8 +727,8 @@ const ZernioTemplatesCard = () => {
     saveChargeSequence(next.map((item) => item.template.id));
   };
 
-  const cancelTemplate = () => {
-    if (!editingTemplate && draftStorageKey) {
+  const closeTemplateForm = ({ discardDraft = false } = {}) => {
+    if (discardDraft && !editingTemplate && draftStorageKey) {
       try { sessionStorage.removeItem(draftStorageKey); } catch {}
     }
     setShowForm(false);
@@ -750,18 +760,43 @@ const ZernioTemplatesCard = () => {
         </div>
         <div className="flex shrink-0 gap-2">
           <button type="button" onClick={() => refresh(true)} disabled={busy} className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 text-xs font-semibold flex items-center gap-2"><RefreshCw size={15} className={busy ? 'animate-spin' : ''} />Atualizar</button>
-          {!showForm && <button type="button" onClick={() => { setEditingTemplate(null); setErrorMessage(''); setNotice(''); setShowForm(true); }} className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-2"><Plus size={15} />Novo Template</button>}
+          <button type="button" onClick={() => { setEditingTemplate(null); setErrorMessage(''); setNotice(''); setShowForm(true); }} className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-2"><Plus size={15} />Novo Template</button>
         </div>
       </div>
 
-      {showForm && <div className="rounded-xl border border-slate-800 bg-slate-950/30 p-4 md:p-5"><TemplateForm key={editingTemplate ? `edit-${editingTemplate.id}` : 'create'} busy={busy} storageKey={editingTemplate ? null : draftStorageKey} initialDraft={editingTemplate ? draftFromTemplate(editingTemplate) : null} editing={Boolean(editingTemplate)} status={editingTemplate ? String(editingTemplate.status || '').toUpperCase() : ''} onCancel={cancelTemplate} onSubmit={saveTemplate} /></div>}
+      {showForm && (
+        <div
+          className="fixed inset-0 z-50 overflow-y-auto bg-black/70 p-4 sm:p-6"
+          role="presentation"
+          onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) closeTemplateForm(); }}
+        >
+          <div
+            className="mx-auto flex min-h-full max-w-6xl items-center justify-center"
+            onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) closeTemplateForm(); }}
+          >
+            <div className="w-full rounded-2xl border border-slate-700 bg-slate-950 p-4 shadow-2xl md:p-6">
+              <TemplateForm
+                key={editingTemplate ? `edit-${editingTemplate.id}` : 'create'}
+                busy={busy}
+                storageKey={editingTemplate ? null : draftStorageKey}
+                initialDraft={editingTemplate ? draftFromTemplate(editingTemplate) : null}
+                editing={Boolean(editingTemplate)}
+                status={editingTemplate ? String(editingTemplate.status || '').toUpperCase() : ''}
+                onClose={() => closeTemplateForm()}
+                onCancel={() => closeTemplateForm({ discardDraft: true })}
+                onSubmit={saveTemplate}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
-      {!showForm && <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 space-y-2">
+      <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 space-y-2">
         <h3 className="text-xs font-bold uppercase tracking-wide text-slate-300">Como funcionam os templates</h3>
         <p className="text-xs text-slate-400">Adicione vários templates aprovados aos lembretes, ordene a sequência e associe as variáveis aos dados do SGA. A sequência se repete até o pagamento ou a expiração do PIX.</p>
-      </div>}
+      </div>
 
-      {!showForm && <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4">
+      <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4">
         <div className="mb-3 flex items-center justify-between gap-3"><div><h3 className="text-xs font-bold uppercase tracking-wide text-indigo-200">Sequência de lembretes</h3><p className="mt-1 text-[11px] text-slate-400">Cada novo lembrete usa o próximo modelo. Depois do último, a sequência recomeça.</p></div><span className="rounded-full bg-indigo-500/10 px-2 py-1 text-[10px] font-bold text-indigo-200">{chargeSequence.length} selecionado(s)</span></div>
         {chargeSequence.length ? <ol className="space-y-2">{chargeSequence.map(({ template }, index) => <li key={template.id} className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/70 p-2.5">
           <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-indigo-500/15 text-xs font-black text-indigo-200">{index + 1}</span>
@@ -770,7 +805,7 @@ const ZernioTemplatesCard = () => {
           <button type="button" disabled={busy || index === chargeSequence.length - 1} onClick={() => moveChargeTemplate(index, 1)} className="rounded p-1.5 text-slate-400 hover:bg-slate-800 disabled:opacity-30" title="Mover para baixo" aria-label={`Mover ${template.name} para baixo`}><ArrowDown size={14} /></button>
           <button type="button" disabled={busy} onClick={() => saveChargeSequence(chargeSequence.filter((item) => item.template.id !== template.id).map((item) => item.template.id))} className="rounded p-1.5 text-red-300 hover:bg-red-500/10 disabled:opacity-30" title="Remover da sequência" aria-label={`Remover ${template.name} da sequência`}><Trash2 size={14} /></button>
         </li>)}</ol> : <p className="rounded-lg border border-dashed border-slate-700 px-3 py-4 text-center text-xs text-slate-500">Adicione templates aprovados usando o botão “Usar em lembretes”.</p>}
-      </div>}
+      </div>
 
       {visibleTemplates.length > 0 ? <div className="space-y-2">
         {visibleTemplates.map((template) => {

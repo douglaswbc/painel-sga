@@ -456,7 +456,7 @@ Permitir que o locador use a API oficial da Meta (WhatsApp Cloud API) no lugar d
 - [x] Extrair as validacoes de componentes de `create_template` para `validateTemplateComponents` (regras unicas para criar e editar) e normalizar os tipos em maiusculas com `normalizeTemplateComponents`.
 - [x] Criar a acao `update_template` em `zernio-whatsapp` (somente Meta): aceita categoria e componentes completos, valida status `APPROVED`/`REJECTED`/`PAUSED`, bloqueia troca de categoria em template aprovado, envia `POST /{template_id}` via `editMessageTemplate` e sincroniza a lista.
 - [x] Remover mapeamentos de variaveis desatualizados quando o numero de variaveis muda, avisando o locador para selecionar o template novamente.
-- [x] Transformar o formulario de template em editor: abre preenchido (`draftFromTemplate`), mantem nome/idioma bloqueados, desabilita a categoria de template aprovado, nao sobrescreve o rascunho de criacao e envia para analise.
+- [x] Transformar o formulario de template em editor: abre preenchido (`draftFromTemplate`), mantem nome/idioma bloqueados, desabilita a categoria de template aprovado, nao sobrescreve o rascunho de criacao e envia para analise.\n- [x] Exibir o formulario de criar/editar como popup sobre a lista (fecha com Esc, X ou clique fora, trava o scroll da pagina e preserva o rascunho ao fechar).
 - [x] Liberar `update_template` para chamadas de servico com `ownerId`, no mesmo caminho do `send_charge`.
 - [x] Atualizar a secao 12 de `docs/INTEGRACAO_META_WHATSAPP.md` com o fluxo de edicao completa e os limites da Meta.
 
