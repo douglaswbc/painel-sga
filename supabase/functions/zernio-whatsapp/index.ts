@@ -1557,9 +1557,24 @@ Deno.serve(async (req) => {
       }).eq('id', delivery.id).eq('status', 'sending');
       if (finishError) throw new Error('A Zernio enviou a mensagem, mas o SGA não conseguiu concluir a auditoria. Atualize a tela antes de tentar novamente.');
       claimedDeliveryId = null;
-      const nextReminderAt = new Date(new Date(sentAt).getTime() + Number(charge.reminder_interval_minutes || 30) * 60000);
-      const nextReminder = nextReminderAt.getTime() < new Date(pixExpiresAt).getTime()
-        ? nextReminderAt.toISOString() : null;
+      let nextReminderDate = new Date(new Date(sentAt).getTime() + Number(charge.reminder_interval_minutes || 30) * 60000);
+
+      const { data: colliding } = await admin.from('cobrancas')
+        .select('id, next_reminder_at')
+        .eq('id_usuario', user.id)
+        .neq('id', charge.id)
+        .in('status', ['pendente', 'atrasado'])
+        .neq('tipo', 'despesa')
+        .gte('next_reminder_at', new Date(nextReminderDate.getTime() - 45000).toISOString())
+        .lte('next_reminder_at', new Date(nextReminderDate.getTime() + 45000).toISOString())
+        .limit(1)
+        .maybeSingle();
+
+      if (colliding?.next_reminder_at) {
+        nextReminderDate = new Date(nextReminderDate.getTime() + 60000);
+      }
+      const nextReminder = nextReminderDate.getTime() < new Date(pixExpiresAt).getTime()
+        ? nextReminderDate.toISOString() : null;
       const { error: scheduleError } = await admin.from('cobrancas').update({
         tentativas_envio: reminderSequence, ultimo_lembrete_at: sentAt, next_reminder_at: nextReminder,
         pix_expires_at: pixExpiresAt,

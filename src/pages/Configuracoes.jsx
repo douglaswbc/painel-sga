@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Cloud, Key, Loader2, MessageCircle, Save, Settings, User } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { useAuth } from '../contexts/AuthContext';
@@ -21,7 +21,13 @@ export default function Configuracoes() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [secretsLoaded, setSecretsLoaded] = useState(false);
-  const [formData, setFormData] = useState({ nome_completo: '', whatsapp: '', access_token_mercado_pago: '' });
+  const [formData, setFormData] = useState({
+    nome_completo: '',
+    whatsapp: '',
+    access_token_mercado_pago: '',
+    reminder_stagger_minutes: 2,
+    reminder_dispatch_delay_seconds: 5,
+  });
 
   const isLandlord = profile?.role === 'locador';
 
@@ -31,6 +37,8 @@ export default function Configuracoes() {
       ...current,
       nome_completo: profile.nome_completo || '',
       whatsapp: profile.whatsapp || '',
+      reminder_stagger_minutes: profile.reminder_stagger_minutes ?? 2,
+      reminder_dispatch_delay_seconds: profile.reminder_dispatch_delay_seconds ?? 5,
     }));
   }, [profile]);
 
@@ -68,7 +76,12 @@ export default function Configuracoes() {
     event.preventDefault();
     setSaving(true);
     try {
-      await usuariosService.update(user.id, { nome_completo: formData.nome_completo, whatsapp: formData.whatsapp });
+      await usuariosService.update(user.id, {
+        nome_completo: formData.nome_completo,
+        whatsapp: formData.whatsapp,
+        reminder_stagger_minutes: Math.max(0, Math.min(60, Number(formData.reminder_stagger_minutes) || 2)),
+        reminder_dispatch_delay_seconds: Math.max(0, Math.min(30, Number(formData.reminder_dispatch_delay_seconds) || 5)),
+      });
       if (formData.access_token_mercado_pago) {
         const { data, error } = await supabase.functions.invoke('save-secret', { body: { secretType: 'mp_token', value: formData.access_token_mercado_pago } });
         if (error) throw error;
@@ -145,6 +158,42 @@ export default function Configuracoes() {
             </label>
             {loading && <p className="mt-2 text-[11px] text-slate-600">Carregando o token salvo…</p>}
             <p className="mt-2 text-[11px] text-slate-600">A chave do Zernio ou o token da Meta são configurados nas abas anteriores e nunca são exibidos depois de salvos.</p>
+            {isLandlord && (
+              <div className="mt-6 border-t border-slate-700/60 pt-6">
+                <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">
+                  Cadência e Intervalo de Envios (WhatsApp)
+                </h3>
+                <p className="mb-4 text-xs text-slate-500">
+                  Evita o disparo simultâneo quando você possui múltiplos contratos com cobrança no mesmo horário.
+                </p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="text-xs text-slate-500">
+                    Intervalo entre contratos (minutos)
+                    <input
+                      type="number"
+                      min="0"
+                      max="60"
+                      className="mt-1 w-full rounded-lg border border-slate-600 bg-input px-4 py-2 text-sm text-white outline-none focus:border-accent"
+                      value={formData.reminder_stagger_minutes}
+                      onChange={(e) => setFormData({ ...formData, reminder_stagger_minutes: e.target.value })}
+                    />
+                    <span className="mt-1 block text-[10px] text-slate-500">Ex.: Com 2 min, o 1º contrato sai às 20:00, o 2º às 20:02, o 3º às 20:04...</span>
+                  </label>
+                  <label className="text-xs text-slate-500">
+                    Pausa de segurança entre disparos (segundos)
+                    <input
+                      type="number"
+                      min="0"
+                      max="30"
+                      className="mt-1 w-full rounded-lg border border-slate-600 bg-input px-4 py-2 text-sm text-white outline-none focus:border-accent"
+                      value={formData.reminder_dispatch_delay_seconds}
+                      onChange={(e) => setFormData({ ...formData, reminder_dispatch_delay_seconds: e.target.value })}
+                    />
+                    <span className="mt-1 block text-[10px] text-slate-500">Pausa técnica no servidor entre mensagens na mesma rodada (padrão: 5s).</span>
+                  </label>
+                </div>
+              </div>
+            )}
           </section>
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4">
             <button type="button" onClick={resetPassword} className="flex items-center gap-2 text-sm text-slate-400 hover:text-white"><Key size={16} /> Alterar minha senha</button>

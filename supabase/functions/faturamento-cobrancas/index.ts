@@ -46,7 +46,7 @@ Deno.serve(async (req) => {
             .from('contratos')
             .select(`
                 id, id_usuario, valor, recorrencia, proxima_cobranca, ocorrencias_realizadas,
-                usuarios!inner ( id ),
+                usuarios!inner ( id, reminder_stagger_minutes ),
                 locatarios!inner ( nome_completo, email, cpf )
             `)
             .eq('status', 'ativo')
@@ -67,6 +67,7 @@ Deno.serve(async (req) => {
         }
 
         const results: { id: string; status: string; msg?: string }[] = []
+        const landlordScheduledReminder = new Map<string, Date>()
 
         for (const contrato of contratos) {
             try {
@@ -106,7 +107,33 @@ Deno.serve(async (req) => {
 
                 const createdAt = new Date()
                 const expirationDate = new Date(createdAt.getTime() + (config.expiracao || 4) * 60 * 60 * 1000)
-                const firstReminderAt = reminderStartAt(createdAt, config.horario_cobranca || '20:00', expirationDate)
+                const staggerIntervalMinutes = Number(contrato.usuarios?.reminder_stagger_minutes ?? 2)
+                let firstReminderAt = reminderStartAt(createdAt, config.horario_cobranca || '20:00', expirationDate)
+
+                if (!landlordScheduledReminder.has(contrato.id_usuario)) {
+                    const { data: latestPending } = await supabase
+                        .from('cobrancas')
+                        .select('next_reminder_at')
+                        .eq('id_usuario', contrato.id_usuario)
+                        .in('status', ['pendente', 'atrasado'])
+                        .neq('tipo', 'despesa')
+                        .gt('next_reminder_at', createdAt.toISOString())
+                        .order('next_reminder_at', { ascending: false })
+                        .limit(1)
+                        .maybeSingle()
+                    if (latestPending?.next_reminder_at) {
+                        landlordScheduledReminder.set(contrato.id_usuario, new Date(latestPending.next_reminder_at))
+                    }
+                }
+
+                const lastScheduled = landlordScheduledReminder.get(contrato.id_usuario)
+                if (lastScheduled) {
+                    const candidate = new Date(lastScheduled.getTime() + Math.max(1, staggerIntervalMinutes) * 60000)
+                    if (candidate.getTime() < expirationDate.getTime()) {
+                        firstReminderAt = candidate
+                    }
+                }
+                landlordScheduledReminder.set(contrato.id_usuario, firstReminderAt)
 
                 const mpPayload = {
                     description: `Aluguel: ${locatarioNome}`,

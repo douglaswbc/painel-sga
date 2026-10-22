@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
     .lte('next_reminder_at', nowIso)
     .gt('pix_expires_at', nowIso)
     .order('next_reminder_at')
-    .limit(100);
+    .limit(15);
   if (error) {
     console.error('Could not load due charges:', error.message);
     return json({ error: 'Could not load due charges.' }, 500);
@@ -59,8 +59,21 @@ Deno.serve(async (req) => {
     return json({ processed: 0, results: [], waitingForInterval: waitingCount || 0, missingReminderSchedule: unscheduledCount || 0 });
   }
 
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const ownerIds = [...new Set(charges.map((c) => c.id_usuario))];
+  const { data: owners } = await admin.from('usuarios').select('id, reminder_dispatch_delay_seconds').in('id', ownerIds);
+  const ownerDelayMap = new Map((owners || []).map((o: { id: string; reminder_dispatch_delay_seconds?: number }) => [o.id, Number(o.reminder_dispatch_delay_seconds ?? 5)]));
+
   const results: Result[] = [];
-  for (const charge of charges) {
+  for (let i = 0; i < charges.length; i++) {
+    const charge = charges[i];
+    if (i > 0) {
+      const delaySec = ownerDelayMap.get(charge.id_usuario) ?? 5;
+      if (delaySec > 0) {
+        const jitterMs = Math.floor(Math.random() * 1500);
+        await sleep(delaySec * 1000 + jitterMs);
+      }
+    }
     try {
       const response = await fetch(`${supabaseUrl}/functions/v1/zernio-whatsapp`, {
         method: 'POST',
