@@ -183,6 +183,16 @@ const readSavedDraft = (storageKey) => {
   } catch { return initialDraft(); }
 };
 
+// A Meta aceita apenas letras minusculas, numeros e "_" no nome do template.
+// Normaliza enquanto o usuario digita: espacos viram "_", acentos sao removidos
+// e qualquer outro caractere invalido tambem vira "_".
+const normalizeTemplateName = (value) => String(value ?? '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '_')
+  .replace(/^[^a-z]+/, '');
+
 function Counter({ value, limit }) {
   const overLimit = value.length > limit;
   return <span className={`text-[10px] tabular-nums ${overLimit ? 'text-red-400' : 'text-slate-500'}`}>{value.length} / {limit}</span>;
@@ -232,7 +242,10 @@ function TemplateAssociationPreview({ template }) {
 }
 
 function TemplateForm({ busy, storageKey, initialDraft: providedDraft, editing = false, status = '', onClose, onCancel, onSubmit }) {
-  const [draft, setDraft] = useState(() => providedDraft || readSavedDraft(storageKey));
+  const [draft, setDraft] = useState(() => {
+    const base = providedDraft || readSavedDraft(storageKey);
+    return editing ? base : { ...base, name: normalizeTemplateName(base.name) };
+  });
   const [attempted, setAttempted] = useState(false);
   const variables = useMemo(() => getVariables(draft.body), [draft.body]);
 
@@ -382,8 +395,8 @@ function TemplateForm({ busy, storageKey, initialDraft: providedDraft, editing =
           </div>
           <div>
             <FieldLabel htmlFor="template-name" right={<Counter value={draft.name} limit={512} />}>Nome do modelo *</FieldLabel>
-            <input id="template-name" value={draft.name} onChange={(event) => update('name', event.target.value)} disabled={editing} className={`${inputClass(Boolean(errors.name))} font-mono disabled:opacity-60`} autoComplete="off" />
-            {editing && <p className="mt-1 text-[11px] text-slate-500">O nome não pode ser alterado depois da criação.</p>}
+            <input id="template-name" value={draft.name} onChange={(event) => update('name', normalizeTemplateName(event.target.value))} disabled={editing} placeholder="ex: aviso_boleto_05" className={`${inputClass(Boolean(errors.name))} font-mono disabled:opacity-60`} autoComplete="off" spellCheck={false} />
+            <p className="mt-1 text-[11px] text-slate-500">{editing ? 'O nome não pode ser alterado depois da criação.' : 'Somente letras minúsculas, números e _. Espaços e acentos são convertidos automaticamente.'}</p>
             {shownError('name')}
           </div>
           <div>
