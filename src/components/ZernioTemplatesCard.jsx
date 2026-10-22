@@ -37,12 +37,17 @@ const languages = [
 // Keep Brazilian Portuguese as the initial option even though the list is alphabetized.
 const orderedLanguages = [languages.find(([code]) => code === 'pt_BR'), ...languages.filter(([code]) => code !== 'pt_BR')];
 
+// Link curto de pagamento usado como sugestao no botao de site. A Meta recebe
+// a variavel no fim e o SGA troca pelo codigo da cobranca em cada envio.
+const DEFAULT_PAYMENT_URL = 'https://sga.emoveentregas.com/pagar/{{1}}';
+const DEFAULT_PAYMENT_EXAMPLE = '00000000-0000-4000-8000-000000000000';
+
 const initialDraft = () => ({
   name: '', category: 'UTILITY', language: 'pt_BR',
   headerType: 'none', headerText: '', headerFormat: 'IMAGE', headerHandle: '',
   body: '', examples: {}, footer: '', buttonMode: 'none',
   quickReplies: [''], ctaTypes: [], phoneLabel: '', countryCode: '+55', phoneNumber: '',
-  websiteLabel: '', websiteMode: 'static', websiteUrl: '', websiteExample: '',
+  websiteLabel: '', websiteMode: 'dynamic', websiteUrl: DEFAULT_PAYMENT_URL, websiteExample: DEFAULT_PAYMENT_EXAMPLE,
 });
 
 const getVariables = (text) => [...new Set([...text.matchAll(/\{\{(\d+)\}\}/g)].map((match) => Number(match[1])))].sort((a, b) => a - b);
@@ -260,12 +265,26 @@ function TemplateForm({ busy, storageKey, initialDraft: providedDraft, editing =
     ...current,
     quickReplies: current.quickReplies.map((reply, replyIndex) => replyIndex === index ? value : reply),
   }));
-  const toggleCtaType = (type) => setDraft((current) => ({
-    ...current,
-    ctaTypes: current.ctaTypes.includes(type)
-      ? current.ctaTypes.filter((item) => item !== type)
-      : [...current.ctaTypes, type],
-  }));
+  const toggleCtaType = (type) => setDraft((current) => {
+    const enabled = !current.ctaTypes.includes(type);
+    const next = {
+      ...current,
+      ctaTypes: enabled ? [...current.ctaTypes, type] : current.ctaTypes.filter((item) => item !== type),
+    };
+    if (type === 'website' && enabled && !current.websiteUrl.trim()) {
+      next.websiteMode = 'dynamic';
+      next.websiteUrl = DEFAULT_PAYMENT_URL;
+      next.websiteExample = current.websiteExample || DEFAULT_PAYMENT_EXAMPLE;
+    }
+    return next;
+  });
+
+  const changeWebsiteMode = (mode) => setDraft((current) => {
+    let url = current.websiteUrl.trim();
+    if (mode === 'static' && url.endsWith('{{1}}')) url = url.slice(0, -5);
+    if (mode === 'dynamic' && url && !/\{\{\d+\}\}/.test(url)) url = `${url}{{1}}`;
+    return { ...current, websiteMode: mode, websiteUrl: url };
+  });
 
   const errors = useMemo(() => {
     const result = {};
@@ -486,10 +505,24 @@ function TemplateForm({ busy, storageKey, initialDraft: providedDraft, editing =
               <div><FieldLabel htmlFor="cta-phone-number">Número</FieldLabel><input id="cta-phone-number" value={draft.phoneNumber} onChange={(event) => update('phoneNumber', event.target.value.replace(/\D/g, ''))} className={inputClass(Boolean(errors.phoneNumber))} placeholder="11999998888" />{shownError('phoneNumber')}</div>
             </div>}
             {draft.ctaTypes.includes('website') && <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-lg border border-slate-800 p-3">
-              <div><FieldLabel htmlFor="cta-site-label" right={<Counter value={draft.websiteLabel} limit={25} />}>Texto do botão</FieldLabel><input id="cta-site-label" value={draft.websiteLabel} onChange={(event) => update('websiteLabel', event.target.value)} className={inputClass(Boolean(errors.websiteLabel))} />{shownError('websiteLabel')}</div>
-              <div><FieldLabel htmlFor="cta-site-mode">Tipo de URL</FieldLabel><select id="cta-site-mode" value={draft.websiteMode} onChange={(event) => update('websiteMode', event.target.value)} className={inputClass()}><option value="static">Estática</option><option value="dynamic">Dinâmica</option></select></div>
-              <div className="md:col-span-2"><FieldLabel htmlFor="cta-site-url" right={<Counter value={draft.websiteUrl} limit={2000} />}>URL do site</FieldLabel><input id="cta-site-url" value={draft.websiteUrl} onChange={(event) => update('websiteUrl', event.target.value)} className={inputClass(Boolean(errors.websiteUrl))} placeholder={draft.websiteMode === 'dynamic' ? 'https://exemplo.com/pedido/{{1}}' : 'https://exemplo.com'} />{shownError('websiteUrl')}</div>
-              {draft.websiteMode === 'dynamic' && <div className="md:col-span-2"><FieldLabel htmlFor="cta-site-example">Exemplo do trecho dinâmico</FieldLabel><input id="cta-site-example" value={draft.websiteExample} onChange={(event) => update('websiteExample', event.target.value)} className={inputClass(Boolean(errors.websiteExample))} placeholder="pedido-123" />{shownError('websiteExample')}</div>}
+              <div><FieldLabel htmlFor="cta-site-label" right={<Counter value={draft.websiteLabel} limit={25} />}>Texto do botão</FieldLabel><input id="cta-site-label" value={draft.websiteLabel} onChange={(event) => update('websiteLabel', event.target.value)} className={inputClass(Boolean(errors.websiteLabel))} placeholder="Pagar com PIX" />{shownError('websiteLabel')}</div>
+              <div><FieldLabel htmlFor="cta-site-mode">Tipo de URL</FieldLabel><select id="cta-site-mode" value={draft.websiteMode} onChange={(event) => changeWebsiteMode(event.target.value)} className={inputClass()}><option value="static">Estática</option><option value="dynamic">Dinâmica</option></select></div>
+              <div className="md:col-span-2">
+                <FieldLabel htmlFor="cta-site-url" right={<Counter value={draft.websiteUrl} limit={2000} />}>URL do site</FieldLabel>
+                <input id="cta-site-url" value={draft.websiteUrl} onChange={(event) => update('websiteUrl', event.target.value)} className={`${inputClass(Boolean(errors.websiteUrl))} font-mono text-xs`} placeholder={draft.websiteMode === 'dynamic' ? DEFAULT_PAYMENT_URL : 'https://exemplo.com'} spellCheck={false} />
+                {draft.websiteMode === 'dynamic'
+                  ? <p className="mt-1 text-[11px] text-slate-500">A variável <span className="rounded bg-indigo-500/20 px-1 font-mono font-bold text-indigo-200">{'{{1}}'}</span> é trocada pelo código do link em cada envio. No link de pagamento, é o código da cobrança.</p>
+                  : <p className="mt-1 text-[11px] text-slate-500">Endereço fixo, igual para todos os envios.</p>}
+                {draft.websiteUrl.trim() !== DEFAULT_PAYMENT_URL && <button type="button" onClick={() => { update('websiteUrl', DEFAULT_PAYMENT_URL); update('websiteMode', 'dynamic'); }} className="mt-1 text-[11px] font-semibold text-indigo-300 hover:text-indigo-200">Usar URL de pagamento padrão</button>}
+                {shownError('websiteUrl')}
+              </div>
+              {draft.websiteMode === 'dynamic' && <div className="md:col-span-2">
+                <FieldLabel htmlFor="cta-site-example">Exemplo do trecho dinâmico</FieldLabel>
+                <input id="cta-site-example" value={draft.websiteExample} onChange={(event) => update('websiteExample', event.target.value)} className={`${inputClass(Boolean(errors.websiteExample))} font-mono text-xs`} placeholder={DEFAULT_PAYMENT_EXAMPLE} spellCheck={false} />
+                <p className="mt-1 text-[11px] text-slate-500">Informe só o trecho que substitui <span className="font-mono">{'{{1}}'}</span>, não a URL inteira. A Meta usa esse valor apenas na revisão.</p>
+                {draft.websiteUrl.includes('{{1}}') && draft.websiteExample.trim() && <p className="mt-1 break-all rounded-lg border border-slate-800 bg-slate-900/60 p-2 font-mono text-[10px] text-slate-400">Exemplo do botão: {draft.websiteUrl.replace('{{1}}', draft.websiteExample.trim())}</p>}
+                {shownError('websiteExample')}
+              </div>}
             </div>}
             {shownError('cta')}
           </div>}
