@@ -26,7 +26,8 @@ export const locatariosService = {
       .from('locatarios_safe')
       .select('id, nome_completo')
       .eq('id_usuario', userId)
-      .eq('ativo', ativo);
+      .eq('ativo', ativo)
+      .order('nome_completo', { ascending: true });
     if (error) throw error;
     return data;
   },

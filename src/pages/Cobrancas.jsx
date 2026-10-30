@@ -40,6 +40,7 @@ const Cobrancas = () => {
   const [showManualModal, setShowManualModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('todos');
+  const [sortOrder, setSortOrder] = useState('pendente_desc');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
 
@@ -146,7 +147,9 @@ const Cobrancas = () => {
     setSelectedContrato(null);
     try {
       const all = await contratosService.list(profile.id);
-      setContratosAtivos(all.filter(c => c.status === 'ativo'));
+      const ativos = (all || []).filter(c => c.status === 'ativo');
+      ativos.sort((a, b) => (a.locatarios?.nome_completo || '').localeCompare(b.locatarios?.nome_completo || '', 'pt-BR'));
+      setContratosAtivos(ativos);
     } catch { toast.error('Erro ao carregar contratos'); }
   };
 
@@ -255,8 +258,20 @@ const Cobrancas = () => {
       else if (c.status !== 'cancelado') acc[locId].totalPendente += val;
       return acc;
     }, {});
-    return Object.values(groups).sort((a, b) => b.totalPendente - a.totalPendente);
-  }, [filteredData]);
+    return Object.values(groups).sort((a, b) => {
+      if (sortOrder === 'nome_asc') {
+        return (a.nome || '').localeCompare(b.nome || '', 'pt-BR');
+      }
+      if (sortOrder === 'nome_desc') {
+        return (b.nome || '').localeCompare(a.nome || '', 'pt-BR');
+      }
+      return b.totalPendente - a.totalPendente;
+    });
+  }, [filteredData, sortOrder]);
+
+  const sortedLocatarios = useMemo(() => {
+    return [...locatarios].sort((a, b) => (a.nome_completo || '').localeCompare(b.nome_completo || '', 'pt-BR'));
+  }, [locatarios]);
 
   const summary = useMemo(() => {
     return filteredData.reduce((acc, c) => {
@@ -273,7 +288,7 @@ const Cobrancas = () => {
   const startIndex = (currentPage - 1) * itemsPerPage;
   const currentGroups = groupedData.slice(startIndex, startIndex + itemsPerPage);
 
-  useEffect(() => { setCurrentPage(1); setInnerPages({}); }, [searchTerm, filterStatus, startDate, endDate]);
+  useEffect(() => { setCurrentPage(1); setInnerPages({}); }, [searchTerm, filterStatus, startDate, endDate, sortOrder]);
 
   const handleExportCSV = () => {
     const headers = ["Locatário", "Placa", "Vencimento", "Categoria", "Valor", "Status"];
@@ -320,12 +335,23 @@ const Cobrancas = () => {
         <div className="h-8 w-[1px] bg-slate-800 mx-2 hidden md:block" />
 
         <select className="bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-zinc-400 text-xs font-bold outline-none cursor-pointer" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-          <option value="todos">Status</option>
+          <option value="todos">Status: Todos</option>
           <option value="pendente">Pendentes</option>
           <option value="pago">Pagos</option>
           <option value="atrasado">Atrasados</option>
           <option value="cancelado">Cancelados</option>
           <option value="despesa">Despesas</option>
+        </select>
+
+        <select
+          className="bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-zinc-400 text-xs font-bold outline-none cursor-pointer"
+          value={sortOrder}
+          onChange={e => setSortOrder(e.target.value)}
+          aria-label="Ordem de exibição"
+        >
+          <option value="pendente_desc">Ordenar: Maior Pendência</option>
+          <option value="nome_asc">Ordenar: Locatário (A-Z)</option>
+          <option value="nome_desc">Ordenar: Locatário (Z-A)</option>
         </select>
       </div>
 
@@ -480,7 +506,7 @@ const Cobrancas = () => {
                 <select required className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-4 text-white text-sm outline-none focus:border-indigo-500"
                   value={manualData.id_locatario} onChange={e => setManualData({ ...manualData, id_locatario: e.target.value })}>
                   <option value="">Selecione o locatário...</option>
-                  {locatarios.map(l => <option key={l.id} value={l.id}>{l.nome_completo}</option>)}
+                  {sortedLocatarios.map(l => <option key={l.id} value={l.id}>{l.nome_completo}</option>)}
                 </select>
               </div>
             )}

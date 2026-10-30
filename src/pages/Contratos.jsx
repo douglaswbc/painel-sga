@@ -41,13 +41,20 @@ const Contratos = () => {
   const [formData, setFormData] = useState(defaultForm);
   const [showCustomRecurrence, setShowCustomRecurrence] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [sortOrder, setSortOrder] = useState('recentes');
 
   const availableVehicles = useMemo(() => {
     const occupiedIds = contracts
       .filter(c => c.status === 'ativo' && (!editingContract || c.id !== editingContract.id))
       .map(c => c.id_veiculo);
-    return veiculos.filter(v => !occupiedIds.includes(v.id));
+    return veiculos
+      .filter(v => !occupiedIds.includes(v.id))
+      .sort((a, b) => (a.placa || '').localeCompare(b.placa || '', 'pt-BR'));
   }, [veiculos, contracts, editingContract]);
+
+  const sortedLocatarios = useMemo(() => {
+    return [...locatarios].sort((a, b) => (a.nome_completo || '').localeCompare(b.nome_completo || '', 'pt-BR'));
+  }, [locatarios]);
 
   const summary = useMemo(() => contractSummary(formData), [formData]);
 
@@ -158,10 +165,25 @@ const Contratos = () => {
     remove(id);
   };
 
-  const filtered = contracts.filter(c =>
-    c.locatarios?.nome_completo?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    c.veiculos?.placa?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filtered = useMemo(() => {
+    const list = contracts.filter(c =>
+      (c.locatarios?.nome_completo || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (c.veiculos?.placa || '').toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    return list.sort((a, b) => {
+      if (sortOrder === 'locatario_asc') {
+        return (a.locatarios?.nome_completo || '').localeCompare(b.locatarios?.nome_completo || '', 'pt-BR');
+      }
+      if (sortOrder === 'locatario_desc') {
+        return (b.locatarios?.nome_completo || '').localeCompare(a.locatarios?.nome_completo || '', 'pt-BR');
+      }
+      if (sortOrder === 'veiculo_asc') {
+        return (a.veiculos?.placa || '').localeCompare(b.veiculos?.placa || '', 'pt-BR');
+      }
+      return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    });
+  }, [contracts, searchTerm, sortOrder]);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -173,12 +195,26 @@ const Contratos = () => {
         }
       />
 
-      <SearchInput
-        value={searchTerm}
-        onChange={setSearchTerm}
-        placeholder="Buscar por locatário ou placa..."
-        className="max-w-sm"
-      />
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <SearchInput
+          value={searchTerm}
+          onChange={setSearchTerm}
+          placeholder="Buscar por locatário ou placa..."
+          className="max-w-sm"
+        />
+
+        <select
+          value={sortOrder}
+          onChange={(e) => setSortOrder(e.target.value)}
+          className="rounded-full border border-black/15 bg-white px-4 py-2 text-xs sm:text-sm text-[#1d1d1f] outline-none cursor-pointer focus:border-[#0066cc]"
+          aria-label="Ordenar contratos"
+        >
+          <option value="recentes">Mais recentes</option>
+          <option value="locatario_asc">Locatário (A-Z)</option>
+          <option value="locatario_desc">Locatário (Z-A)</option>
+          <option value="veiculo_asc">Veículo / Placa (A-Z)</option>
+        </select>
+      </div>
 
       <Table>
         <Thead>
@@ -291,7 +327,7 @@ const Contratos = () => {
                 <Select icon={User} label="Locatário (Cliente)" value={formData.id_locatario || ''}
                   onChange={e => setFormData({...formData, id_locatario: e.target.value})}>
                   <option value="">Selecione um locatário...</option>
-                  {locatarios.map(l => <option key={l.id} value={l.id}>{l.nome_completo}</option>)}
+                  {sortedLocatarios.map(l => <option key={l.id} value={l.id}>{l.nome_completo}</option>)}
                 </Select>
                 <Select icon={Car} label="Veículo" value={formData.id_veiculo || ''}
                   onChange={e => setFormData({...formData, id_veiculo: e.target.value})}

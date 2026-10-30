@@ -108,7 +108,12 @@ export default function ZernioOperationsCard() {
     setLoading(false);
   }, [period, activityPage, searchTerm]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      load();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [load]);
 
   const copyCallbackUrl = async () => {
     if (!callbackUrl) return;

@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2, MessageSquare, Search, Send, X } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { supabase } from '../services/supabase';
@@ -48,7 +48,11 @@ export default function MessageSelectorModal({ isOpen, onClose, locatario }) {
   const usableTemplates = useMemo(() => templates.filter((template) => template.status === 'APPROVED' && template.purpose === 'general' &&
     !(template.components || []).some((component) => String(component.type).toUpperCase() === 'HEADER' && String(component.format).toUpperCase() !== 'TEXT')), [templates]);
   const selectedParams = useMemo(() => getParams(selectedTemplate), [selectedTemplate]);
-  const filteredTemplates = usableTemplates.filter((template) => `${template.name} ${template.language}`.toLowerCase().includes(searchTerm.toLowerCase()));
+  const filteredTemplates = useMemo(() => {
+    return usableTemplates
+      .filter((template) => `${template.name} ${template.language}`.toLowerCase().includes(searchTerm.toLowerCase()))
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR'));
+  }, [usableTemplates, searchTerm]);
 
   useEffect(() => setParams(selectedParams.map(() => '')), [selectedTemplate?.id]);
 

@@ -48,6 +48,7 @@ const Locatarios = () => {
   const [showModal, setShowModal] = useState(false);
   const [editingTenant, setEditingTenant] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [sortOrder, setSortOrder] = useState('nome_asc');
   const [fieldErrors, setFieldErrors] = useState({});
   const [formData, setFormData] = useState({ ...emptyForm });
 
@@ -58,12 +59,22 @@ const Locatarios = () => {
 
   const cepFetching = useRef(false);
 
-  const filteredTenants = useMemo(() =>
-    tenants.filter(t =>
+  const filteredTenants = useMemo(() => {
+    const list = tenants.filter(t =>
       t.nome_completo.toLowerCase().includes(searchTerm.toLowerCase()) ||
       t.cpf?.includes(searchTerm.replace(/\D/g, ''))
-    ), [tenants, searchTerm]
-  );
+    );
+
+    return list.sort((a, b) => {
+      if (sortOrder === 'nome_desc') {
+        return (b.nome_completo || '').localeCompare(a.nome_completo || '', 'pt-BR');
+      }
+      if (sortOrder === 'recentes') {
+        return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+      }
+      return (a.nome_completo || '').localeCompare(b.nome_completo || '', 'pt-BR');
+    });
+  }, [tenants, searchTerm, sortOrder]);
 
   useEffect(() => {
     const cleanCep = formData.cep.replace(/\D/g, '');
@@ -188,8 +199,19 @@ const Locatarios = () => {
       />
 
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl">
-        <div className="p-5 border-b border-zinc-800">
+        <div className="p-5 border-b border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Buscar por nome ou documento..." className="max-w-sm" />
+
+          <select
+            value={sortOrder}
+            onChange={(e) => setSortOrder(e.target.value)}
+            className="rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs font-semibold text-zinc-300 outline-none cursor-pointer focus:border-indigo-500"
+            aria-label="Ordenar locatários"
+          >
+            <option value="nome_asc">Nome: A-Z (Alfabética)</option>
+            <option value="nome_desc">Nome: Z-A</option>
+            <option value="recentes">Mais recentes</option>
+          </select>
         </div>
 
         <Table>

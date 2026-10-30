@@ -16,7 +16,8 @@ export const veiculosService = {
       .from('veiculos')
       .select('id, placa, modelo')
       .eq('id_usuario', userId)
-      .eq('ativo', true);
+      .eq('ativo', true)
+      .order('modelo', { ascending: true });
     if (error) throw error;
     return data;
   },
