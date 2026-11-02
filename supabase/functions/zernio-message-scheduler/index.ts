@@ -3,6 +3,8 @@ import { isServiceRequest } from '../_shared/cron-auth.ts';
 import { decryptSecret } from '../_shared/crypto.ts';
 import { sendMetaTemplateMessage } from '../_shared/meta-messages.ts';
 import { normalizeProvider } from '../_shared/whatsapp-provider.ts';
+import { MetaApiError } from '../_shared/meta-graph.ts';
+import { blockingAlertOwners, classifyMetaError, recordAndNotifyMetaAlert, resolveMetaAlerts } from '../_shared/meta-alerts.ts';
 
 type JsonRecord = Record<string, any>;
 const encoder = new TextEncoder();
@@ -13,9 +15,13 @@ function json(body: JsonRecord, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-function fromBase64(value: string): Uint8Array {
-  const bytes = atob(value);
-  return Uint8Array.from(bytes, (character) => character.charCodeAt(0));
+function fromBase64(value: string): Uint8Array<ArrayBuffer> {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }
 
 async function decryptApiKey(ciphertext: string, ownerId: string): Promise<string> {
@@ -139,11 +145,25 @@ Deno.serve(async (req) => {
   const integrationByOwner = new Map((integrations || []).map((item: JsonRecord) => [item.id_usuario, item]));
   const apiKeys = new Map<string, string>();
   const results: JsonRecord[] = [];
+  let blockedOwners = new Set<string>();
+  try {
+    blockedOwners = await blockingAlertOwners(admin, ownerIds);
+  } catch (error) {
+    console.error('Could not load Meta alerts; recurring sends will continue:', error instanceof Error ? error.message : error);
+  }
 
   for (const schedule of schedules) {
     const template = schedule.zernio_whatsapp_templates;
     const tenant = schedule.locatarios;
     const integration = integrationByOwner.get(schedule.id_usuario) as JsonRecord | undefined;
+    if (normalizeProvider(integration?.provider) === 'meta' && blockedOwners.has(schedule.id_usuario)) {
+      results.push({
+        id: schedule.id,
+        status: 'skipped',
+        error: 'Envios pausados por alerta da Meta. Regularize a conta WhatsApp Business para retomar.',
+      });
+      continue;
+    }
     try {
       if (!template || template.status !== 'APPROVED') {
         const message = 'O template Meta não está aprovado. O agendamento foi pausado.';
@@ -248,9 +268,20 @@ Deno.serve(async (req) => {
         proximo_envio: nextDate, ultimo_erro: null, ultima_execucao: sentAt,
       }).eq('id', schedule.id).eq('id_usuario', schedule.id_usuario);
       if (scheduleUpdateError) throw new Error('A mensagem foi enviada, mas a próxima data não foi atualizada.');
+      if (provider === 'meta') {
+        try {
+          await resolveMetaAlerts(admin, schedule.id_usuario);
+        } catch (error) {
+          console.error('Could not resolve Meta alerts after a scheduled send:', error instanceof Error ? error.message : error);
+        }
+      }
       results.push({ id: schedule.id, status: 'sent', messageId: sent.messageId, nextDate });
     } catch (error) {
       const message = (error instanceof Error ? error.message : String(error)).slice(0, 350);
+      if (error instanceof MetaApiError) {
+        const meta = classifyMetaError(error);
+        if (meta) await recordAndNotifyMetaAlert(admin, schedule.id_usuario, meta);
+      }
       const scheduledTime = String(schedule.horario_envio).slice(0, 8);
       const { data: delivery } = await admin.from('zernio_whatsapp_scheduled_deliveries')
         .select('id').eq('id_agendamento', schedule.id).eq('scheduled_date', schedule.proximo_envio)

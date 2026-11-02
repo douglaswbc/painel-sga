@@ -1,11 +1,13 @@
 /**
  * AES-256-GCM helpers shared by the WhatsApp provider Edge Functions.
  *
- * Two ciphertext versions exist:
+ * Three ciphertext versions exist:
  *   - `v1.<iv>.<ciphertext>`  Zernio API keys, keyed with ZERNIO_ENCRYPTION_KEY.
  *   - `vm1.<iv>.<ciphertext>` Meta access tokens, keyed with META_ENCRYPTION_KEY
  *     and falling back to ZERNIO_ENCRYPTION_KEY when the dedicated secret is
  *     not configured.
+ *   - `vr1.<iv>.<ciphertext>` Resend API keys, keyed with
+ *     RESEND_ENCRYPTION_KEY and falling back to META/ZERNIO encryption keys.
  *
  * The owner id is always used as additional authenticated data, so a secret
  * cannot be decrypted by another landlord even with a valid key.
@@ -14,11 +16,12 @@
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-export type SecretScope = 'zernio' | 'meta';
+export type SecretScope = 'zernio' | 'meta' | 'resend';
 
 const SCOPE_PREFIX: Record<SecretScope, string> = {
   zernio: 'v1.',
   meta: 'vm1.',
+  resend: 'vr1.',
 };
 
 function toBase64(bytes: Uint8Array): string {
@@ -27,15 +30,24 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function fromBase64(value: string): Uint8Array {
+function fromBase64(value: string): Uint8Array<ArrayBuffer> {
   const binary = atob(value);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }
 
 function secretForScope(scope: SecretScope): string {
   const value = scope === 'meta'
     ? Deno.env.get('META_ENCRYPTION_KEY') ?? Deno.env.get('ZERNIO_ENCRYPTION_KEY') ?? ''
-    : Deno.env.get('ZERNIO_ENCRYPTION_KEY') ?? '';
+    : scope === 'resend'
+      ? Deno.env.get('RESEND_ENCRYPTION_KEY')
+        ?? Deno.env.get('META_ENCRYPTION_KEY')
+        ?? Deno.env.get('ZERNIO_ENCRYPTION_KEY')
+        ?? ''
+      : Deno.env.get('ZERNIO_ENCRYPTION_KEY') ?? '';
   if (!/^[a-fA-F0-9]{64}$/.test(value)) {
     throw new Error('A chave de criptografia da integração ainda não foi configurada no Supabase.');
   }
@@ -61,7 +73,11 @@ export async function decryptSecret(ciphertext: string, ownerId: string): Promis
   const separator = ciphertext.indexOf('.');
   if (separator < 0) throw new Error('Formato da credencial armazenada não reconhecido.');
   const version = ciphertext.slice(0, separator + 1);
-  const scope: SecretScope = version === SCOPE_PREFIX.meta ? 'meta' : 'zernio';
+  const scope: SecretScope = version === SCOPE_PREFIX.meta
+    ? 'meta'
+    : version === SCOPE_PREFIX.resend
+      ? 'resend'
+      : 'zernio';
   const [encodedIv, encodedCiphertext] = ciphertext.slice(separator + 1).split('.');
   if (!encodedIv || !encodedCiphertext) throw new Error('Formato da credencial armazenada não reconhecido.');
 

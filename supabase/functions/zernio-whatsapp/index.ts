@@ -12,6 +12,7 @@ import {
   metaErrorDetail,
 } from '../_shared/meta-graph.ts';
 import { normalizeProvider, metaWebhookUrl, type WhatsappProvider } from '../_shared/whatsapp-provider.ts';
+import { classifyMetaError, recordAndNotifyMetaAlert, resolveMetaAlerts } from '../_shared/meta-alerts.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -52,9 +53,13 @@ function safeProviderMessage(value: unknown): string | null {
     .slice(0, 400);
 }
 
-function fromBase64(value: string): Uint8Array {
-  const bytes = atob(value);
-  return Uint8Array.from(bytes, (character) => character.charCodeAt(0));
+function fromBase64(value: string): Uint8Array<ArrayBuffer> {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }
 
 async function decryptApiKey(ciphertext: string, ownerId: string): Promise<string> {
@@ -566,8 +571,17 @@ Deno.serve(async (req) => {
     status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
   let admin: any = null;
+  let userId: string | null = null;
   let claimedDeliveryId: string | null = null;
   let claimedManualDeliveryId: string | null = null;
+  const resolveAlertsAfterSuccess = async () => {
+    if (!admin || !userId) return;
+    try {
+      await resolveMetaAlerts(admin, userId);
+    } catch (error) {
+      console.error('Could not resolve Meta alerts after a successful send:', error instanceof Error ? error.message : error);
+    }
+  };
   try {
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) return json({ error: 'Authentication required.' }, 401);
@@ -591,6 +605,7 @@ Deno.serve(async (req) => {
       if (authError || !authenticatedUser) return json({ error: 'Invalid or expired session.' }, 401);
       user = { id: authenticatedUser.id };
     }
+    userId = user.id;
     admin = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', {
       auth: { persistSession: false, autoRefreshToken: false },
     });    const { data: owner, error: ownerError } = await admin.from('usuarios')
@@ -815,6 +830,7 @@ Deno.serve(async (req) => {
             components: template.components || [],
           });
           messageId = sent.messageId;
+          await resolveAlertsAfterSuccess();
         } else {
           const sentPayload = await zernioRequest('/inbox/conversations', apiKey, {
             method: 'POST', idempotencyKey,
@@ -920,6 +936,7 @@ Deno.serve(async (req) => {
           components: template.components || [],
         });
         messageId = sent.messageId;
+        await resolveAlertsAfterSuccess();
       } else {
         let sentPayload: JsonRecord;
         try {
@@ -1530,6 +1547,7 @@ Deno.serve(async (req) => {
           components: selectedTemplate.components || [],
         });
         messageId = sent.messageId;
+        await resolveAlertsAfterSuccess();
       } else {
         let sendPayload: JsonRecord;
         try {
@@ -1596,6 +1614,10 @@ Deno.serve(async (req) => {
     else if (error instanceof MetaApiError) {
       safeError = new PublicError(describeMetaError(error), error.status === 429 ? 429 : 400);
       detail = metaErrorDetail(error);
+      if (admin && userId) {
+        const meta = classifyMetaError(error);
+        if (meta) await recordAndNotifyMetaAlert(admin, userId, meta);
+      }
     } else {
       console.error('Unexpected WhatsApp error:', error);
       detail = error instanceof Error ? error.message.slice(0, 200) : 'erro interno';

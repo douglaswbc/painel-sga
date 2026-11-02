@@ -406,6 +406,15 @@ export function describeMetaError(error: unknown): string {
     return error instanceof Error ? error.message : 'Não foi possível concluir a operação na Meta.';
   }
   const where = error.target ? ` em ${error.target}` : '';
+  if (error.code === 131042) {
+    return 'A Meta recusou o envio por problema no método de pagamento da conta WhatsApp Business. Regularize no Meta Business Suite para voltar a enviar mensagens.';
+  }
+  if (error.code === 131044 || error.code === 368 || error.code === 131031 || error.code === 130497) {
+    return 'A conta WhatsApp Business está bloqueada ou restrita pela Meta. Confira a saúde da conta no WhatsApp Manager e regularize para retomar os envios.';
+  }
+  if (error.code === 190 || error.code === 102 || error.status === 401) {
+    return 'O token da Meta expirou ou foi invalidado. Gere um novo token e salve novamente em Configurações.';
+  }
   if (error.status === 400 && error.subcode === 2388024) {
     return 'Já existe um template com esse nome e idioma nesta conta. Escolha outro nome ou apague o template existente.';
   }

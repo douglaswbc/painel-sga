@@ -2,6 +2,8 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { decryptSecret } from '../_shared/crypto.ts'
 import { sendMetaTemplateMessage } from '../_shared/meta-messages.ts'
+import { MetaApiError } from '../_shared/meta-graph.ts'
+import { classifyMetaError, recordAndNotifyMetaAlert, resolveMetaAlerts } from '../_shared/meta-alerts.ts'
 import { normalizeProvider } from '../_shared/whatsapp-provider.ts'
 
 const corsHeaders = {
@@ -11,9 +13,13 @@ const corsHeaders = {
 const ZERNIO_API = 'https://api.zernio.com/v1'
 const encoder = new TextEncoder()
 
-function fromBase64(value: string): Uint8Array {
+function fromBase64(value: string): Uint8Array<ArrayBuffer> {
   const binary = atob(value)
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0))
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  return bytes
 }
 
 async function decrypt(ciphertext: string, ownerId: string): Promise<string> {
@@ -153,8 +159,19 @@ async function sendPaymentConfirmation(admin: any, ownerId: string, paymentId: s
       status: 'sent', message_id: messageId,
       safe_error: null, updated_at: new Date().toISOString(),
     }).eq('id', attempt.id)
+    if (provider === 'meta') {
+      try {
+        await resolveMetaAlerts(admin, ownerId)
+      } catch (error) {
+        console.error('Could not resolve Meta alerts after payment confirmation:', error instanceof Error ? error.message : error)
+      }
+    }
   } catch (error) {
     console.error('Payment confirmation failed:', error)
+    if (error instanceof MetaApiError) {
+      const meta = classifyMetaError(error)
+      if (meta) await recordAndNotifyMetaAlert(admin, ownerId, meta)
+    }
     await admin.from('zernio_payment_notifications').update({
       status: 'failed', safe_error: error instanceof Error ? error.message.slice(0, 160) : 'send_failed',
       updated_at: new Date().toISOString(),

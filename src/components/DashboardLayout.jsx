@@ -5,6 +5,7 @@ import Sidebar from './Sidebar';
 import BottomNav from './BottomNav';
 import QuickSearchModal from './QuickSearchModal';
 import QuickActionsMenu from './QuickActionsMenu';
+import MetaAlertBanner from './MetaAlertBanner';
 import { useNavCounts } from '../hooks/useNavCounts';
 import { Menu, Search, Command } from 'lucide-react';
 
@@ -119,6 +120,9 @@ const DashboardLayout = () => {
 
         {/* Conteúdo Principal com compensação para a Bottom Nav no mobile */}
         <main className="flex-1 overflow-x-hidden overflow-y-auto p-4 md:p-6 xl:p-8 pb-24 md:pb-8">
+          <div className="mx-auto mb-4 max-w-7xl">
+            <MetaAlertBanner enabled={profile?.role === 'locador'} />
+          </div>
           <Outlet />
         </main>
       </div>

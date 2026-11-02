@@ -1,15 +1,17 @@
 import React, { useEffect, useState } from 'react';
-import { Cloud, Key, Loader2, MessageCircle, Save, Settings, User } from 'lucide-react';
+import { Bell, Cloud, Key, Loader2, MessageCircle, Save, Settings, User } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { useAuth } from '../contexts/AuthContext';
 import { usuariosService } from '../services/usuarios';
 import { supabase } from '../services/supabase';
 import ZernioIntegrationCard from '../components/ZernioIntegrationCard';
 import MetaIntegrationCard from '../components/MetaIntegrationCard';
+import EmailNotificacoesCard from '../components/EmailNotificacoesCard';
 
 const tabs = [
   { id: 'zernio', label: 'Zernio', icon: MessageCircle, landlordOnly: true },
   { id: 'meta', label: 'Meta Cloud API', icon: Cloud, landlordOnly: true },
+  { id: 'notificacoes', label: 'Notificações', icon: Bell, landlordOnly: true },
   { id: 'conta', label: 'Conta e Pagamentos', icon: User, landlordOnly: false },
 ];
 
@@ -136,6 +138,7 @@ export default function Configuracoes() {
 
       {activeTab === 'zernio' && isLandlord && <ZernioIntegrationCard />}
       {activeTab === 'meta' && isLandlord && <MetaIntegrationCard />}
+      {activeTab === 'notificacoes' && isLandlord && <EmailNotificacoesCard />}
 
       {activeTab === 'conta' && (
         <form onSubmit={save} className="space-y-6 rounded-xl border border-slate-700 bg-card p-6 shadow-lg">

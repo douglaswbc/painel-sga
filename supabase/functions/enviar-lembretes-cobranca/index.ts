@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { isServiceRequest } from '../_shared/cron-auth.ts';
+import { blockingAlertOwners } from '../_shared/meta-alerts.ts';
 
 type Result = { id: string; ownerId: string; status: string; detail?: string };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
@@ -64,9 +65,34 @@ Deno.serve(async (req) => {
   const { data: owners } = await admin.from('usuarios').select('id, reminder_dispatch_delay_seconds').in('id', ownerIds);
   const ownerDelayMap = new Map((owners || []).map((o: { id: string; reminder_dispatch_delay_seconds?: number }) => [o.id, Number(o.reminder_dispatch_delay_seconds ?? 5)]));
 
+  // A Meta bloqueia todos os envios enquanto houver alerta critico ativo
+  // (pagamento, conta bloqueada ou token invalido). Os lembretes automaticos
+  // ficam pausados ate o locador regularizar e confirmar no painel.
+  const { data: providerRows } = await admin.from('zernio_integracoes')
+    .select('id_usuario,provider')
+    .in('id_usuario', ownerIds);
+  const metaOwnerIds = (providerRows || [])
+    .filter((row: { id_usuario: string; provider?: string }) => row.provider === 'meta')
+    .map((row: { id_usuario: string }) => row.id_usuario);
+  let blockedOwners = new Set<string>();
+  try {
+    blockedOwners = await blockingAlertOwners(admin, metaOwnerIds);
+  } catch (error) {
+    console.error('Could not load Meta alerts; reminders will continue:', error instanceof Error ? error.message : error);
+  }
+
   const results: Result[] = [];
   for (let i = 0; i < charges.length; i++) {
     const charge = charges[i];
+    if (blockedOwners.has(charge.id_usuario)) {
+      results.push({
+        id: charge.id,
+        ownerId: charge.id_usuario,
+        status: 'skipped',
+        detail: 'Envios pausados por alerta da Meta. Regularize a conta WhatsApp Business para retomar.',
+      });
+      continue;
+    }
     if (i > 0) {
       const delaySec = ownerDelayMap.get(charge.id_usuario) ?? 5;
       if (delaySec > 0) {

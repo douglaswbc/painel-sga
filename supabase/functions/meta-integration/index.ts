@@ -14,6 +14,14 @@ import {
   subscribeWaba,
 } from '../_shared/meta-graph.ts';
 import { activateProvider, metaWebhookUrl, publicIntegration } from '../_shared/whatsapp-provider.ts';
+import {
+  activeMetaAlerts,
+  classifyMetaError,
+  publicMetaAlerts,
+  recordAndNotifyMetaAlert,
+  resolveMetaAlerts,
+  type MetaAlertType,
+} from '../_shared/meta-alerts.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -175,11 +183,36 @@ Deno.serve(async (req) => {
       .from('zernio_integracoes').select('*').eq('id_usuario', user.id).maybeSingle();
 
     if (action === 'status') {
+      const alerts = await activeMetaAlerts(admin, user.id);
       return json({
         integration: publicIntegration(integration),
+        alerts: publicMetaAlerts(alerts),
         app: metaAppConfig(),
         callbackUrl: metaWebhookUrl(),
       });
+    }
+
+    if (action === 'alerts') {
+      const alerts = await activeMetaAlerts(admin, user.id);
+      return json({ alerts: publicMetaAlerts(alerts) });
+    }
+
+    if (action === 'clear_alert') {
+      const allowed: MetaAlertType[] = [
+        'pagamento', 'conta_bloqueada', 'token_invalido', 'permissao',
+        'template', 'limite_envio', 'integracao',
+      ];
+      const requested = typeof body?.tipo === 'string' ? body.tipo : '';
+      if (requested && !allowed.includes(requested as MetaAlertType)) {
+        return json({ error: 'Tipo de alerta inválido.' }, 400);
+      }
+      await resolveMetaAlerts(
+        admin,
+        user.id,
+        requested ? [requested as MetaAlertType] : undefined,
+      );
+      const alerts = await activeMetaAlerts(admin, user.id);
+      return json({ alerts: publicMetaAlerts(alerts), success: true });
     }
 
     if (action === 'activate') {
@@ -228,7 +261,8 @@ Deno.serve(async (req) => {
         .select('*')
         .maybeSingle();
       if (error) return json({ error: 'Não foi possível desconectar o canal da Meta.' }, 400);
-      return json({ integration: publicIntegration(updated) });
+      await resolveMetaAlerts(admin, user.id);
+      return json({ integration: publicIntegration(updated), alerts: [] });
     }
 
     if (action === 'validate_manual') {
@@ -248,6 +282,8 @@ Deno.serve(async (req) => {
         waba = await getWaba(wabaId, accessToken);
         numbers = await listPhoneNumbers(wabaId, accessToken);
       } catch (error) {
+        const meta = classifyMetaError(error);
+        if (meta) await recordAndNotifyMetaAlert(admin, user.id, meta);
         return json({ error: describeMetaError(error) }, 400);
       }
       if (String(waba?.id ?? wabaId) !== wabaId) {
@@ -288,7 +324,9 @@ Deno.serve(async (req) => {
         provider: 'meta',
       });
       await activateProvider(admin, user.id, 'meta');
-      return json({ integration: publicIntegration(saved) });
+      await resolveMetaAlerts(admin, user.id, ['token_invalido', 'permissao', 'integracao']);
+      const alerts = await activeMetaAlerts(admin, user.id);
+      return json({ integration: publicIntegration(saved), alerts: publicMetaAlerts(alerts) });
     }
 
     if (action === 'complete_signup') {
@@ -305,6 +343,8 @@ Deno.serve(async (req) => {
       try {
         businessToken = await exchangeCodeForBusinessToken(code);
       } catch (error) {
+        const meta = classifyMetaError(error);
+        if (meta) await recordAndNotifyMetaAlert(admin, user.id, meta);
         return json({ error: describeMetaError(error) }, 400);
       }
       const token = await exchangeForLongLivedToken(businessToken);
@@ -319,6 +359,8 @@ Deno.serve(async (req) => {
       try {
         candidates = await collectCandidates(wabaIds, token);
       } catch (error) {
+        const meta = classifyMetaError(error);
+        if (meta) await recordAndNotifyMetaAlert(admin, user.id, meta);
         return json({ error: describeMetaError(error) }, 400);
       }
       if (!candidates.length) {
@@ -351,8 +393,10 @@ Deno.serve(async (req) => {
       }
 
       const result = await finalizeChannel(admin, user.id, candidates[0], pin, token);
+      await resolveMetaAlerts(admin, user.id, ['token_invalido', 'permissao', 'integracao']);
       const { data: saved } = await admin.from('zernio_integracoes').select('*').eq('id_usuario', user.id).maybeSingle();
-      return json({ integration: publicIntegration(saved), warning: result.warning });
+      const alerts = await activeMetaAlerts(admin, user.id);
+      return json({ integration: publicIntegration(saved), alerts: publicMetaAlerts(alerts), warning: result.warning });
     }
 
     if (action === 'select_number') {
@@ -373,6 +417,8 @@ Deno.serve(async (req) => {
       try {
         numbers = await listPhoneNumbers(wabaId, token);
       } catch (error) {
+        const meta = classifyMetaError(error);
+        if (meta) await recordAndNotifyMetaAlert(admin, user.id, meta);
         return json({ error: describeMetaError(error) }, 400);
       }
       const match = numbers.find((item) => item.id === phoneNumberId);
@@ -386,8 +432,10 @@ Deno.serve(async (req) => {
         verifiedName: match.verifiedName,
         qualityRating: match.qualityRating,
       }, pin, token);
+      await resolveMetaAlerts(admin, user.id, ['token_invalido', 'permissao', 'integracao']);
       const { data: saved } = await admin.from('zernio_integracoes').select('*').eq('id_usuario', user.id).maybeSingle();
-      return json({ integration: publicIntegration(saved), warning: result.warning });
+      const alerts = await activeMetaAlerts(admin, user.id);
+      return json({ integration: publicIntegration(saved), alerts: publicMetaAlerts(alerts), warning: result.warning });
     }
 
     if (action === 'register') {
@@ -405,6 +453,8 @@ Deno.serve(async (req) => {
           return json({ error: 'A Meta não confirmou o registro do número. Verifique o PIN e o status de verificação.' }, 409);
         }
       } catch (error) {
+        const meta = classifyMetaError(error);
+        if (meta) await recordAndNotifyMetaAlert(admin, user.id, meta);
         return json({ error: describeMetaError(error) }, 400);
       }
       const now = new Date().toISOString();
@@ -412,16 +462,19 @@ Deno.serve(async (req) => {
         .update({ meta_status: 'connected', provider_connected_at: now, provider: 'meta', updated_at: now })
         .eq('id_usuario', user.id).select('*').maybeSingle();
       await activateProvider(admin, user.id, 'meta');
-      return json({ integration: publicIntegration(saved) });
+      await resolveMetaAlerts(admin, user.id, ['token_invalido', 'permissao', 'integracao']);
+      const alerts = await activeMetaAlerts(admin, user.id);
+      return json({ integration: publicIntegration(saved), alerts: publicMetaAlerts(alerts) });
     }
 
     if (action === 'refresh') {
+      const currentAlerts = await activeMetaAlerts(admin, user.id);
       if (!integration?.meta_access_token_ciphertext) {
-        return json({ integration: publicIntegration(integration) });
+        return json({ integration: publicIntegration(integration), alerts: publicMetaAlerts(currentAlerts) });
       }
       const token = await decryptSecret(integration.meta_access_token_ciphertext, user.id);
       if (!integration.meta_phone_number_id) {
-        return json({ integration: publicIntegration(integration) });
+        return json({ integration: publicIntegration(integration), alerts: publicMetaAlerts(currentAlerts) });
       }
       try {
         const details = await getPhoneNumberDetails(integration.meta_phone_number_id, token);
@@ -437,13 +490,18 @@ Deno.serve(async (req) => {
           meta_last_checked_at: now,
           updated_at: now,
         }).eq('id_usuario', user.id).select('*').maybeSingle();
-        return json({ integration: publicIntegration(saved) });
+        await resolveMetaAlerts(admin, user.id, ['token_invalido']);
+        const alerts = await activeMetaAlerts(admin, user.id);
+        return json({ integration: publicIntegration(saved), alerts: publicMetaAlerts(alerts) });
       } catch (error) {
+        const meta = classifyMetaError(error);
+        if (meta) await recordAndNotifyMetaAlert(admin, user.id, meta);
         if (error instanceof MetaApiError && (error.status === 401 || error.status === 403)) {
           const { data: saved } = await admin.from('zernio_integracoes')
             .update({ meta_status: 'invalid', meta_last_checked_at: new Date().toISOString(), updated_at: new Date().toISOString() })
             .eq('id_usuario', user.id).select('*').maybeSingle();
-          return json({ integration: publicIntegration(saved), error: 'O token da Meta não autorizou a consulta. Gere um novo token.' }, 409);
+          const alerts = await activeMetaAlerts(admin, user.id);
+          return json({ integration: publicIntegration(saved), alerts: publicMetaAlerts(alerts), error: 'O token da Meta não autorizou a consulta. Gere um novo token.' }, 409);
         }
         return json({ error: describeMetaError(error) }, 400);
       }

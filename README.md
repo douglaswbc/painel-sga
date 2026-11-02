@@ -123,11 +123,23 @@ A rota `/configuracoes` tem abas para o provedor de WhatsApp usado pelo SGA:
 
 - **Zernio**: chave de API da Zernio, seleção de perfil e canal e onboarding pelo Embedded Signup da Zernio (completado na rota `/zernio/callback`).
 - **Meta Cloud API**: API oficial da Meta, com dois caminhos de conexão — o Embedded Signup da Meta ou a entrada manual de um token do sistema, do Phone Number ID e do WABA ID.
+- **Notificações**: credencial do Resend por locador, remetente, teste de envio e escolha dos tipos de alerta que geram e-mail.
 - **Conta e Pagamentos**: nome, WhatsApp de contato, token do Mercado Pago e redefinição de senha.
 
 O provedor em uso fica em `zernio_integracoes.provider` (`zernio` ou `meta`). A configuração do provedor inativo é preservada, e cada aba oferece o botão **Usar este canal** para alternar.
 
 Para a integração Meta, configure os secrets `META_APP_ID`, `META_APP_SECRET`, `META_CONFIGURATION_ID` e `META_GRAPH_VERSION` (veja `supabase/secrets.txt`). `META_ENCRYPTION_KEY` é opcional: quando ausente, o token da Meta é cifrado com `ZERNIO_ENCRYPTION_KEY`.
+
+### Alertas da Meta e notificações por e-mail
+
+Quando a Meta recusa um envio por um motivo acionável (pagamento pendente, conta bloqueada, token inválido, permissão, template, limite de envio ou número sem configuração), o SGA registra um alerta em `meta_alertas`, exibe um banner em todas as telas do locador e pode avisar por e-mail. Alertas de pagamento, conta bloqueada e token inválido também pausam os lembretes automáticos até a regularização.
+
+Cada locador configura a própria conta do [Resend](https://resend.com) em **Configurações → Notificações**: API Key, e-mail remetente verificado no domínio e quais tipos de alerta deseja receber. O destinatário é sempre o e-mail da conta em `public.usuarios`. A chave é validada no servidor, cifrada com AES-256-GCM e nunca retorna ao navegador. O envio é limitado a um e-mail por alerta a cada 24 horas.
+
+Secrets opcionais relacionados:
+
+- `RESEND_ENCRYPTION_KEY`: chave de 64 caracteres hexadecimais para cifrar as API Keys do Resend. Sem ela, o SGA usa `META_ENCRYPTION_KEY` e depois `ZERNIO_ENCRYPTION_KEY`.
+- `SGA_APP_URL`: URL pública do SGA, usada para montar os botões dos e-mails (por exemplo, `https://sga.seudominio.com`).
 
 O guia completo, com o passo a passo do App da Meta e o estado de cada fase, está em [`docs/INTEGRACAO_META_WHATSAPP.md`](docs/INTEGRACAO_META_WHATSAPP.md).
 

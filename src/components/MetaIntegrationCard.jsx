@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, Cloud, Copy, Loader2, MessageCircle, RefreshCw, ShieldCheck, Trash2, XCircle } from 'lucide-react';
+import { AlertOctagon, AlertTriangle, CheckCircle2, Cloud, Copy, Info, Loader2, MessageCircle, RefreshCw, ShieldCheck, Trash2, XCircle } from 'lucide-react';
 import { supabase } from '../services/supabase';
+import { useMetaAlerts } from '../hooks/useMetaAlerts';
 
 let sdkPromise = null;
 
@@ -34,6 +35,13 @@ const loadFacebookSdk = (appId, graphVersion) => {
   return sdkPromise;
 };
 
+const ALERT_TONES = {
+  critical: { box: 'border-red-500/30 bg-red-500/10', title: 'text-red-300', icon: AlertOctagon },
+  error: { box: 'border-rose-500/30 bg-rose-500/10', title: 'text-rose-300', icon: AlertTriangle },
+  warning: { box: 'border-amber-500/30 bg-amber-500/10', title: 'text-amber-300', icon: AlertTriangle },
+  info: { box: 'border-sky-500/30 bg-sky-500/10', title: 'text-sky-300', icon: Info },
+};
+
 const MetaIntegrationCard = () => {
   const [app, setApp] = useState(null);
   const [integration, setIntegration] = useState(null);
@@ -49,6 +57,8 @@ const MetaIntegrationCard = () => {
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
   const [notice, setNotice] = useState('');
+  const [clearingType, setClearingType] = useState(null);
+  const { alerts, clearAlert, refresh: refreshAlerts } = useMetaAlerts();
 
   const invoke = useCallback(async (action, payload = {}) => {
     const { data, error } = await supabase.functions.invoke('meta-integration', {
@@ -63,8 +73,25 @@ const MetaIntegrationCard = () => {
       throw new Error(message);
     }
     if (data?.error) throw new Error(data.error);
+    if (action !== 'status' && action !== 'alerts') refreshAlerts();
     return data;
-  }, []);
+  }, [refreshAlerts]);
+
+  const acknowledgeAlert = async (alert) => {
+    const question = alert.bloqueante
+      ? 'Confirmar que o problema na Meta foi regularizado? Os lembretes automáticos serão retomados.'
+      : 'Marcar este aviso como resolvido? Ele volta a aparecer se a Meta repetir o erro.';
+    if (!window.confirm(question)) return;
+    setClearingType(alert.tipo);
+    try {
+      await clearAlert(alert.tipo);
+      setNotice('Alerta marcado como resolvido.');
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setClearingType(null);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -323,6 +350,57 @@ const MetaIntegrationCard = () => {
           )}
         </div>
       </div>
+
+      {alerts.length > 0 && (
+        <div className="space-y-2 border-t border-slate-800 pt-4">
+          <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">Alertas ativos da Meta</h3>
+          {alerts.map((alert) => {
+            const tone = ALERT_TONES[alert.severidade] || ALERT_TONES.warning;
+            const Icon = tone.icon;
+            return (
+              <div key={alert.tipo} className={`rounded-xl border p-4 ${tone.box}`}>
+                <div className="flex items-start gap-3">
+                  <Icon className={`mt-0.5 shrink-0 ${tone.title}`} size={18} />
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-sm font-semibold ${tone.title}`}>{alert.titulo}</p>
+                    <p className="mt-1 text-xs leading-relaxed text-slate-400">{alert.descricao}</p>
+                    {alert.detalhe && (
+                      <p className="mt-1 break-words text-[11px] text-slate-500">
+                        {alert.codigo ? `Código ${alert.codigo}: ` : ''}{alert.detalhe}
+                      </p>
+                    )}
+                    {alert.bloqueante && (
+                      <p className="mt-1 text-[11px] font-semibold text-slate-500">
+                        Lembretes automáticos pausados até a regularização.
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-2">
+                    {alert.acaoUrl && (
+                      <a
+                        href={alert.acaoUrl}
+                        target={/^https?:/i.test(alert.acaoUrl) ? '_blank' : undefined}
+                        rel="noopener noreferrer"
+                        className="text-[11px] font-semibold text-indigo-400 hover:underline"
+                      >
+                        {alert.acaoLabel}
+                      </a>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => acknowledgeAlert(alert)}
+                      disabled={clearingType === alert.tipo}
+                      className="rounded-lg border border-slate-600 px-3 py-1.5 text-[11px] font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+                    >
+                      {clearingType === alert.tipo ? 'Salvando…' : 'Já regularizei'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {callbackUrl && (
         <div className="rounded-xl border border-slate-700 bg-slate-900/30 p-4">

@@ -2,6 +2,12 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { decryptSecret } from '../_shared/crypto.ts';
 import { handleLockOtp } from '../_shared/lock-otp.ts';
 import { sendMetaTextMessage } from '../_shared/meta-messages.ts';
+import { MetaApiError } from '../_shared/meta-graph.ts';
+import {
+  classifyMetaWebhookError,
+  recordAndNotifyMetaAlert,
+  resolveMetaAlerts,
+} from '../_shared/meta-alerts.ts';
 
 type JsonRecord = Record<string, any>;
 
@@ -72,7 +78,12 @@ async function findDeliveryOwner(admin: any, messageId: string): Promise<string 
 }
 
 /** Updates the delivery status reported by Meta. */
-async function updateDeliveryStatus(admin: any, messageId: string, status: JsonRecord): Promise<boolean> {
+async function updateDeliveryStatus(
+  admin: any,
+  messageId: string,
+  status: JsonRecord,
+  ownerId: string | null,
+): Promise<boolean> {
   const name = String(status.status ?? '').toLowerCase();
   if (!META_STATUSES.includes(name)) return false;
   const error = Array.isArray(status.errors) ? status.errors[0] : null;
@@ -91,6 +102,23 @@ async function updateDeliveryStatus(admin: any, messageId: string, status: JsonR
     const { error: updateError } = await admin.from(table).update(patch).eq('message_id', messageId);
     if (!updateError) updated = true;
   }
+
+  if (ownerId) {
+    if (name === 'failed' && error) {
+      const meta = classifyMetaWebhookError(
+        typeof error.code === 'number' ? 400 : 500,
+        error as JsonRecord,
+      );
+      if (meta) await recordAndNotifyMetaAlert(admin, ownerId, meta);
+    } else if (name === 'sent' || name === 'delivered' || name === 'read') {
+      try {
+        await resolveMetaAlerts(admin, ownerId);
+      } catch (resolveError) {
+        console.error('Could not resolve Meta alerts from webhook:', resolveError instanceof Error ? resolveError.message : resolveError);
+      }
+    }
+  }
+
   return updated;
 }
 
@@ -152,7 +180,7 @@ Deno.serve(async (req) => {
             admin, `status:${messageId}:${String(status.status ?? '')}`, ownerId, phoneNumberId, 'message.status',
           );
           if (!fresh) continue;
-          if (await updateDeliveryStatus(admin, messageId, status)) statuses += 1;
+          if (await updateDeliveryStatus(admin, messageId, status, ownerId)) statuses += 1;
         }
 
         // Mensagens recebidas.
@@ -193,14 +221,45 @@ Deno.serve(async (req) => {
               continue;
             }
             const token = await decryptSecret(integration.meta_access_token_ciphertext, integration.id_usuario);
-            await sendMetaTextMessage(phoneNumberId, token, from, outcome.reply);
+            try {
+              await sendMetaTextMessage(phoneNumberId, token, from, outcome.reply);
+            } catch (error) {
+              if (error instanceof MetaApiError) {
+                const meta = classifyMetaWebhookError(error.status, {
+                  code: error.code,
+                  message: error.message,
+                  error_data: { details: error.userMessage },
+                });
+                if (meta) await recordAndNotifyMetaAlert(admin, integration.id_usuario, meta);
+              }
+              console.error('Could not send Meta reply:', error instanceof Error ? error.message : error);
+              continue;
+            }
+            try {
+              await resolveMetaAlerts(admin, integration.id_usuario);
+            } catch (resolveError) {
+              console.error('Could not resolve Meta alerts after reply:', resolveError instanceof Error ? resolveError.message : resolveError);
+            }
             inbound += 1;
             replied = true;
             break;
           }
           if (!replied && fallback) {
             const token = await decryptSecret(candidates[0].meta_access_token_ciphertext, candidates[0].id_usuario);
-            await sendMetaTextMessage(phoneNumberId, token, from, fallback);
+            try {
+              await sendMetaTextMessage(phoneNumberId, token, from, fallback);
+              await resolveMetaAlerts(admin, candidates[0].id_usuario);
+            } catch (error) {
+              if (error instanceof MetaApiError) {
+                const meta = classifyMetaWebhookError(error.status, {
+                  code: error.code,
+                  message: error.message,
+                  error_data: { details: error.userMessage },
+                });
+                if (meta) await recordAndNotifyMetaAlert(admin, candidates[0].id_usuario, meta);
+              }
+              console.error('Could not send Meta fallback reply:', error instanceof Error ? error.message : error);
+            }
             inbound += 1;
           }
         }
