@@ -1,40 +1,117 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { supabase } from '../services/supabase';
 import { toast } from 'react-toastify';
-import { X, Search, Clock, CalendarClock, Loader2, Trash2, CheckCircle2, UserCheck } from 'lucide-react';
+import {
+  X, Search, Clock, CalendarClock, Loader2, Trash2, CheckCircle2,
+  Pause, Play, AlertCircle, ExternalLink, MessageSquare,
+} from 'lucide-react';
 
-const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatario, usuario, mode = 'template' }) => {
+const frequencies = [
+  ['diario', 'Diário'],
+  ['semanal', 'Semanal'],
+  ['quinzenal', 'Quinzenal'],
+  ['mensal', 'Mensal'],
+  ['personalizado', 'Personalizado'],
+];
+
+const getVariables = (text) => [...new Set([...String(text || '').matchAll(/\{\{(\d+)\}\}/g)].map((match) => Number(match[1])))].sort((a, b) => a - b);
+const componentType = (component) => String(component?.type || '').toUpperCase();
+
+function parameterLabels(template) {
+  const components = template?.components || [];
+  const ordered = [
+    ...components.filter((component) => componentType(component) === 'HEADER'),
+    ...components.filter((component) => componentType(component) === 'BODY'),
+    ...components.filter((component) => componentType(component) === 'BUTTONS'),
+  ];
+  const labels = [];
+  ordered.forEach((component) => {
+    if (['HEADER', 'BODY'].includes(componentType(component))) {
+      getVariables(component.text).forEach((variable) => labels.push({
+        position: labels.length + 1,
+        variable,
+        label: `${componentType(component) === 'HEADER' ? 'Cabeçalho' : 'Corpo'} · variável {{${variable}}}`,
+      }));
+    } else if (componentType(component) === 'BUTTONS') {
+      (component.buttons || []).forEach((button, index) => {
+        if (String(button.type).toUpperCase() === 'URL' && /\{\{\d+\}\}/.test(String(button.url || ''))) {
+          labels.push({
+            position: labels.length + 1,
+            variable: 'url',
+            label: `Botão de site ${index + 1} · link`,
+          });
+        }
+      });
+    }
+  });
+  return labels;
+}
+
+function getDefaultDate() {
+  const date = new Date();
+  date.setDate(date.getDate() + 1);
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(date);
+}
+
+const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatario, usuario, mode = 'locatario' }) => {
   const [locatarios, setLocatarios] = useState([]);
-  const [templates, setTemplates] = useState([]);
+  const [allTemplates, setAllTemplates] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLocatario, setSelectedLocatario] = useState(initialLocatario || null);
-  const [selectedTemplates, setSelectedTemplates] = useState([]);
-  
+  const [selectedTemplate, setSelectedTemplate] = useState(template || null);
+  const [templateParams, setTemplateParams] = useState([]);
+
   const [frequencia, setFrequencia] = useState('semanal');
   const [frequenciaDias, setFrequenciaDias] = useState('');
-  const [proximoEnvio, setProximoEnvio] = useState('');
+  const [proximoEnvio, setProximoEnvio] = useState(getDefaultDate);
   const [horario, setHorario] = useState('09:00');
-  const [selecionarTodos, setSelecionarTodos] = useState(false);
-  
+
   const [agendamentos, setAgendamentos] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [busyScheduleId, setBusyScheduleId] = useState(null);
 
+  const templatesById = useMemo(() => new Map(allTemplates.map(t => [t.id, t])), [allTemplates]);
+
+  // Filtra apenas templates Meta aprovados categorizados como "avulso"
+  const avulsoTemplates = useMemo(() => {
+    return allTemplates.filter((t) => {
+      const isApproved = String(t.status || '').toUpperCase() === 'APPROVED';
+      const isAvulso = (t.usages || []).some((u) => u.purpose === 'avulso' && u.is_default);
+      return isApproved && isAvulso;
+    });
+  }, [allTemplates]);
+
+  const slots = useMemo(() => parameterLabels(selectedTemplate), [selectedTemplate]);
+
+  // Atualiza parâmetros padrão ao trocar de template ou locatário
   useEffect(() => {
-    if (isOpen && usuario?.id) {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      setProximoEnvio(tomorrow.toISOString().split('T')[0]);
-      
-      fetchData();
+    if (!selectedTemplate) {
+      setTemplateParams([]);
+      return;
     }
-  }, [isOpen, usuario, template, initialLocatario]);
+    const avulsoUsage = (selectedTemplate.usages || []).find((u) => u.purpose === 'avulso' && u.is_default);
+    const variableMapping = avulsoUsage?.variable_mapping || [];
+    const tenantFirstName = selectedLocatario?.nome_completo ? selectedLocatario.nome_completo.trim().split(' ')[0] : '';
+    const tenantFullName = selectedLocatario?.nome_completo || '';
 
-  const fetchData = async () => {
+    const newParams = slots.map((slot) => {
+      const mapped = variableMapping.find((m) => Number(m.position) === slot.position)?.field;
+      if (mapped === 'tenant_first_name' && tenantFirstName) return tenantFirstName;
+      if (mapped === 'tenant_name' && tenantFullName) return tenantFullName;
+      if (slot.position === 1 && tenantFirstName) return tenantFirstName;
+      return '';
+    });
+    setTemplateParams(newParams);
+  }, [selectedTemplate, selectedLocatario, slots]);
+
+  const fetchData = useCallback(async () => {
+    if (!usuario?.id) return;
     try {
       setLoading(true);
-      
-      // Carregar Locatários
+
+      // 1. Carregar lista de locatários
       const { data: locData, error: locError } = await supabase
         .from('locatarios')
         .select('id, nome_completo, whatsapp')
@@ -44,36 +121,36 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
       if (locError) throw locError;
       setLocatarios(locData || []);
 
-      // Carregar Templates (se for modo locatário)
-      if (mode === 'locatario') {
-        const { data: tmplData, error: tmplError } = await supabase
-          .from('mensagens_template')
-          .select('*')
-          .eq('id_usuario', usuario.id)
-          .eq('tipo', 'avulso')
-          .order('titulo');
-        if (tmplError) throw tmplError;
-        setTemplates(tmplData || []);
+      // 2. Carregar templates Meta através da Edge Function do Zernio
+      try {
+        const { data: tmplResult, error: tmplError } = await supabase.functions.invoke('zernio-whatsapp', {
+          body: { action: 'list' },
+        });
+        if (!tmplError && tmplResult?.templates) {
+          setAllTemplates(tmplResult.templates);
+        }
+      } catch (err) {
+        console.error('Erro ao consultar templates Meta:', err);
       }
 
-      // Carregar Agendamentos Atuais
+      // 3. Carregar agendamentos atuais
       let query = supabase
         .from('agendamentos_mensagens')
         .select(`
-          id, frequencia, proximo_envio, ativo, horario_envio,
-          locatarios (nome_completo, whatsapp),
-          mensagens_template (titulo)
+          id, id_template, zernio_template_id, frequencia, frequencia_dias, proximo_envio, horario_envio, ativo, ultimo_erro, template_params,
+          locatarios!agendamentos_locatario_mesmo_usuario_fkey (id, nome_completo, whatsapp),
+          mensagens_template!agendamentos_template_mesmo_usuario_fkey (titulo)
         `)
+        .eq('id_usuario', usuario.id)
         .order('proximo_envio');
-      
+
       if (mode === 'template' && template?.id) {
-        query = query.eq('id_template', template.id);
-      } else if (mode === 'locatario' && selectedLocatario?.id) {
-        query = query.eq('id_locatario', selectedLocatario.id);
+        query = query.or(`id_template.eq.${template.id},zernio_template_id.eq.${template.id}`);
+      } else if (mode === 'locatario' && (selectedLocatario?.id || initialLocatario?.id)) {
+        const locId = selectedLocatario?.id || initialLocatario?.id;
+        query = query.eq('id_locatario', locId);
       } else {
-        // Se não tem contexto, não carrega agendamentos
         setAgendamentos([]);
-        setLoading(false);
         return;
       }
 
@@ -81,74 +158,68 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
       if (agError) throw agError;
       setAgendamentos(agData || []);
     } catch (err) {
+      console.error(err);
       toast.error('Erro ao carregar dados do agendamento.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [usuario?.id, mode, template?.id, selectedLocatario?.id, initialLocatario?.id]);
+
+  useEffect(() => {
+    if (isOpen && usuario?.id) {
+      setProximoEnvio(getDefaultDate());
+      fetchData();
+    }
+  }, [isOpen, usuario?.id, fetchData]);
 
   const handleSave = async () => {
     if (!proximoEnvio || !frequencia || (frequencia === 'personalizado' && !frequenciaDias)) {
-      return toast.error('Preencha os campos obrigatórios.');
+      return toast.error('Preencha a frequência e o primeiro envio.');
     }
 
-    if (mode === 'template') {
-      if (!selecionarTodos && !selectedLocatario) {
-        return toast.error('Selecione um cliente.');
-      }
-    } else {
-      if (selectedTemplates.length === 0) {
-        return toast.error('Selecione ao menos um modelo.');
-      }
-      if (!selectedLocatario) {
-        return toast.error('Erro: Locatário não identificado.');
-      }
+    if (!selectedLocatario) {
+      return toast.error('Selecione um locatário.');
     }
-    
+
+    if (!selectedTemplate) {
+      return toast.error('Selecione um template avulso para agendar.');
+    }
+
+    if (slots.length > 0 && templateParams.some((val) => !String(val || '').trim())) {
+      return toast.error(`Preencha todos os ${slots.length} valores de variáveis do template.`);
+    }
+
     try {
       setSaving(true);
-      
       const freqNum = frequencia === 'personalizado' ? parseInt(frequenciaDias, 10) : null;
-      let payloads = [];
 
-      if (mode === 'template') {
-        const targets = selecionarTodos ? locatarios : [selectedLocatario];
-        payloads = targets.map(t => ({
-          id_usuario: usuario.id,
-          id_template: template.id,
-          id_locatario: t.id,
-          frequencia,
-          frequencia_dias: freqNum,
-          proximo_envio: proximoEnvio,
-          horario_envio: horario + ':00',
-          ativo: true
-        }));
-      } else {
-        payloads = selectedTemplates.map(tmpl => ({
-          id_usuario: usuario.id,
-          id_template: tmpl.id,
-          id_locatario: selectedLocatario.id,
-          frequencia,
-          frequencia_dias: freqNum,
-          proximo_envio: proximoEnvio,
-          horario_envio: horario + ':00',
-          ativo: true
-        }));
-      }
-      
-      if (payloads.length === 0) return toast.error('Nenhum agendamento pôde ser criado.');
+      const { data, error } = await supabase.functions.invoke('zernio-whatsapp', {
+        body: {
+          action: 'create_schedule',
+          templateId: selectedTemplate.id,
+          tenantId: selectedLocatario.id,
+          frequency: frequencia,
+          frequencyDays: freqNum,
+          scheduledDate: proximoEnvio,
+          scheduledTime: horario,
+          templateParams: templateParams,
+        },
+      });
 
-      const { error } = await supabase.from('agendamentos_mensagens').insert(payloads);
-      if (error) throw error;
-      
-      toast.success(`${payloads.length} agendamento(s) criado(s)!`);
-      if (mode === 'template') {
-        setSelectedLocatario(null);
-        setSelecionarTodos(false);
-      } else {
-        setSelectedTemplates([]);
+      if (error) {
+        let msg = error.message;
+        try {
+          const body = await error.context?.json();
+          if (body?.error) msg = body.error;
+        } catch {}
+        throw new Error(msg);
       }
-      setFrequenciaDias('');
+
+      if (data?.error) throw new Error(data.error);
+
+      toast.success('Agendamento configurado com sucesso!');
+      setSelectedTemplate(null);
+      setTemplateParams([]);
       fetchData();
     } catch (error) {
       toast.error('Erro ao criar agendamento: ' + error.message);
@@ -157,191 +228,379 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
     }
   };
 
-  const toggleTemplateSelection = (tmpl) => {
-    setSelectedTemplates(prev => 
-      prev.find(t => t.id === tmpl.id) 
-        ? prev.filter(t => t.id !== tmpl.id) 
-        : [...prev, tmpl]
-    );
+  const toggleScheduleActive = async (schedule) => {
+    setBusyScheduleId(schedule.id);
+    try {
+      const nextAtivo = !schedule.ativo;
+      const { error } = await supabase
+        .from('agendamentos_mensagens')
+        .update({ ativo: nextAtivo })
+        .eq('id', schedule.id)
+        .eq('id_usuario', usuario.id);
+      if (error) throw error;
+      toast.success(nextAtivo ? 'Agendamento reativado.' : 'Agendamento pausado.');
+      fetchData();
+    } catch (error) {
+      toast.error('Erro ao atualizar agendamento: ' + error.message);
+    } finally {
+      setBusyScheduleId(null);
+    }
   };
 
   const handleDelete = async (id) => {
     if (!window.confirm('Excluir este agendamento?')) return;
+    setBusyScheduleId(id);
     try {
-      const { error } = await supabase.from('agendamentos_mensagens').delete().eq('id', id);
+      const { error } = await supabase
+        .from('agendamentos_mensagens')
+        .delete()
+        .eq('id', id)
+        .eq('id_usuario', usuario.id);
       if (error) throw error;
-      toast.success('Removido com sucesso.');
+      toast.success('Agendamento removido.');
       fetchData();
     } catch (error) {
-      toast.error('Erro ao remover.');
+      toast.error('Erro ao remover: ' + error.message);
+    } finally {
+      setBusyScheduleId(null);
     }
   };
 
-  const filteredItems = mode === 'template' 
-    ? locatarios.filter(l => l.nome_completo.toLowerCase().includes(searchTerm.toLowerCase()))
-    : templates.filter(t => t.titulo.toLowerCase().includes(searchTerm.toLowerCase()));
+  const filteredTemplates = useMemo(() => {
+    return avulsoTemplates.filter((t) =>
+      t.name.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [avulsoTemplates, searchTerm]);
 
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-[70] flex flex-col md:flex-row md:items-center justify-start md:justify-center p-4 py-8 md:p-8 bg-black/90 backdrop-blur-sm animate-in fade-in duration-300 gap-6 overflow-y-auto">
-      
-      <div className="bg-zinc-900 border border-zinc-800 rounded-3xl w-full max-w-md shadow-2xl flex flex-col shrink-0 h-[650px] md:h-[85vh] mx-auto">
+      {/* Coluna 1: Configuração do Agendamento */}
+      <div className="bg-zinc-900 border border-zinc-800 rounded-3xl w-full max-w-md shadow-2xl flex flex-col shrink-0 h-[680px] md:h-[88vh] mx-auto">
         <div className="p-5 border-b border-zinc-800 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-indigo-500/10 rounded-xl"><CalendarClock size={20} className="text-indigo-500" /></div>
+            <div className="p-2 bg-indigo-500/10 rounded-xl">
+              <CalendarClock size={20} className="text-indigo-500" />
+            </div>
             <div>
               <h3 className="text-sm font-black text-white uppercase tracking-tight">
-                {mode === 'template' ? 'Novo Agendamento' : 'Configurar Cliente'}
+                {mode === 'template' ? 'Novo Agendamento' : 'Configurar Agendamento'}
               </h3>
               <p className="text-[10px] text-zinc-500 uppercase">
-                {mode === 'template' ? `Template: ${template?.titulo}` : `Cliente: ${selectedLocatario?.nome_completo}`}
+                Cliente: {selectedLocatario?.nome_completo || 'Não selecionado'}
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="text-zinc-500 md:hidden hover:text-white"><X size={20} /></button>
+          <button onClick={onClose} className="text-zinc-500 md:hidden hover:text-white" aria-label="Fechar">
+            <X size={20} />
+          </button>
         </div>
 
         <div className="p-5 flex-1 overflow-y-auto space-y-5">
-           <div className="grid grid-cols-2 gap-4">
-             <div className="space-y-2">
-                <label className="text-[10px] uppercase font-black tracking-widest text-zinc-500">Frequência</label>
-                <div className="flex gap-2">
-                  <select className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500" value={frequencia} onChange={e => setFrequencia(e.target.value)}>
-                     <option value="diario">Diária</option>
-                     <option value="semanal">Semanal</option>
-                     <option value="quinzenal">Quinzenal</option>
-                     <option value="mensal">Mensal</option>
-                     <option value="personalizado">Personalizado</option>
-                  </select>
-                  {frequencia === 'personalizado' && (
-                    <input type="number" placeholder="Dias" className="w-16 bg-zinc-950 border border-zinc-800 rounded-xl px-2 py-2 text-center text-xs text-white outline-none focus:border-indigo-500" value={frequenciaDias} onChange={e => setFrequenciaDias(e.target.value)} />
-                  )}
-                </div>
-             </div>
-             <div className="space-y-2">
-                <label className="text-[10px] uppercase font-black tracking-widest text-zinc-500">Primeiro Envio</label>
-                <div className="flex gap-2">
-                  <input type="date" className="flex-[2] bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500" value={proximoEnvio} onChange={e => setProximoEnvio(e.target.value)} />
-                  <input type="time" className="flex-[1] bg-zinc-950 border border-zinc-800 rounded-xl px-2 py-2 text-center text-xs text-white outline-none focus:border-indigo-500" value={horario} onChange={e => setHorario(e.target.value)} />
-                </div>
-             </div>
-           </div>
+          {!initialLocatario && (
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase font-black tracking-widest text-zinc-500">Locatário</label>
+              <select
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                value={selectedLocatario?.id || ''}
+                onChange={(e) => {
+                  const found = locatarios.find((l) => l.id === e.target.value);
+                  setSelectedLocatario(found || null);
+                }}
+              >
+                <option value="">Selecione um locatário...</option>
+                {locatarios.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.nome_completo} ({l.whatsapp})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
-           <div className="space-y-3">
-             <div className="flex items-center justify-between">
-               <label className="text-[10px] uppercase font-black tracking-widest text-zinc-500">
-                 {mode === 'template' ? 'Selecionar Cliente' : 'Selecionar Modelos'}
-               </label>
-               {mode === 'template' && (
-                 <label className="flex items-center gap-2 cursor-pointer">
-                   <input type="checkbox" checked={selecionarTodos} onChange={e => setSelecionarTodos(e.target.checked)} className="accent-indigo-500" />
-                   <span className="text-[10px] font-bold text-zinc-400">Todos ({locatarios.length})</span>
-                 </label>
-               )}
-             </div>
-             
-             {!(mode === 'template' && selecionarTodos) ? (
-               <>
-                 <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600" size={14} />
-                    <input type="text" placeholder="Buscar..." className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white outline-none focus:border-indigo-500" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-                 </div>
-                 
-                 <div className="flex-1 min-h-[150px] overflow-y-auto space-y-2 pr-1">
-                    {filteredItems.map(item => {
-                      const isSelected = mode === 'template' 
-                        ? selectedLocatario?.id === item.id 
-                        : selectedTemplates.find(t => t.id === item.id);
-                        
-                      return (
-                        <button 
-                          key={item.id} 
-                          onClick={() => mode === 'template' ? setSelectedLocatario(item) : toggleTemplateSelection(item)} 
-                          className={`w-full text-left p-3 rounded-xl transition-all border ${isSelected ? 'bg-indigo-600/10 border-indigo-500/50' : 'bg-zinc-950 border-zinc-800 hover:border-zinc-700'}`}
-                        >
-                          <div className="flex justify-between items-center">
-                             <div className="min-w-0 flex-1">
-                               <p className={`text-xs font-bold truncate ${isSelected ? 'text-indigo-400' : 'text-zinc-300'}`}>
-                                 {mode === 'template' ? item.nome_completo : item.titulo}
-                               </p>
-                               <p className="text-[10px] text-zinc-500 font-mono mt-0.5 truncate">
-                                 {mode === 'template' ? item.whatsapp : (item.conteudo?.substring(0, 40) + '...')}
-                               </p>
-                             </div>
-                             {isSelected && <CheckCircle2 size={16} className="text-indigo-500 shrink-0 ml-2" />}
+          {/* Frequência e Primeiro Envio */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase font-black tracking-widest text-zinc-500">Frequência</label>
+              <div className="flex gap-2">
+                <select
+                  className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                  value={frequencia}
+                  onChange={(e) => setFrequencia(e.target.value)}
+                >
+                  {frequencies.map(([val, label]) => (
+                    <option key={val} value={val}>{label}</option>
+                  ))}
+                </select>
+                {frequencia === 'personalizado' && (
+                  <input
+                    type="number"
+                    min="1"
+                    max="365"
+                    placeholder="Dias"
+                    className="w-16 bg-zinc-950 border border-zinc-800 rounded-xl px-2 py-2 text-center text-xs text-white outline-none focus:border-indigo-500"
+                    value={frequenciaDias}
+                    onChange={(e) => setFrequenciaDias(e.target.value)}
+                  />
+                )}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase font-black tracking-widest text-zinc-500">Primeiro Envio</label>
+              <div className="flex gap-2">
+                <input
+                  type="date"
+                  min={getDefaultDate()}
+                  className="flex-[2] bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                  value={proximoEnvio}
+                  onChange={(e) => setProximoEnvio(e.target.value)}
+                />
+                <input
+                  type="time"
+                  className="flex-[1] bg-zinc-950 border border-zinc-800 rounded-xl px-2 py-2 text-center text-xs text-white outline-none focus:border-indigo-500"
+                  value={horario}
+                  onChange={(e) => setHorario(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Selecionar Template Avulso */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] uppercase font-black tracking-widest text-zinc-500">
+                Templates do Tipo Mensagem Avulsa
+              </label>
+              <span className="text-[10px] font-bold text-emerald-400">
+                {avulsoTemplates.length} disponível(is)
+              </span>
+            </div>
+
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600" size={14} />
+              <input
+                type="text"
+                placeholder="Filtrar template avulso..."
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+
+            {avulsoTemplates.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-950/60 p-4 text-center">
+                <AlertCircle size={24} className="mx-auto mb-2 text-amber-400" />
+                <p className="text-xs font-bold text-zinc-300">Nenhum template avulso cadastrado</p>
+                <p className="mt-1 text-[11px] text-zinc-500 leading-relaxed">
+                  Para agendar uma mensagem, acesse a aba <strong>/mensagens</strong> e clique em <em>“Usar como avulso”</em> em um template aprovado da Meta.
+                </p>
+                <Link
+                  to="/mensagens"
+                  onClick={onClose}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 px-3 py-1.5 text-xs font-bold transition"
+                >
+                  <ExternalLink size={13} /> Gerenciar Templates
+                </Link>
+              </div>
+            ) : (
+              <div className="max-h-[170px] overflow-y-auto space-y-2 pr-1">
+                {filteredTemplates.map((item) => {
+                  const isSelected = selectedTemplate?.id === item.id;
+                  const bodyComponent = (item.components || []).find((c) => componentType(c) === 'BODY');
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setSelectedTemplate(item)}
+                      className={`w-full text-left p-3 rounded-xl transition-all border ${
+                        isSelected
+                          ? 'bg-emerald-600/15 border-emerald-500/60'
+                          : 'bg-zinc-950 border-zinc-800 hover:border-zinc-700'
+                      }`}
+                    >
+                      <div className="flex justify-between items-center">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className={`text-xs font-bold truncate ${isSelected ? 'text-emerald-300' : 'text-zinc-200'}`}>
+                              {item.name}
+                            </p>
+                            <span className="text-[9px] font-mono text-zinc-500">{item.language}</span>
+                            <span className="text-[9px] bg-emerald-500/10 text-emerald-300 px-1.5 py-0.2 rounded font-bold uppercase">
+                              Avulso
+                            </span>
                           </div>
-                        </button>
-                      );
-                    })}
-                 </div>
-               </>
-             ) : (
-               <div className="flex-1 min-h-[150px] bg-indigo-500/5 border border-indigo-500/20 rounded-2xl flex flex-col items-center justify-center p-4 md:p-6 text-center animate-in fade-in zoom-in-95 duration-300">
-                 <UserCheck className="text-indigo-500 mb-3" size={32} />
-                 <h4 className="text-sm font-black text-white">Todos Selecionados</h4>
-                 <p className="text-[10px] text-zinc-400 mt-2 leading-relaxed">
-                   Serão gerados {locatarios.length} agendamentos individuais.<br/>Um para cada locatário ativo.
-                 </p>
-               </div>
-             )}
-           </div>
+                          {bodyComponent?.text && (
+                            <p className="text-[10px] text-zinc-500 mt-1 line-clamp-2">
+                              {bodyComponent.text}
+                            </p>
+                          )}
+                        </div>
+                        {isSelected && <CheckCircle2 size={16} className="text-emerald-400 shrink-0 ml-2" />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Variáveis do Template Selecionado */}
+          {selectedTemplate && slots.length > 0 && (
+            <div className="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wide text-zinc-300">Variáveis do Template</h4>
+                <p className="text-[10px] text-zinc-500 mt-0.5">
+                  Preencha os valores que serão enviados em cada mensagem agendada.
+                </p>
+              </div>
+              <div className="space-y-2">
+                {slots.map((slot, index) => (
+                  <div key={`${slot.position}-${slot.label}`}>
+                    <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">
+                      {slot.label}
+                    </label>
+                    <input
+                      type="text"
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                      value={templateParams[index] || ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setTemplateParams((curr) => curr.map((v, i) => (i === index ? val : v)));
+                      }}
+                      placeholder="Valor da variável..."
+                      required
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="p-5 border-t border-zinc-800">
-           <button 
-             disabled={saving || (mode === 'template' && !selecionarTodos && !selectedLocatario) || (mode === 'locatario' && selectedTemplates.length === 0)} 
-             onClick={handleSave} 
-             className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all shadow-lg shadow-indigo-600/20 disabled:opacity-50 flex items-center justify-center gap-2"
-           >
-             {saving ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />} 
-             {mode === 'template' ? 'Criar Recorrência' : `Vincular ${selectedTemplates.length} Modelo(s)`}
-           </button>
+          <button
+            disabled={saving || !selectedTemplate || !selectedLocatario || (slots.length > 0 && templateParams.some((val) => !String(val || '').trim()))}
+            onClick={handleSave}
+            className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all shadow-lg shadow-indigo-600/20 disabled:opacity-40 flex items-center justify-center gap-2"
+          >
+            {saving ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+            {saving ? 'Criando Agendamento...' : 'Criar Agendamento'}
+          </button>
         </div>
       </div>
 
-      <div className="bg-zinc-900 border border-zinc-800 rounded-3xl w-full max-w-md shadow-2xl flex flex-col shrink-0 h-[500px] md:h-[85vh] mx-auto">
+      {/* Coluna 2: Agendamentos Ativos do Locatário */}
+      <div className="bg-zinc-900 border border-zinc-800 rounded-3xl w-full max-w-md shadow-2xl flex flex-col shrink-0 h-[500px] md:h-[88vh] mx-auto">
         <div className="p-5 border-b border-zinc-800 flex items-center justify-between">
-           <div className="flex items-center gap-2">
-             <Clock size={18} className="text-emerald-500" />
-             <h3 className="text-sm font-black text-white uppercase tracking-tight">
-               {mode === 'template' ? 'Ativos neste Template' : 'Ativos para este Cliente'}
-             </h3>
-           </div>
-           <button onClick={onClose} className="text-zinc-500 hidden md:block hover:text-white"><X size={20} /></button>
+          <div className="flex items-center gap-2">
+            <Clock size={18} className="text-emerald-500" />
+            <h3 className="text-sm font-black text-white uppercase tracking-tight">
+              Agendamentos Deste Cliente
+            </h3>
+          </div>
+          <button onClick={onClose} className="text-zinc-500 hidden md:block hover:text-white" aria-label="Fechar">
+            <X size={20} />
+          </button>
         </div>
-        
+
         <div className="p-5 flex-1 overflow-y-auto">
-           {loading ? (
-             <div className="flex flex-col items-center justify-center h-full"><Loader2 className="animate-spin text-zinc-500" size={32} /></div>
-           ) : agendamentos.length === 0 ? (
-             <div className="flex flex-col items-center justify-center h-full text-center">
-                <p className="text-zinc-600 text-[10px] font-bold uppercase tracking-widest">Nenhuma recorrência ativa</p>
-             </div>
-           ) : (
-             <div className="space-y-3">
-               {agendamentos.map(ag => (
-                 <div key={ag.id} className="p-4 bg-zinc-950 border border-zinc-800 rounded-2xl flex items-center justify-between group hover:border-zinc-700 transition-all">
-                    <div className="min-w-0 flex-1 mr-2">
-                      <p className="text-xs font-bold text-zinc-200 uppercase truncate">
-                        {mode === 'template' ? ag.locatarios.nome_completo : ag.mensagens_template?.titulo}
-                      </p>
-                      <div className="flex flex-wrap gap-2 mt-1">
-                        <span className="text-[9px] bg-indigo-500/10 text-indigo-400 px-2.5 py-0.5 rounded-full font-black uppercase tracking-widest">{ag.frequencia}</span>
-                        <span className="text-[9px] bg-zinc-800 text-zinc-400 px-2.5 py-0.5 rounded-full font-bold uppercase tracking-widest">
-                          Prox: {ag.proximo_envio.split('-').reverse().join('/')} {ag.horario_envio ? `às ${ag.horario_envio.substring(0, 5)}` : ''}
+          {loading ? (
+            <div className="flex flex-col items-center justify-center h-full">
+              <Loader2 className="animate-spin text-zinc-500" size={32} />
+            </div>
+          ) : agendamentos.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-center">
+              <CalendarClock className="text-zinc-700 mb-2" size={32} />
+              <p className="text-zinc-500 text-xs font-bold uppercase tracking-wider">
+                Nenhum agendamento ativo
+              </p>
+              <p className="text-zinc-600 text-[10px] mt-1">
+                Selecione um template avulso ao lado para programar um envio periódico.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {agendamentos.map((ag) => {
+                const metaTemplate = ag.zernio_template_id ? templatesById.get(ag.zernio_template_id) : null;
+                const templateTitle = metaTemplate?.name || ag.mensagens_template?.titulo || 'Template Meta';
+                const isMeta = Boolean(ag.zernio_template_id);
+                const isBusy = busyScheduleId === ag.id;
+
+                return (
+                  <div
+                    key={ag.id}
+                    className={`p-4 bg-zinc-950 border rounded-2xl flex items-center justify-between group transition-all ${
+                      ag.ativo ? 'border-zinc-800 hover:border-zinc-700' : 'border-zinc-800/40 opacity-60'
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1 mr-3">
+                      <div className="flex items-center gap-1.5">
+                        <MessageSquare size={13} className="text-emerald-400 shrink-0" />
+                        <p className="text-xs font-bold text-zinc-200 uppercase truncate">
+                          {templateTitle}
+                        </p>
+                        {isMeta && (
+                          <span className="text-[8px] bg-indigo-500/15 text-indigo-300 px-1.5 py-0.2 rounded font-mono">
+                            Meta
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        <span className="text-[9px] bg-indigo-500/10 text-indigo-400 px-2 py-0.5 rounded-full font-black uppercase tracking-wider">
+                          {ag.frequencia}
+                        </span>
+                        <span className="text-[9px] bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                          Próx: {ag.proximo_envio ? ag.proximo_envio.split('-').reverse().join('/') : '—'}{' '}
+                          {ag.horario_envio ? `às ${ag.horario_envio.substring(0, 5)}` : ''}
                         </span>
                       </div>
+                      {ag.ultimo_erro && (
+                        <p className="text-[10px] text-red-400 mt-1 line-clamp-1">
+                          {ag.ultimo_erro}
+                        </p>
+                      )}
                     </div>
-                    <button onClick={() => handleDelete(ag.id)} className="p-2 bg-red-500/10 text-red-500 rounded-lg hover:bg-red-500/20 opacity-0 group-hover:opacity-100 transition-all shrink-0"><Trash2 size={16}/></button>
-                 </div>
-               ))}
-             </div>
-           )}
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => toggleScheduleActive(ag)}
+                        className={`p-2 rounded-xl transition ${
+                          ag.ativo
+                            ? 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20'
+                            : 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'
+                        }`}
+                        title={ag.ativo ? 'Pausar agendamento' : 'Reativar agendamento'}
+                      >
+                        {isBusy ? (
+                          <Loader2 size={15} className="animate-spin" />
+                        ) : ag.ativo ? (
+                          <Pause size={15} />
+                        ) : (
+                          <Play size={15} />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => handleDelete(ag.id)}
+                        className="p-2 bg-red-500/10 text-red-400 hover:bg-red-500/20 rounded-xl transition"
+                        title="Excluir agendamento"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
-
     </div>
   );
 };
+
 export default AgendamentoModal;

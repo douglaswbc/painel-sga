@@ -1270,15 +1270,17 @@ Deno.serve(async (req) => {
 
     if (action === 'set_default') {
       const templates = await syncTemplates(admin, channel, user.id);
-      const purpose = body.purpose === 'payment_confirmation' ? 'payment_confirmation' : body.purpose === 'charge' ? 'charge' : '';
-      if (!purpose) return json({ error: 'Informe se o template será usado em lembretes ou confirmações de pagamento.' }, 400);
+      const purpose = ['payment_confirmation', 'charge', 'avulso'].includes(body.purpose) ? body.purpose : '';
+      if (!purpose) return json({ error: 'Informe se o template será usado em lembretes, confirmações de pagamento ou mensagens avulsas.' }, 400);
       const selected = templates.find((item: JsonRecord) => item.id === body.templateId);
       if (!selected) return json({ error: 'Selecione um template deste canal.' }, 404);
       if (selected.status !== 'APPROVED') return json({ error: 'A Meta só permite usar templates com status APPROVED.' }, 409);
       const expectedCount = templateParameterCount(Array.isArray(selected.components) ? selected.components : []);
       const allowedFields = purpose === 'charge'
         ? new Set(['tenant_first_name', 'amount', 'due_date', 'payment_link', 'payment_token'])
-        : new Set(['tenant_first_name', 'amount', 'paid_at']);
+        : purpose === 'payment_confirmation'
+        ? new Set(['tenant_first_name', 'amount', 'paid_at'])
+        : new Set(['tenant_first_name', 'tenant_name']);
       const requestedMapping = Array.isArray(body.variableMapping) ? body.variableMapping : [];
       const variableMapping = requestedMapping.map((item: JsonRecord, index: number) => ({
         position: Number(item.position), field: String(item.field ?? ''), index,
@@ -1301,7 +1303,7 @@ Deno.serve(async (req) => {
             .eq('purpose', 'charge').eq('is_default', true).order('reminder_order', { ascending: false }).limit(1);
           reminderOrder = Number(currentReminders?.[0]?.reminder_order || 0) + 1;
         }
-      } else {
+      } else if (purpose === 'payment_confirmation') {
         const { error: clearError } = await admin.from('zernio_whatsapp_template_usages')
           .update({ is_default: false, updated_at: new Date().toISOString() })
           .eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId).eq('purpose', purpose).eq('is_default', true);
@@ -1314,6 +1316,18 @@ Deno.serve(async (req) => {
           is_default: true, reminder_order: reminderOrder, updated_at: new Date().toISOString(),
         }, { onConflict: 'template_id,purpose' }).select('id').maybeSingle();
       if (saveError || !saved) throw new Error('Não foi possível selecionar o template padrão.');
+      return json({ success: true, templates: await syncTemplates(admin, channel, user.id), channel: publicChannel(channel) });
+    }
+
+    if (action === 'remove_usage') {
+      const { templateId, purpose } = body;
+      if (!templateId || !purpose) return json({ error: 'Parâmetros templateId e purpose são obrigatórios.' }, 400);
+      const { error: delError } = await admin.from('zernio_whatsapp_template_usages')
+        .delete()
+        .eq('template_id', templateId)
+        .eq('purpose', purpose)
+        .eq('id_usuario', user.id);
+      if (delError) throw new Error('Não foi possível remover a categoria do template.');
       return json({ success: true, templates: await syncTemplates(admin, channel, user.id), channel: publicChannel(channel) });
     }
 

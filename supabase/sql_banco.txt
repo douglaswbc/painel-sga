@@ -424,7 +424,7 @@ CREATE TABLE IF NOT EXISTS public.zernio_whatsapp_templates (
   components jsonb NOT NULL DEFAULT '[]'::jsonb,
   variable_mapping jsonb NOT NULL DEFAULT '[]'::jsonb,
   purpose text NOT NULL DEFAULT 'general'
-    CHECK (purpose IN ('general', 'charge', 'payment_confirmation')),
+    CHECK (purpose IN ('general', 'charge', 'payment_confirmation', 'avulso')),
   is_default boolean NOT NULL DEFAULT false,
   last_synced_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -446,7 +446,7 @@ CREATE TABLE IF NOT EXISTS public.zernio_whatsapp_template_usages (
   template_id uuid NOT NULL REFERENCES public.zernio_whatsapp_templates(id) ON DELETE CASCADE,
   id_usuario uuid NOT NULL REFERENCES public.usuarios(id) ON DELETE CASCADE,
   account_id text NOT NULL,
-  purpose text NOT NULL CHECK (purpose IN ('charge', 'payment_confirmation')),
+  purpose text NOT NULL CHECK (purpose IN ('charge', 'payment_confirmation', 'avulso')),
   variable_mapping jsonb NOT NULL DEFAULT '[]'::jsonb,
   is_default boolean NOT NULL DEFAULT false,
   reminder_order integer NOT NULL DEFAULT 1 CHECK (reminder_order > 0),

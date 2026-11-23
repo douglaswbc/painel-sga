@@ -98,6 +98,10 @@ const usageFields = {
     ['amount', 'Valor pago'],
     ['paid_at', 'Data do pagamento'],
   ],
+  avulso: [
+    ['tenant_first_name', 'Primeiro nome do locatário'],
+    ['tenant_name', 'Nome completo do locatário'],
+  ],
 };
 
 // Templates da Meta com botao de URL podem ser corrigidos pelo SGA: o Manager
@@ -723,13 +727,37 @@ const ZernioTemplatesCard = () => {
       setSelection(null);
       setNotice(selection.purpose === 'charge'
         ? 'Template adicionado à sequência de lembretes.'
-        : 'Template aprovado selecionado para as confirmações de pagamento.');
+        : selection.purpose === 'payment_confirmation'
+        ? 'Template aprovado selecionado para as confirmações de pagamento.'
+        : 'Template configurado como mensagem avulsa.');
     } catch (error) {
       setErrorMessage(error.message);
     } finally {
       setBusy(false);
     }
   };
+
+  const removeUsage = async (template, purpose) => {
+    setBusy(true);
+    setErrorMessage('');
+    setNotice('');
+    try {
+      const data = await invoke('remove_usage', {
+        templateId: template.id,
+        purpose,
+      });
+      setTemplates(data.templates || []);
+      setNotice(purpose === 'avulso'
+        ? 'Template removido da categoria de mensagens avulsas.'
+        : 'Classificação do template removida.');
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const [categoryFilter, setCategoryFilter] = useState('all');
 
   const chargeSequence = useMemo(() => templates
     .map((template) => ({
@@ -745,6 +773,22 @@ const ZernioTemplatesCard = () => {
     const status = String(template.status || '').toUpperCase();
     return status !== 'DELETED' && status !== 'PENDING_DELETION';
   }), [templates]);
+
+  const filteredTemplates = useMemo(() => {
+    return visibleTemplates.filter((template) => {
+      if (categoryFilter === 'all') return true;
+      if (categoryFilter === 'charge') {
+        return template.usages?.some((u) => u.purpose === 'charge' && u.is_default);
+      }
+      if (categoryFilter === 'payment_confirmation') {
+        return template.usages?.some((u) => u.purpose === 'payment_confirmation' && u.is_default);
+      }
+      if (categoryFilter === 'avulso') {
+        return template.usages?.some((u) => u.purpose === 'avulso' && u.is_default);
+      }
+      return true;
+    });
+  }, [visibleTemplates, categoryFilter]);
 
   const hiddenTemplates = templates.length - visibleTemplates.length;
 
@@ -853,12 +897,64 @@ const ZernioTemplatesCard = () => {
         </li>)}</ol> : <p className="rounded-lg border border-dashed border-slate-700 px-3 py-4 text-center text-xs text-slate-500">Adicione templates aprovados usando o botão “Usar em lembretes”.</p>}
       </div>
 
-      {visibleTemplates.length > 0 ? <div className="space-y-2">
-        {visibleTemplates.map((template) => {
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200/70 pb-3">
+        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 mr-2">Filtrar por Categoria:</span>
+        <button
+          type="button"
+          onClick={() => setCategoryFilter('all')}
+          className={`rounded-lg px-3 py-1 text-xs font-bold transition ${
+            categoryFilter === 'all'
+              ? 'bg-indigo-600 !text-white shadow-sm'
+              : 'bg-slate-100 text-slate-700 hover:bg-slate-200 hover:text-slate-900 border border-slate-200'
+          }`}
+        >
+          Todos ({visibleTemplates.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setCategoryFilter('charge')}
+          className={`rounded-lg px-3 py-1 text-xs font-bold transition flex items-center gap-1.5 ${
+            categoryFilter === 'charge'
+              ? 'bg-indigo-600 !text-white shadow-sm'
+              : 'bg-indigo-50/70 text-indigo-700 hover:bg-indigo-100 hover:text-indigo-900 border border-indigo-200/70'
+          }`}
+        >
+          <span className={`h-2 w-2 rounded-full ${categoryFilter === 'charge' ? 'bg-white' : 'bg-indigo-500'}`} />
+          Lembretes ({visibleTemplates.filter(t => t.usages?.some(u => u.purpose === 'charge' && u.is_default)).length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setCategoryFilter('payment_confirmation')}
+          className={`rounded-lg px-3 py-1 text-xs font-bold transition flex items-center gap-1.5 ${
+            categoryFilter === 'payment_confirmation'
+              ? 'bg-sky-600 !text-white shadow-sm'
+              : 'bg-sky-50/70 text-sky-700 hover:bg-sky-100 hover:text-sky-900 border border-sky-200/70'
+          }`}
+        >
+          <span className={`h-2 w-2 rounded-full ${categoryFilter === 'payment_confirmation' ? 'bg-white' : 'bg-sky-500'}`} />
+          Pagamentos ({visibleTemplates.filter(t => t.usages?.some(u => u.purpose === 'payment_confirmation' && u.is_default)).length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setCategoryFilter('avulso')}
+          className={`rounded-lg px-3 py-1 text-xs font-bold transition flex items-center gap-1.5 ${
+            categoryFilter === 'avulso'
+              ? 'bg-emerald-600 !text-white shadow-sm'
+              : 'bg-emerald-50/70 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-900 border border-emerald-200/70'
+          }`}
+        >
+          <span className={`h-2 w-2 rounded-full ${categoryFilter === 'avulso' ? 'bg-white' : 'bg-emerald-500'}`} />
+          Avulsos ({visibleTemplates.filter(t => t.usages?.some(u => u.purpose === 'avulso' && u.is_default)).length})
+        </button>
+      </div>
+
+      {filteredTemplates.length > 0 ? <div className="space-y-2">
+        {filteredTemplates.map((template) => {
           const status = String(template.status || 'PENDING').toUpperCase();
           const chargeUsage = template.usages?.find((usage) => usage.purpose === 'charge' && usage.is_default);
           const isChargeTemplate = Boolean(chargeUsage);
           const isPaymentTemplate = template.usages?.some((usage) => usage.purpose === 'payment_confirmation' && usage.is_default) || false;
+          const isAvulsoTemplate = template.usages?.some((usage) => usage.purpose === 'avulso' && usage.is_default) || false;
           const urlButton = template.provider === 'meta' ? getUrlButton(template) : null;
           return <article key={template.id} className="flex flex-col md:flex-row md:items-center justify-between gap-3 rounded-lg border border-slate-800 p-3">
             <div className="min-w-0">
@@ -868,18 +964,28 @@ const ZernioTemplatesCard = () => {
                 <span className={`text-[10px] uppercase font-bold border rounded-full px-2 py-0.5 ${statusStyles[status] || statusStyles.PENDING}`}>{status}</span>
                 {isChargeTemplate && <span className="inline-flex items-center rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-200">Lembrete {chargeUsage.reminder_order || 1}º</span>}
                 {isPaymentTemplate && <span className="inline-flex items-center rounded-full border border-sky-400/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-200">Confirmação de pagamento</span>}
+                {isAvulsoTemplate && <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-300">Mensagem Avulsa</span>}
               </div>
               <p className="text-[11px] text-slate-500 mt-1">{template.category}{template.rejection_reason ? ` · ${template.rejection_reason}` : ''}</p>
               {urlButton?.needsFix && <p className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-300"><AlertCircle size={12} /> O botão de URL está com endereço inválido. Corrija em “Editar template”.</p>}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {status === 'APPROVED' && <>
-                <button type="button" onClick={() => configureDefault(template, 'charge')} disabled={busy} className={`shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 disabled:opacity-40 ${isChargeTemplate ? 'bg-emerald-600 text-white' : 'bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-300'}`}>
+                <button type="button" onClick={() => configureDefault(template, 'charge')} disabled={busy} className={`shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 disabled:opacity-40 ${isChargeTemplate ? 'bg-indigo-600 text-white' : 'bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-300'}`}>
                   {isChargeTemplate && <CheckCircle2 size={14} />}{isChargeTemplate ? `Editar lembrete ${chargeUsage.reminder_order || 1}º` : 'Usar em lembretes'}
                 </button>
                 <button type="button" onClick={() => configureDefault(template, 'payment_confirmation')} disabled={busy} className={`shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 disabled:opacity-40 ${isPaymentTemplate ? 'bg-sky-600 text-white' : 'bg-sky-600/10 hover:bg-sky-600/20 text-sky-300'}`}>
                   {isPaymentTemplate && <CheckCircle2 size={14} />}{isPaymentTemplate ? 'Confirmação selecionada' : 'Usar em confirmações'}
                 </button>
+                {isAvulsoTemplate ? (
+                  <button type="button" onClick={() => removeUsage(template, 'avulso')} disabled={busy} className="shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40" title="Clique para remover da categoria de mensagens avulsas">
+                    <CheckCircle2 size={14} /> Avulso (ativo)
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => configureDefault(template, 'avulso')} disabled={busy} className="shrink-0 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-300 disabled:opacity-40" title="Usar este template para mensagens e agendamentos avulsos">
+                    Usar como avulso
+                  </button>
+                )}
               </>}
               {template.provider === 'meta' && EDITABLE_BUTTON_STATUSES.has(status) && (
                 <button
@@ -918,7 +1024,7 @@ const ZernioTemplatesCard = () => {
           <div className="flex items-start justify-between gap-4">
             <div>
               <h3 className="text-base font-bold text-white">Configurar uso do template</h3>
-              <div className="mt-1 flex flex-wrap items-center gap-2"><p className="text-xs text-slate-400">{selection.template.name}</p><span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${selection.purpose === 'charge' ? 'border-indigo-400/30 bg-indigo-500/10 text-indigo-200' : 'border-sky-400/30 bg-sky-500/10 text-sky-200'}`}>{selection.purpose === 'charge' ? 'Lembrete de cobrança' : 'Confirmação de pagamento'}</span></div>
+              <div className="mt-1 flex flex-wrap items-center gap-2"><p className="text-xs text-slate-400">{selection.template.name}</p><span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${selection.purpose === 'charge' ? 'border-indigo-400/30 bg-indigo-500/10 text-indigo-200' : selection.purpose === 'payment_confirmation' ? 'border-sky-400/30 bg-sky-500/10 text-sky-200' : 'border-emerald-400/30 bg-emerald-500/10 text-emerald-300'}`}>{selection.purpose === 'charge' ? 'Lembrete de cobrança' : selection.purpose === 'payment_confirmation' ? 'Confirmação de pagamento' : 'Mensagem avulsa'}</span></div>
             </div>
             <button type="button" onClick={() => setSelection(null)} disabled={busy} className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white" aria-label="Fechar"><X size={18} /></button>
           </div>
@@ -935,7 +1041,7 @@ const ZernioTemplatesCard = () => {
             </div>
             <TemplateAssociationPreview template={selection.template} />
           </div>
-          <p className="mt-4 text-[11px] text-slate-500">{selection.purpose === 'charge' ? 'Este template será incluído na sequência de lembretes. Ajuste a ordem na lista acima.' : 'Este template será usado nas confirmações de pagamento deste locador.'}</p>
+          <p className="mt-4 text-[11px] text-slate-500">{selection.purpose === 'charge' ? 'Este template será incluído na sequência de lembretes. Ajuste a ordem na lista acima.' : selection.purpose === 'payment_confirmation' ? 'Este template será usado nas confirmações de pagamento deste locador.' : 'Este template estará disponível na tela de locatários para mensagens e agendamentos avulsos.'}</p>
           <div className="mt-5 flex justify-end gap-2 border-t border-slate-800 pt-4">
             <button type="button" onClick={() => setSelection(null)} disabled={busy} className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800">Cancelar</button>
             <button type="submit" disabled={busy || variableMapping.some((item) => !item.field)} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-500 disabled:opacity-50">{busy ? 'Salvando...' : 'Salvar seleção'}</button>
