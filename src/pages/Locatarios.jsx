@@ -39,6 +39,13 @@ const validarCPF = (cpf) => {
   return digito2 === parseInt(c[10]);
 };
 
+const normalizeText = (text) =>
+  String(text || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+
 const emptyForm = { nome_completo: '', whatsapp: '', email: '', documento: 'CPF', cpf: '', cep: '', rua: '', numero: '', bairro: '', cidade: '', estado: '', ativo: true };
 
 const Locatarios = () => {
@@ -60,20 +67,45 @@ const Locatarios = () => {
   const cepFetching = useRef(false);
 
   const filteredTenants = useMemo(() => {
-    const list = tenants.filter(t =>
-      t.nome_completo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      t.cpf?.includes(searchTerm.replace(/\D/g, ''))
-    );
+    const rawSearch = searchTerm.trim();
 
-    return list.sort((a, b) => {
-      if (sortOrder === 'nome_desc') {
-        return (b.nome_completo || '').localeCompare(a.nome_completo || '', 'pt-BR');
-      }
-      if (sortOrder === 'recentes') {
-        return new Date(b.created_at || 0) - new Date(a.created_at || 0);
-      }
-      return (a.nome_completo || '').localeCompare(b.nome_completo || '', 'pt-BR');
+    const sorted = (list) =>
+      list.sort((a, b) => {
+        if (sortOrder === 'nome_desc') {
+          return (b.nome_completo || '').localeCompare(a.nome_completo || '', 'pt-BR');
+        }
+        if (sortOrder === 'recentes') {
+          return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+        }
+        return (a.nome_completo || '').localeCompare(b.nome_completo || '', 'pt-BR');
+      });
+
+    if (!rawSearch) {
+      return sorted([...tenants]);
+    }
+
+    const normalizedSearch = normalizeText(rawSearch);
+    const digitsSearch = rawSearch.replace(/\D/g, '');
+
+    const list = tenants.filter((t) => {
+      const nameMatches = normalizeText(t.nome_completo).includes(normalizedSearch);
+      const emailMatches = t.email ? normalizeText(t.email).includes(normalizedSearch) : false;
+
+      const rawCpf = String(t.cpf || '');
+      const cleanCpf = rawCpf.replace(/\D/g, '');
+      const cpfMatches = digitsSearch
+        ? cleanCpf.includes(digitsSearch)
+        : (rawCpf ? rawCpf.toLowerCase().includes(normalizedSearch) : false);
+
+      const cleanPhone = String(t.whatsapp || '').replace(/\D/g, '');
+      const phoneMatches = digitsSearch ? cleanPhone.includes(digitsSearch) : false;
+
+      const cityMatches = t.cidade ? normalizeText(t.cidade).includes(normalizedSearch) : false;
+
+      return nameMatches || emailMatches || cpfMatches || phoneMatches || cityMatches;
     });
+
+    return sorted(list);
   }, [tenants, searchTerm, sortOrder]);
 
   useEffect(() => {
@@ -251,7 +283,23 @@ const Locatarios = () => {
             </tr>
           </Thead>
           <Tbody>
-            {loading ? <LoadingRow colSpan={5} /> : filteredTenants.map(item => (
+            {loading ? (
+              <LoadingRow colSpan={5} />
+            ) : filteredTenants.length === 0 ? (
+              <tr>
+                <Td colSpan={5} className="py-12 text-center">
+                  <div className="flex flex-col items-center justify-center gap-1.5 text-zinc-500">
+                    <Search size={22} className="text-zinc-600 mb-1" />
+                    <p className="text-xs font-bold text-zinc-300">
+                      Nenhum locatário encontrado {searchTerm ? `para "${searchTerm}"` : ''}
+                    </p>
+                    <p className="text-[11px] text-zinc-500">
+                      Tente buscar por outro termo, nome, CPF/CNPJ, WhatsApp ou e-mail.
+                    </p>
+                  </div>
+                </Td>
+              </tr>
+            ) : filteredTenants.map(item => (
               <tr key={item.id} className="hover:bg-zinc-800/30 transition-colors group">
                 <Td>
                   <div className="font-bold text-zinc-100">{item.nome_completo}</div>
@@ -287,6 +335,16 @@ const Locatarios = () => {
         <div className="md:hidden grid grid-cols-1 divide-y divide-zinc-800">
           {loading ? (
             <div className="p-10 text-center"><div className="animate-spin mx-auto text-indigo-500 w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full" /></div>
+          ) : filteredTenants.length === 0 ? (
+            <div className="p-8 text-center text-zinc-500 space-y-1">
+              <Search size={22} className="mx-auto text-zinc-600 mb-2" />
+              <p className="text-xs font-bold text-zinc-300">
+                Nenhum locatário encontrado {searchTerm ? `para "${searchTerm}"` : ''}
+              </p>
+              <p className="text-[11px] text-zinc-500">
+                Tente buscar por outro termo ou documento.
+              </p>
+            </div>
           ) : filteredTenants.map(item => (
             <div key={item.id} className="p-5 space-y-4">
               <div className="flex justify-between items-start">
