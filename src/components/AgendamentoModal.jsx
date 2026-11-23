@@ -4,7 +4,7 @@ import { supabase } from '../services/supabase';
 import { toast } from 'react-toastify';
 import {
   X, Search, Clock, CalendarClock, Loader2, Trash2, CheckCircle2,
-  Pause, Play, AlertCircle, ExternalLink, MessageSquare,
+  Pause, Play, AlertCircle, ExternalLink, MessageSquare, Users
 } from 'lucide-react';
 
 const frequencies = [
@@ -62,6 +62,11 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
   const [selectedTemplate, setSelectedTemplate] = useState(template || null);
   const [templateParams, setTemplateParams] = useState([]);
 
+  // Suporte a Agendamento em Lote
+  const [isBatchMode, setIsBatchMode] = useState(false);
+  const [selectedTenantIds, setSelectedTenantIds] = useState(initialLocatario?.id ? [initialLocatario.id] : []);
+  const [tenantSearch, setTenantSearch] = useState('');
+
   const [frequencia, setFrequencia] = useState('semanal');
   const [frequenciaDias, setFrequenciaDias] = useState('');
   const [proximoEnvio, setProximoEnvio] = useState(getDefaultDate);
@@ -97,6 +102,7 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
     const tenantFullName = selectedLocatario?.nome_completo || '';
 
     const newParams = slots.map((slot) => {
+      if (isBatchMode && slot.position === 1) return '{{nome}}';
       const mapped = variableMapping.find((m) => Number(m.position) === slot.position)?.field;
       if (mapped === 'tenant_first_name' && tenantFirstName) return tenantFirstName;
       if (mapped === 'tenant_name' && tenantFullName) return tenantFullName;
@@ -104,7 +110,7 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
       return '';
     });
     setTemplateParams(newParams);
-  }, [selectedTemplate, selectedLocatario, slots]);
+  }, [selectedTemplate, selectedLocatario, slots, isBatchMode]);
 
   const fetchData = useCallback(async () => {
     if (!usuario?.id) return;
@@ -119,7 +125,8 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
         .eq('ativo', true)
         .order('nome_completo');
       if (locError) throw locError;
-      setLocatarios(locData || []);
+      const valid = (locData || []).filter(l => Boolean(l.whatsapp));
+      setLocatarios(valid);
 
       // 2. Carregar templates Meta através da Edge Function do Zernio
       try {
@@ -146,12 +153,13 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
 
       if (mode === 'template' && template?.id) {
         query = query.or(`id_template.eq.${template.id},zernio_template_id.eq.${template.id}`);
-      } else if (mode === 'locatario' && (selectedLocatario?.id || initialLocatario?.id)) {
+      } else if (isBatchMode && selectedTenantIds.length > 0) {
+        query = query.in('id_locatario', selectedTenantIds);
+      } else if (selectedLocatario?.id || initialLocatario?.id) {
         const locId = selectedLocatario?.id || initialLocatario?.id;
         query = query.eq('id_locatario', locId);
       } else {
-        setAgendamentos([]);
-        return;
+        query = query.limit(20);
       }
 
       const { data: agData, error: agError } = await query;
@@ -163,22 +171,48 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
     } finally {
       setLoading(false);
     }
-  }, [usuario?.id, mode, template?.id, selectedLocatario?.id, initialLocatario?.id]);
+  }, [usuario?.id, mode, template?.id, selectedLocatario?.id, initialLocatario?.id, isBatchMode, selectedTenantIds]);
 
   useEffect(() => {
     if (isOpen && usuario?.id) {
       setProximoEnvio(getDefaultDate());
+      if (initialLocatario?.id) {
+        setSelectedLocatario(initialLocatario);
+        setSelectedTenantIds([initialLocatario.id]);
+      }
       fetchData();
     }
-  }, [isOpen, usuario?.id, fetchData]);
+  }, [isOpen, usuario?.id, initialLocatario, fetchData]);
+
+  const toggleTenant = (id) => {
+    setSelectedTenantIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const selectAllTenants = () => {
+    setSelectedTenantIds(locatarios.map((l) => l.id));
+  };
+
+  const deselectAllTenants = () => {
+    setSelectedTenantIds([]);
+  };
+
+  const filteredLocatarios = useMemo(() => {
+    return locatarios.filter((l) =>
+      l.nome_completo.toLowerCase().includes(tenantSearch.toLowerCase()) ||
+      l.whatsapp.includes(tenantSearch)
+    );
+  }, [locatarios, tenantSearch]);
 
   const handleSave = async () => {
     if (!proximoEnvio || !frequencia || (frequencia === 'personalizado' && !frequenciaDias)) {
       return toast.error('Preencha a frequência e o primeiro envio.');
     }
 
-    if (!selectedLocatario) {
-      return toast.error('Selecione um locatário.');
+    const targetTenantIds = isBatchMode ? selectedTenantIds : (selectedLocatario?.id ? [selectedLocatario.id] : []);
+    if (targetTenantIds.length === 0) {
+      return toast.error('Selecione ao menos um locatário com WhatsApp para o agendamento.');
     }
 
     if (!selectedTemplate) {
@@ -197,7 +231,7 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
         body: {
           action: 'create_schedule',
           templateId: selectedTemplate.id,
-          tenantId: selectedLocatario.id,
+          tenantIds: targetTenantIds,
           frequency: frequencia,
           frequencyDays: freqNum,
           scheduledDate: proximoEnvio,
@@ -217,7 +251,12 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
 
       if (data?.error) throw new Error(data.error);
 
-      toast.success('Agendamento configurado com sucesso!');
+      const count = data?.count || targetTenantIds.length;
+      toast.success(
+        count === 1
+          ? 'Agendamento configurado com sucesso!'
+          : `${count} agendamentos em lote configurados com sucesso!`
+      );
       setSelectedTemplate(null);
       setTemplateParams([]);
       fetchData();
@@ -285,10 +324,12 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
             </div>
             <div>
               <h3 className="text-sm font-black text-white uppercase tracking-tight">
-                {mode === 'template' ? 'Novo Agendamento' : 'Configurar Agendamento'}
+                {isBatchMode ? 'Agendamento em Lote' : 'Configurar Agendamento'}
               </h3>
               <p className="text-[10px] text-zinc-500 uppercase">
-                Cliente: {selectedLocatario?.nome_completo || 'Não selecionado'}
+                {isBatchMode
+                  ? `${selectedTenantIds.length} locatário(s) selecionado(s)`
+                  : `Cliente: ${selectedLocatario?.nome_completo || 'Não selecionado'}`}
               </p>
             </div>
           </div>
@@ -298,26 +339,110 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
         </div>
 
         <div className="p-5 flex-1 overflow-y-auto space-y-5">
-          {!initialLocatario && (
-            <div className="space-y-2">
-              <label className="text-[10px] uppercase font-black tracking-widest text-zinc-500">Locatário</label>
-              <select
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
-                value={selectedLocatario?.id || ''}
-                onChange={(e) => {
-                  const found = locatarios.find((l) => l.id === e.target.value);
-                  setSelectedLocatario(found || null);
+          {/* Alternador de Modo: Individual vs Em Lote */}
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-3.5 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase font-black tracking-widest text-zinc-400 flex items-center gap-1.5">
+                <Users size={14} className="text-indigo-400" /> Destinatários
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const nextBatch = !isBatchMode;
+                  setIsBatchMode(nextBatch);
+                  if (nextBatch && selectedTenantIds.length === 0 && selectedLocatario?.id) {
+                    setSelectedTenantIds([selectedLocatario.id]);
+                  }
                 }}
+                className={`text-[10px] font-bold px-2 py-1 rounded-lg transition ${
+                  isBatchMode
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                }`}
               >
-                <option value="">Selecione um locatário...</option>
-                {locatarios.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.nome_completo} ({l.whatsapp})
-                  </option>
-                ))}
-              </select>
+                {isBatchMode ? '✓ Modo em Lote' : 'Ativar Modo em Lote'}
+              </button>
             </div>
-          )}
+
+            {isBatchMode ? (
+              <div className="space-y-2 pt-1 border-t border-zinc-800/80">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-600" size={12} />
+                    <input
+                      type="text"
+                      placeholder="Filtrar locatário..."
+                      className="w-full rounded-xl border border-zinc-800 bg-zinc-900 pl-7 pr-2 py-1 text-xs text-white outline-none focus:border-indigo-500"
+                      value={tenantSearch}
+                      onChange={(e) => setTenantSearch(e.target.value)}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={selectAllTenants}
+                    className="rounded-lg bg-indigo-500/10 px-2 py-1 text-[9px] font-bold text-indigo-300 hover:bg-indigo-500/20"
+                  >
+                    Todos ({locatarios.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={deselectAllTenants}
+                    className="rounded-lg bg-zinc-800 px-2 py-1 text-[9px] font-bold text-zinc-400 hover:bg-zinc-700"
+                  >
+                    Limpar
+                  </button>
+                </div>
+
+                <div className="max-h-32 overflow-y-auto space-y-1 pr-1">
+                  {filteredLocatarios.map((item) => {
+                    const isChecked = selectedTenantIds.includes(item.id);
+                    return (
+                      <label
+                        key={item.id}
+                        className={`flex items-center justify-between p-1.5 rounded-lg border text-xs cursor-pointer transition ${
+                          isChecked
+                            ? 'bg-indigo-500/10 border-indigo-500/40 text-white'
+                            : 'bg-zinc-900 border-zinc-800/80 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => toggleTenant(item.id)}
+                            className="rounded border-zinc-700 text-indigo-600 focus:ring-0 focus:ring-offset-0 bg-zinc-800"
+                          />
+                          <span className="truncate">{item.nome_completo}</span>
+                        </div>
+                        <span className="text-[9px] font-mono text-zinc-500 shrink-0 ml-1">
+                          {item.whatsapp}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div>
+                <select
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                  value={selectedLocatario?.id || ''}
+                  onChange={(e) => {
+                    const found = locatarios.find((l) => l.id === e.target.value);
+                    setSelectedLocatario(found || null);
+                    if (found) setSelectedTenantIds([found.id]);
+                  }}
+                >
+                  <option value="">Selecione um locatário...</option>
+                  {locatarios.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.nome_completo} ({l.whatsapp})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
 
           {/* Frequência e Primeiro Envio */}
           <div className="grid grid-cols-2 gap-4">
@@ -451,7 +576,9 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
               <div>
                 <h4 className="text-xs font-bold uppercase tracking-wide text-zinc-300">Variáveis do Template</h4>
                 <p className="text-[10px] text-zinc-500 mt-0.5">
-                  Preencha os valores que serão enviados em cada mensagem agendada.
+                  {isBatchMode
+                    ? 'Use {{nome}} na primeira variável para preencher o primeiro nome de cada locatário automaticamente.'
+                    : 'Preencha os valores que serão enviados em cada mensagem agendada.'}
                 </p>
               </div>
               <div className="space-y-2">
@@ -468,7 +595,7 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
                         const val = e.target.value;
                         setTemplateParams((curr) => curr.map((v, i) => (i === index ? val : v)));
                       }}
-                      placeholder="Valor da variável..."
+                      placeholder={index === 0 && isBatchMode ? '{{nome}}' : 'Valor da variável...'}
                       required
                     />
                   </div>
@@ -480,23 +607,32 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
 
         <div className="p-5 border-t border-zinc-800">
           <button
-            disabled={saving || !selectedTemplate || !selectedLocatario || (slots.length > 0 && templateParams.some((val) => !String(val || '').trim()))}
+            disabled={
+              saving ||
+              !selectedTemplate ||
+              (isBatchMode ? selectedTenantIds.length === 0 : !selectedLocatario) ||
+              (slots.length > 0 && templateParams.some((val) => !String(val || '').trim()))
+            }
             onClick={handleSave}
             className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all shadow-lg shadow-indigo-600/20 disabled:opacity-40 flex items-center justify-center gap-2"
           >
             {saving ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-            {saving ? 'Criando Agendamento...' : 'Criar Agendamento'}
+            {saving
+              ? 'Criando Agendamento...'
+              : isBatchMode
+              ? `Agendar para ${selectedTenantIds.length} Locatário(s)`
+              : 'Criar Agendamento'}
           </button>
         </div>
       </div>
 
-      {/* Coluna 2: Agendamentos Ativos do Locatário */}
+      {/* Coluna 2: Agendamentos Ativos */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-3xl w-full max-w-md shadow-2xl flex flex-col shrink-0 h-[500px] md:h-[88vh] mx-auto">
         <div className="p-5 border-b border-zinc-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Clock size={18} className="text-emerald-500" />
             <h3 className="text-sm font-black text-white uppercase tracking-tight">
-              Agendamentos Deste Cliente
+              {isBatchMode ? 'Agendamentos dos Selecionados' : 'Agendamentos Deste Cliente'}
             </h3>
           </div>
           <button onClick={onClose} className="text-zinc-500 hidden md:block hover:text-white" aria-label="Fechar">
@@ -526,6 +662,7 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
                 const templateTitle = metaTemplate?.name || ag.mensagens_template?.titulo || 'Template Meta';
                 const isMeta = Boolean(ag.zernio_template_id);
                 const isBusy = busyScheduleId === ag.id;
+                const tenantName = ag.locatarios?.nome_completo || '';
 
                 return (
                   <div
@@ -546,6 +683,11 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
                           </span>
                         )}
                       </div>
+                      {tenantName && (
+                        <p className="text-[10px] text-zinc-400 mt-0.5 truncate">
+                          Destinatário: <span className="font-semibold text-zinc-200">{tenantName}</span>
+                        </p>
+                      )}
                       <div className="flex flex-wrap gap-1.5 mt-2">
                         <span className="text-[9px] bg-indigo-500/10 text-indigo-400 px-2 py-0.5 rounded-full font-black uppercase tracking-wider">
                           {ag.frequencia}

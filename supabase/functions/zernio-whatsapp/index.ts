@@ -871,19 +871,24 @@ Deno.serve(async (req) => {
 
     if (action === 'send_template') {
       const templateId = typeof body.templateId === 'string' ? body.templateId : '';
-      const tenantId = typeof body.tenantId === 'string' ? body.tenantId : '';
+      const rawTenantIds = Array.isArray(body.tenantIds) && body.tenantIds.length
+        ? body.tenantIds.map(String)
+        : (typeof body.tenantId === 'string' && body.tenantId ? [body.tenantId] : []);
+      const tenantIds = [...new Set(rawTenantIds.filter((id: string) => /^[0-9a-f-]{36}$/i.test(id)))];
       const params = Array.isArray(body.templateParams) ? body.templateParams : [];
-      if (!/^[0-9a-f-]{36}$/i.test(templateId) || !/^[0-9a-f-]{36}$/i.test(tenantId)) {
-        return json({ error: 'Selecione um template e um locatário válidos.' }, 400);
+      if (!/^[0-9a-f-]{36}$/i.test(templateId) || !tenantIds.length) {
+        return json({ error: 'Selecione um template e ao menos um locatário válido.' }, 400);
       }
-      const { data: tenant, error: tenantError } = await admin.from('locatarios')
-        .select('id,nome_completo,whatsapp').eq('id', tenantId).eq('id_usuario', user.id).eq('ativo', true).maybeSingle();
-      if (tenantError || !tenant || !tenant.whatsapp) return json({ error: 'O locatário precisa estar ativo e ter WhatsApp cadastrado.' }, 409);
+      const { data: tenants, error: tenantError } = await admin.from('locatarios')
+        .select('id,nome_completo,whatsapp').in('id', tenantIds).eq('id_usuario', user.id).eq('ativo', true);
+      if (tenantError || !tenants?.length) return json({ error: 'Nenhum locatário ativo com WhatsApp cadastrado foi encontrado.' }, 409);
       const { data: template, error: templateError } = await admin.from('zernio_whatsapp_templates')
         .select('id,meta_template_id,account_id,name,language,status,components,purpose')
         .eq('id', templateId).eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId).maybeSingle();
       if (templateError || !template) return json({ error: 'O template não pertence a este locador ou canal.' }, 404);
-      if (template.purpose !== 'general') return json({ error: 'Este template é reservado para o fluxo de cobrança.' }, 409);
+      if (template.purpose === 'charge' || template.purpose === 'payment_confirmation') {
+        return json({ error: 'Este template é reservado para o fluxo automático de cobrança ou pagamento.' }, 409);
+      }
       const liveTemplates = await syncTemplates(admin, channel, user.id);
       const liveTemplate = liveTemplates.find((item: JsonRecord) => item.id === template.id);
       if (!liveTemplate || liveTemplate.status !== 'APPROVED' || liveTemplate.meta_template_id !== template.meta_template_id) {
@@ -914,63 +919,87 @@ Deno.serve(async (req) => {
       if (params.length !== expectedParams || params.some((value: unknown) => typeof value !== 'string' || !value.trim())) {
         return json({ error: `Preencha os ${expectedParams} valores de variável do template.` }, 400);
       }
-      const idempotencyKey = `sga-manual-${crypto.randomUUID()}`;
-      const { data: manualDelivery, error: manualDeliveryError } = await admin.from('zernio_whatsapp_manual_deliveries').insert({
-        id_usuario: user.id, id_locatario: tenant.id, template_id: template.id, account_id: accountId,
-        provider: channel.provider,
-        idempotency_key: idempotencyKey, template_name: template.name, template_language: template.language,
-        status: 'sending',
-      }).select('id').single();
-      if (manualDeliveryError || !manualDelivery) throw new PublicError('Nao foi possivel registrar a tentativa de envio. A mensagem nao foi enviada.', 500);
-      claimedManualDeliveryId = manualDelivery.id;
-      let messageId: string;
-      let conversationId: string | null = null;
-      if (channel.provider === 'meta') {
-        const sent = await sendMetaTemplateMessage({
-          phoneNumberId: channel.accountId,
-          token: apiKey,
-          to: phoneForWhatsApp(tenant.whatsapp),
-          templateName: template.name,
-          templateLanguage: template.language,
-          templateParams: params,
-          components: template.components || [],
+
+      let sentCount = 0;
+      const errors: string[] = [];
+      const messageIds: string[] = [];
+
+      for (const tenant of tenants) {
+        if (!tenant.whatsapp) continue;
+        const tenantFirstName = tenant.nome_completo ? String(tenant.nome_completo).trim().split(' ')[0] : '';
+        const tenantFullName = String(tenant.nome_completo || '');
+        const customizedParams = params.map((p: string, pIdx: number) => {
+          if (p === '{{nome}}' || p === '{{primeiro_nome}}' || (p === '{{1}}' && pIdx === 0 && tenants.length > 1)) {
+            return tenantFirstName;
+          }
+          if (p === '{{nome_completo}}') return tenantFullName;
+          return p;
         });
-        messageId = sent.messageId;
-        await resolveAlertsAfterSuccess();
-      } else {
-        let sentPayload: JsonRecord;
+
+        const idempotencyKey = `sga-manual-${crypto.randomUUID()}`;
+        const { data: manualDelivery, error: manualDeliveryError } = await admin.from('zernio_whatsapp_manual_deliveries').insert({
+          id_usuario: user.id, id_locatario: tenant.id, template_id: template.id, account_id: accountId,
+          provider: channel.provider,
+          idempotency_key: idempotencyKey, template_name: template.name, template_language: template.language,
+          status: 'sending',
+        }).select('id').single();
+        if (manualDeliveryError || !manualDelivery) continue;
+
         try {
-          sentPayload = await zernioRequest('/inbox/conversations', apiKey, {
-            method: 'POST', idempotencyKey,
-            body: {
-              accountId,
-              participantId: phoneForWhatsApp(tenant.whatsapp),
+          let messageId: string;
+          let conversationId: string | null = null;
+          if (channel.provider === 'meta') {
+            const sent = await sendMetaTemplateMessage({
+              phoneNumberId: channel.accountId,
+              token: apiKey,
+              to: phoneForWhatsApp(tenant.whatsapp),
               templateName: template.name,
               templateLanguage: template.language,
-              ...(params.length ? { templateParams: params } : {}),
-            },
-          });
-        } catch (error) {
-          if (error instanceof ZernioError) throw safeZernioError(error);
-          throw error;
+              templateParams: customizedParams,
+              components: template.components || [],
+            });
+            messageId = sent.messageId;
+            await resolveAlertsAfterSuccess();
+          } else {
+            const sentPayload = await zernioRequest('/inbox/conversations', apiKey, {
+              method: 'POST', idempotencyKey,
+              body: {
+                accountId,
+                participantId: phoneForWhatsApp(tenant.whatsapp),
+                templateName: template.name,
+                templateLanguage: template.language,
+                ...(customizedParams.length ? { templateParams: customizedParams } : {}),
+              },
+            });
+            const result = sentPayload.data ?? sentPayload;
+            const sentMessageId = result.messageId ?? result.message?.id;
+            if (typeof sentMessageId !== 'string' || !sentMessageId) {
+              throw new PublicError('A Zernio não retornou a identificação da mensagem enviada.', 502);
+            }
+            messageId = sentMessageId;
+            conversationId = result.conversationId ?? result.conversation?.id ?? null;
+          }
+          const sentAt = new Date().toISOString();
+          await admin.from('zernio_whatsapp_manual_deliveries').update({
+            status: 'sent', message_id: messageId,
+            conversation_id: conversationId,
+            sent_at: sentAt, updated_at: sentAt, safe_error: null, error_code: null,
+          }).eq('id', manualDelivery.id);
+          sentCount++;
+          messageIds.push(messageId);
+        } catch (sendErr) {
+          const errMessage = sendErr instanceof Error ? sendErr.message : String(sendErr);
+          errors.push(`${tenant.nome_completo}: ${errMessage}`);
+          await admin.from('zernio_whatsapp_manual_deliveries').update({
+            status: 'failed', safe_error: errMessage, updated_at: new Date().toISOString(),
+          }).eq('id', manualDelivery.id);
         }
-        const result = sentPayload.data ?? sentPayload;
-        const sentMessageId = result.messageId ?? result.message?.id;
-        if (typeof sentMessageId !== 'string' || !sentMessageId) {
-          throw new PublicError('A Zernio não retornou a identificação da mensagem enviada.', 502);
-        }
-        messageId = sentMessageId;
-        conversationId = result.conversationId ?? result.conversation?.id ?? null;
       }
-      const sentAt = new Date().toISOString();
-      const { error: auditError } = await admin.from('zernio_whatsapp_manual_deliveries').update({
-        status: 'sent', message_id: messageId,
-        conversation_id: conversationId,
-        sent_at: sentAt, updated_at: sentAt, safe_error: null, error_code: null,
-      }).eq('id', manualDelivery.id).eq('status', 'sending');
-      if (auditError) throw new Error('A mensagem foi enviada, mas o registro de operacao nao foi concluido.');
-      claimedManualDeliveryId = null;
-      return json({ success: true, messageId });
+
+      if (sentCount === 0 && errors.length) {
+        throw new Error(errors[0] || 'Falha ao enviar mensagens.');
+      }
+      return json({ success: true, sentCount, total: tenants.length, messageIds });
     }
 
     if (action === 'create_template') {
@@ -1361,14 +1390,17 @@ Deno.serve(async (req) => {
 
     if (action === 'create_schedule') {
       const templateId = typeof body.templateId === 'string' ? body.templateId : '';
-      const tenantId = typeof body.tenantId === 'string' ? body.tenantId : '';
+      const rawTenantIds = Array.isArray(body.tenantIds) && body.tenantIds.length
+        ? body.tenantIds
+        : (typeof body.tenantId === 'string' && body.tenantId ? [body.tenantId] : []);
+      const tenantIds = rawTenantIds.filter((id: unknown) => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id));
       const frequency = typeof body.frequency === 'string' ? body.frequency : '';
       const scheduledDate = typeof body.scheduledDate === 'string' ? body.scheduledDate : '';
       const scheduledTime = typeof body.scheduledTime === 'string' ? body.scheduledTime : '';
       const frequencyDays = Number(body.frequencyDays);
       const params = Array.isArray(body.templateParams) ? body.templateParams : [];
-      if (!/^[0-9a-f-]{36}$/i.test(templateId) || !/^[0-9a-f-]{36}$/i.test(tenantId)) {
-        return json({ error: 'Selecione um template e um locatário válidos.' }, 400);
+      if (!/^[0-9a-f-]{36}$/i.test(templateId) || tenantIds.length === 0) {
+        return json({ error: 'Selecione um template e ao menos um locatário válido.' }, 400);
       }
       if (!['diario', 'semanal', 'quinzenal', 'mensal', 'personalizado'].includes(frequency)) {
         return json({ error: 'Selecione uma frequência válida.' }, 400);
@@ -1395,9 +1427,15 @@ Deno.serve(async (req) => {
       if (frequency === 'personalizado' && (!Number.isInteger(frequencyDays) || frequencyDays < 1 || frequencyDays > 365)) {
         return json({ error: 'A frequência personalizada deve estar entre 1 e 365 dias.' }, 400);
       }
-      const { data: tenant, error: tenantError } = await admin.from('locatarios')
-        .select('id,whatsapp').eq('id', tenantId).eq('id_usuario', user.id).eq('ativo', true).maybeSingle();
-      if (tenantError || !tenant || !tenant.whatsapp) return json({ error: 'Selecione um locatário ativo com WhatsApp cadastrado.' }, 409);
+      const { data: tenants, error: tenantsError } = await admin.from('locatarios')
+        .select('id,nome_completo,whatsapp')
+        .in('id', tenantIds)
+        .eq('id_usuario', user.id)
+        .eq('ativo', true);
+      const validTenants = (tenants || []).filter((t: JsonRecord) => Boolean(t.whatsapp));
+      if (tenantsError || validTenants.length === 0) {
+        return json({ error: 'Nenhum dos locatários selecionados está ativo com WhatsApp cadastrado.' }, 409);
+      }
       const { data: selectedTemplate, error: selectedTemplateError } = await admin.from('zernio_whatsapp_templates')
         .select('id,account_id,name,language,category,status,components')
         .eq('id', templateId).eq('id_usuario', user.id).eq('provider', channel.provider).eq('account_id', accountId).maybeSingle();
@@ -1429,20 +1467,37 @@ Deno.serve(async (req) => {
       if (params.length !== requiredParams || params.some((value: unknown) => typeof value !== 'string' || !value.trim())) {
         return json({ error: `Informe ${requiredParams} valor(es) de variável para este template.` }, 400);
       }
-      const { data: schedule, error: scheduleError } = await admin.from('agendamentos_mensagens').insert({
-        id_usuario: user.id,
-        id_locatario: tenant.id,
-        id_template: null,
-        zernio_template_id: selectedTemplate.id,
-        template_params: params,
-        frequencia: frequency,
-        frequencia_dias: frequency === 'personalizado' ? frequencyDays : null,
-        proximo_envio: scheduledDate,
-        horario_envio: `${scheduledTime}:00`,
-        ativo: true,
-      }).select('id').single();
-      if (scheduleError || !schedule) throw new Error('Não foi possível salvar o agendamento Meta.');
-      return json({ success: true, scheduleId: schedule.id });
+
+      const schedulesPayload = validTenants.map((t: JsonRecord) => {
+        const tenantFirstName = t.nome_completo ? String(t.nome_completo).trim().split(' ')[0] : '';
+        const tenantFullName = String(t.nome_completo || '');
+        const customizedParams = params.map((p: string, pIdx: number) => {
+          if (p === '{{nome}}' || p === '{{primeiro_nome}}' || (p === '{{1}}' && pIdx === 0 && validTenants.length > 1)) {
+            return tenantFirstName;
+          }
+          if (p === '{{nome_completo}}') return tenantFullName;
+          return p;
+        });
+
+        return {
+          id_usuario: user.id,
+          id_locatario: t.id,
+          id_template: null,
+          zernio_template_id: selectedTemplate.id,
+          template_params: customizedParams,
+          frequencia: frequency,
+          frequencia_dias: frequency === 'personalizado' ? frequencyDays : null,
+          proximo_envio: scheduledDate,
+          horario_envio: `${scheduledTime}:00`,
+          ativo: true,
+        };
+      });
+
+      const { data: insertedSchedules, error: scheduleError } = await admin.from('agendamentos_mensagens')
+        .insert(schedulesPayload)
+        .select('id');
+      if (scheduleError || !insertedSchedules?.length) throw new Error('Não foi possível salvar os agendamentos Meta.');
+      return json({ success: true, count: insertedSchedules.length, scheduleId: insertedSchedules[0].id });
     }
 
     if (action === 'send_charge') {

@@ -195,7 +195,33 @@ const Locatarios = () => {
         icon={UserCheck}
         title="Locatários"
         description="Gestão de clientes e cadastros."
-        actions={<Button icon={Plus} onClick={openNew}>Novo Locatário</Button>}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              icon={MessageSquare}
+              onClick={() => {
+                setSelectedTenantForMessage(null);
+                setIsMessageModalOpen(true);
+              }}
+              title="Disparo de mensagem Meta para múltiplos locatários"
+            >
+              Disparo em Lote
+            </Button>
+            <Button
+              variant="outline"
+              icon={CalendarClock}
+              onClick={() => {
+                setSelectedTenantForAgendamento(null);
+                setIsAgendamentoModalOpen(true);
+              }}
+              title="Configurar agendamento de mensagem para múltiplos locatários"
+            >
+              Agendar em Lote
+            </Button>
+            <Button icon={Plus} onClick={openNew}>Novo Locatário</Button>
+          </div>
+        }
       />
 
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl">
@@ -359,6 +385,7 @@ const Locatarios = () => {
         isOpen={isMessageModalOpen}
         onClose={() => setIsMessageModalOpen(false)}
         locatario={selectedTenantForMessage}
+        locatarios={tenants}
         usuario={profile}
       />
 
@@ -368,7 +395,7 @@ const Locatarios = () => {
           onClose={() => setIsAgendamentoModalOpen(false)}
           locatario={selectedTenantForAgendamento}
           usuario={profile}
-          mode="locatario"
+          mode={selectedTenantForAgendamento ? 'locatario' : 'batch'}
         />
       )}
     </div>
