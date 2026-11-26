@@ -10,7 +10,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { decryptSecret, encryptSecret } from '../_shared/crypto.ts';
 import { isValidEmail, sendResendEmail, validateResendKey } from '../_shared/resend.ts';
-import { META_ALERT_DEFINITIONS, type MetaAlertType } from '../_shared/meta-alerts.ts';
+import { dispatchDailySummaryForOwner } from '../_shared/daily-summary.ts';
+import { META_ALERT_DEFINITIONS } from '../_shared/meta-alerts.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -20,17 +21,22 @@ const corsHeaders = {
 
 type JsonRecord = Record<string, any>;
 
-const PREFERENCE_KEYS = Object.values(META_ALERT_DEFINITIONS)
-  .map((definition) => definition.preference);
+const PREFERENCE_KEYS = [
+  ...Object.values(META_ALERT_DEFINITIONS).map((definition) => definition.preference),
+  'notificar_resumo_diario',
+];
 
 // O schema desativa apenas `notificar_limite_envio` por padrão. Sem essa
 // tabela de defaults, uma conta nova herdaria `true` para todos os tipos.
-const PREFERENCE_DEFAULTS: Record<string, boolean> = Object.fromEntries(
-  Object.values(META_ALERT_DEFINITIONS).map((definition) => [
-    definition.preference,
-    definition.type !== 'limite_envio',
-  ]),
-);
+const PREFERENCE_DEFAULTS: Record<string, boolean> = {
+  ...Object.fromEntries(
+    Object.values(META_ALERT_DEFINITIONS).map((definition) => [
+      definition.preference,
+      definition.type !== 'limite_envio',
+    ]),
+  ),
+  notificar_resumo_diario: true,
+};
 
 const json = (body: JsonRecord, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -48,6 +54,8 @@ function publicConfig(config: JsonRecord | null, recipientEmail: string | null) 
     recipientEmail,
     lastTestAt: config?.last_test_at ?? null,
     lastSentAt: config?.last_sent_at ?? null,
+    lastDailySummaryDate: config?.last_daily_summary_date ?? null,
+    lastDailySummarySentAt: config?.last_daily_summary_sent_at ?? null,
     lastError: config?.last_error ?? null,
     preferences: Object.fromEntries(PREFERENCE_KEYS.map((key) => [key, config?.[key] ?? PREFERENCE_DEFAULTS[key] ?? true])),
   };
@@ -84,7 +92,7 @@ Deno.serve(async (req) => {
       auth: { persistSession: false, autoRefreshToken: false },
     });
     const { data: owner, error: ownerError } = await admin
-      .from('usuarios').select('email,role,ativo').eq('id', user.id).maybeSingle();
+      .from('usuarios').select('email,nome_completo,empresa_nome,role,ativo').eq('id', user.id).maybeSingle();
     if (ownerError || owner?.role !== 'locador' || owner.ativo !== true) {
       return json({ error: 'Esta configuração está disponível para contas ativas de locador.' }, 403);
     }
@@ -204,6 +212,48 @@ Deno.serve(async (req) => {
         updated_at: now,
       }).eq('id_usuario', user.id).select('*').maybeSingle();
       return json({ success: true, config: publicConfig(saved, owner.email ?? null) });
+    }
+
+    if (action === 'send_daily_summary') {
+      if (!current?.api_key_ciphertext || !current?.from_email) {
+        return json({ error: 'Salve a API Key e o remetente do Resend antes de enviar o resumo.' }, 409);
+      }
+      if (!owner.email) {
+        return json({ error: 'Sua conta não possui um e-mail cadastrado.' }, 409);
+      }
+      const lastSummaryAt = current.last_daily_summary_sent_at
+        ? new Date(current.last_daily_summary_sent_at).getTime()
+        : 0;
+      if (lastSummaryAt && Date.now() - lastSummaryAt < 30_000) {
+        return json({ error: 'Aguarde alguns segundos antes de reenviar o resumo diário.' }, 429);
+      }
+
+      try {
+        const result = await dispatchDailySummaryForOwner(
+          admin,
+          {
+            id: user.id,
+            email: owner.email,
+            nome_completo: owner.nome_completo,
+            empresa_nome: owner.empresa_nome,
+          },
+          current,
+          { manual: true },
+        );
+        if (!result.sent) {
+          return json({ error: 'Não foi possível enviar o resumo diário. Verifique a chave do Resend.' }, 400);
+        }
+        const { data: saved } = await admin.from('email_notificacoes_config')
+          .select('*').eq('id_usuario', user.id).maybeSingle();
+        return json({
+          success: true,
+          config: publicConfig(saved, owner.email ?? null),
+          summary: result.summary,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message.slice(0, 300) : 'Falha ao enviar resumo pelo Resend.';
+        return json({ error: `O Resend recusou o envio: ${message}` }, 400);
+      }
     }
 
     return json({ error: 'Ação não reconhecida.' }, 400);

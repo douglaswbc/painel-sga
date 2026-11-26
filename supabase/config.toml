@@ -31,5 +31,8 @@ verify_jwt = false
 [functions.email-settings]
 verify_jwt = true
 
+[functions.resumo-diario-email]
+verify_jwt = false
+
 [functions.pay-link]
 verify_jwt = false

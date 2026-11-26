@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Bell,
+  CalendarClock,
   CheckCircle2,
   Info,
   Loader2,
@@ -59,7 +60,10 @@ const EMPTY_FORM = {
   fromEmail: '',
   fromName: '',
   apiKey: '',
-  preferences: Object.fromEntries(PREFERENCE_FIELDS.map((field) => [field.key, field.key !== 'notificar_limite_envio'])),
+  preferences: {
+    ...Object.fromEntries(PREFERENCE_FIELDS.map((field) => [field.key, field.key !== 'notificar_limite_envio'])),
+    notificar_resumo_diario: true,
+  },
 };
 
 function formatDateTime(value) {
@@ -77,6 +81,7 @@ const EmailNotificacoesCard = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [sendingSummary, setSendingSummary] = useState(false);
 
   const invoke = async (action, payload = {}) => {
     const { data, error } = await supabase.functions.invoke('email-settings', {
@@ -148,6 +153,20 @@ const EmailNotificacoesCard = () => {
       toast.error(error.message);
     } finally {
       setTesting(false);
+    }
+  };
+
+  const sendDailySummary = async () => {
+    setSendingSummary(true);
+    try {
+      const data = await invoke('send_daily_summary');
+      applyConfig(data.config);
+      const refLabel = data?.summary?.referenceDateLabel ? ` (${data.summary.referenceDateLabel})` : '';
+      toast.success(`Resumo diário${refLabel} enviado para ${config?.recipientEmail || 'seu e-mail'}.`);
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setSendingSummary(false);
     }
   };
 
@@ -268,6 +287,53 @@ const EmailNotificacoesCard = () => {
             {config?.lastError && <p className="break-words text-red-300">Último erro: {config.lastError}</p>}
           </div>
         )}
+      </section>
+
+      <section className="space-y-3 border-t border-slate-700/60 pt-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400">
+              <CalendarClock size={14} /> Resumo diário de cobranças e custos
+            </h3>
+            <p className="mt-1 text-[11px] text-slate-500">
+              Enviado todos os dias às 08h00 (horário de Brasília) com as cobranças vencidas no dia anterior (pagas e
+              pendentes) e o custo estimado das mensagens template enviadas no WhatsApp.
+            </p>
+          </div>
+          {hasKey && form.fromEmail && (
+            <button
+              type="button"
+              onClick={sendDailySummary}
+              disabled={sendingSummary || testing || saving}
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-3.5 py-2 text-xs font-semibold text-indigo-300 hover:bg-indigo-500/20 disabled:opacity-50"
+            >
+              {sendingSummary ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />}
+              Enviar resumo de ontem
+            </button>
+          )}
+        </div>
+        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-700 bg-slate-900/30 p-3">
+          <input
+            type="checkbox"
+            checked={form.preferences.notificar_resumo_diario !== false}
+            onChange={(event) => updatePreference('notificar_resumo_diario', event.target.checked)}
+            className="mt-0.5 h-4 w-4 accent-[#0066cc]"
+          />
+          <span className="min-w-0">
+            <span className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-200">
+              Receber resumo diário automático às 08h00
+            </span>
+            <span className="mt-1 block text-[11px] leading-relaxed text-slate-500">
+              Inclui total pago e pendente dos vencimentos do dia anterior, lista de locatários e estimativa de custo
+              por categoria de template WhatsApp (Meta).
+            </span>
+            {config?.lastDailySummarySentAt && (
+              <span className="mt-1 block text-[10px] text-slate-400">
+                Último resumo enviado em {formatDateTime(config.lastDailySummarySentAt)}.
+              </span>
+            )}
+          </span>
+        </label>
       </section>
 
       <section className="space-y-3 border-t border-slate-700/60 pt-5">

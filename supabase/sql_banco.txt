@@ -1,7 +1,7 @@
 -- =====================================================================
 -- PAINEL SGA - ESQUEMA CONSOLIDADO DO BANCO DE DADOS SUPABASE
 -- =====================================================================
--- Atualizado com todas as migrations (001 a 031).
+-- Atualizado com todas as migrations (001 a 034).
 -- Este arquivo consolida todas as tabelas, views, funções, triggers,
 -- índices, políticas de RLS e permissões do projeto SGA.
 --
@@ -676,8 +676,11 @@ CREATE TABLE IF NOT EXISTS public.email_notificacoes_config (
   notificar_template boolean NOT NULL DEFAULT true,
   notificar_limite_envio boolean NOT NULL DEFAULT false,
   notificar_integracao boolean NOT NULL DEFAULT true,
+  notificar_resumo_diario boolean NOT NULL DEFAULT true,
   last_test_at timestamptz,
   last_sent_at timestamptz,
+  last_daily_summary_date date,
+  last_daily_summary_sent_at timestamptz,
   last_error text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -691,6 +694,12 @@ COMMENT ON COLUMN public.email_notificacoes_config.from_email IS
   'Remetente usado no Resend. O dominio precisa estar verificado na conta Resend do locador.';
 COMMENT ON COLUMN public.email_notificacoes_config.notificar_limite_envio IS
   'Limites de envio sao transitorios; por padrao nao geram e-mail para evitar ruido.';
+COMMENT ON COLUMN public.email_notificacoes_config.notificar_resumo_diario IS
+  'Habilita o envio diário às 08:00 (horário de Brasília) do resumo de cobranças do dia anterior e custos estimados do WhatsApp.';
+COMMENT ON COLUMN public.email_notificacoes_config.last_daily_summary_date IS
+  'Data de referência (ontem no horário de Brasília) do último resumo diário automático enviado.';
+COMMENT ON COLUMN public.email_notificacoes_config.last_daily_summary_sent_at IS
+  'Carimbo de data/hora do último envio (automático ou manual) do resumo diário.';
 
 -- View Unificada de Atividade e Auditoria de WhatsApp
 CREATE OR REPLACE VIEW public.zernio_whatsapp_activity_log
