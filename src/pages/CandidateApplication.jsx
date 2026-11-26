@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { CheckCircle, Loader2, Send, ShieldCheck, Zap } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { candidatosService } from '../services/candidatos';
@@ -6,17 +6,41 @@ import { candidatosService } from '../services/candidatos';
 const initialAnswers = {
   nome: '', cpf: '', telefone: '', email: '', idade_faixa: '',
   tem_220v: null, trabalha_em_app: null, caucao_disponivel: '', possui_processos_criminais: null,
+  interesse: '', observacoes: '',
 };
 
 const CandidateApplication = () => {
   const { token } = useParams();
   const startedAt = useRef(Date.now());
   const [answers, setAnswers] = useState(initialAnswers);
+  const [meta, setMeta] = useState({ loaded: false, empresa_nome: null, segmento: 'geral' });
   const [privacyNoticeRead, setPrivacyNoticeRead] = useState(false);
   const [website, setWebsite] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [submitted, setSubmitted] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    candidatosService
+      .getPublicApplicationMeta(token)
+      .then((res) => {
+        if (!active) return;
+        setMeta({
+          loaded: true,
+          empresa_nome: res?.empresa_nome || null,
+          segmento: res?.segmento || 'geral',
+        });
+      })
+      .catch(() => {
+        if (active) setMeta((prev) => ({ ...prev, loaded: true }));
+      });
+    return () => {
+      active = false;
+    };
+  }, [token]);
+
+  const isVehicles = meta.segmento === 'veiculos';
 
   const setAnswer = (field) => (event) => setAnswers((current) => ({ ...current, [field]: event.target.value }));
   const setBooleanAnswer = (field) => (event) => setAnswers((current) => ({
@@ -34,7 +58,17 @@ const CandidateApplication = () => {
 
     setLoading(true);
     try {
-      await candidatosService.submitApplication(token, answers, startedAt.current, privacyNoticeRead, website);
+      const payloadAnswers = {
+        ...answers,
+        respostas_extras:
+          answers.interesse || answers.observacoes
+            ? {
+                ...(answers.interesse ? { interesse: answers.interesse } : {}),
+                ...(answers.observacoes ? { observacoes: answers.observacoes } : {}),
+              }
+            : undefined,
+      };
+      await candidatosService.submitApplication(token, payloadAnswers, startedAt.current, privacyNoticeRead, website);
       setSubmitted(true);
     } catch (submitError) {
       setError(submitError.message || 'Não foi possível enviar sua inscrição. Tente novamente.');
@@ -60,9 +94,11 @@ const CandidateApplication = () => {
       <div className="mx-auto max-w-3xl">
         <header className="mb-7 text-center">
           <span className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-500/15 text-indigo-300"><Zap size={22} /></span>
-          <p className="mt-4 text-xs font-bold uppercase tracking-[0.2em] text-indigo-300">Inscrição de candidato</p>
+          <p className="mt-4 text-xs font-bold uppercase tracking-[0.2em] text-indigo-300">
+            {meta.empresa_nome ? `Ficha de cadastro · ${meta.empresa_nome}` : 'Ficha de cadastro'}
+          </p>
           <h1 className="mt-2 text-3xl font-bold tracking-tight">Conte-nos um pouco sobre você</h1>
-          <p className="mt-2 text-sm text-slate-400">Preencha seus dados para que o responsável pela oportunidade possa analisar sua inscrição.</p>
+          <p className="mt-2 text-sm text-slate-400">Preencha seus dados para que o responsável possa analisar sua solicitação.</p>
         </header>
 
         <form onSubmit={handleSubmit} className="space-y-6 rounded-3xl border border-slate-800 bg-slate-900 p-5 shadow-2xl sm:p-8">
@@ -93,28 +129,43 @@ const CandidateApplication = () => {
                 <option value="45 anos ou mais">45 anos ou mais</option>
               </select>
             </label>
-            <label>
-              <span className="mb-1.5 block text-sm font-medium text-slate-300">Trabalha com aplicativo?</span>
-              <select value={answers.trabalha_em_app == null ? '' : String(answers.trabalha_em_app)} onChange={setBooleanAnswer('trabalha_em_app')} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm outline-none focus:border-indigo-500">
-                <option value="">Selecione</option><option value="true">Sim</option><option value="false">Não</option>
-              </select>
-            </label>
-            <label>
-              <span className="mb-1.5 block text-sm font-medium text-slate-300">Tem tomada 220V disponível?</span>
-              <select value={answers.tem_220v == null ? '' : String(answers.tem_220v)} onChange={setBooleanAnswer('tem_220v')} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm outline-none focus:border-indigo-500">
-                <option value="">Selecione</option><option value="true">Sim</option><option value="false">Não</option>
-              </select>
-            </label>
-            <label>
-              <span className="mb-1.5 block text-sm font-medium text-slate-300">Possui processos criminais?</span>
-              <select value={answers.possui_processos_criminais == null ? '' : String(answers.possui_processos_criminais)} onChange={setBooleanAnswer('possui_processos_criminais')} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm outline-none focus:border-indigo-500">
-                <option value="">Prefiro não informar</option><option value="true">Sim</option><option value="false">Não</option>
-              </select>
-            </label>
-            <label className="sm:col-span-2">
-              <span className="mb-1.5 block text-sm font-medium text-slate-300">Informações sobre caução disponível</span>
-              <textarea rows={3} maxLength={120} value={answers.caucao_disponivel} onChange={setAnswer('caucao_disponivel')} placeholder="Opcional" className="w-full resize-y rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm outline-none focus:border-indigo-500" />
-            </label>
+            {isVehicles ? (
+              <>
+                <label>
+                  <span className="mb-1.5 block text-sm font-medium text-slate-300">Trabalha com aplicativo?</span>
+                  <select value={answers.trabalha_em_app == null ? '' : String(answers.trabalha_em_app)} onChange={setBooleanAnswer('trabalha_em_app')} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm outline-none focus:border-indigo-500">
+                    <option value="">Selecione</option><option value="true">Sim</option><option value="false">Não</option>
+                  </select>
+                </label>
+                <label>
+                  <span className="mb-1.5 block text-sm font-medium text-slate-300">Tem tomada 220V disponível?</span>
+                  <select value={answers.tem_220v == null ? '' : String(answers.tem_220v)} onChange={setBooleanAnswer('tem_220v')} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm outline-none focus:border-indigo-500">
+                    <option value="">Selecione</option><option value="true">Sim</option><option value="false">Não</option>
+                  </select>
+                </label>
+                <label>
+                  <span className="mb-1.5 block text-sm font-medium text-slate-300">Possui processos criminais?</span>
+                  <select value={answers.possui_processos_criminais == null ? '' : String(answers.possui_processos_criminais)} onChange={setBooleanAnswer('possui_processos_criminais')} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm outline-none focus:border-indigo-500">
+                    <option value="">Prefiro não informar</option><option value="true">Sim</option><option value="false">Não</option>
+                  </select>
+                </label>
+                <label className="sm:col-span-2">
+                  <span className="mb-1.5 block text-sm font-medium text-slate-300">Informações sobre caução disponível</span>
+                  <textarea rows={3} maxLength={120} value={answers.caucao_disponivel} onChange={setAnswer('caucao_disponivel')} placeholder="Opcional" className="w-full resize-y rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm outline-none focus:border-indigo-500" />
+                </label>
+              </>
+            ) : (
+              <>
+                <label>
+                  <span className="mb-1.5 block text-sm font-medium text-slate-300">Interesse / Plano / Item desejado</span>
+                  <input maxLength={160} value={answers.interesse} onChange={setAnswer('interesse')} placeholder="Opcional" className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm outline-none focus:border-indigo-500" />
+                </label>
+                <label className="sm:col-span-2">
+                  <span className="mb-1.5 block text-sm font-medium text-slate-300">Observações adicionais</span>
+                  <textarea rows={3} maxLength={240} value={answers.observacoes} onChange={setAnswer('observacoes')} placeholder="Compartilhe período desejado, dúvidas ou detalhes relevantes (opcional)" className="w-full resize-y rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm outline-none focus:border-indigo-500" />
+                </label>
+              </>
+            )}
           </div>
 
           <div className="rounded-2xl border border-slate-700 bg-slate-950/70 p-4">

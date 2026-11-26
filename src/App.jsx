@@ -41,7 +41,9 @@ function App() {
             <Route element={<DashboardLayout />}>
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/locatarios" element={<Locatarios />} />
+              <Route path="/clientes" element={<Locatarios />} />
               <Route path="/veiculos" element={<Veiculos />} />
+              <Route path="/ativos" element={<Veiculos />} />
               <Route path="/contratos" element={<Contratos />} />
               <Route path="/cobrancas" element={<Cobrancas />} />
               <Route path="/mensagens" element={<Mensagens />} />

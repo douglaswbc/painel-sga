@@ -23,6 +23,7 @@ import { toast } from 'react-toastify';
 import PixModal from '../components/PixModal';
 import CandidatoDetalheModal from '../components/CandidatoDetalheModal';
 import { useAuth } from '../contexts/AuthContext';
+import { getSegmentLabels } from '../utils/segmentConfig';
 import { candidatosService } from '../services/candidatos';
 import { CANDIDATO_STATUS, canonicalizarStatusCandidato, podeAlterarStatusCandidato } from '../utils/candidatoStatus';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -67,6 +68,7 @@ const formatLinkExpiration = (expiresAt, active) => {
 
 const Triagem = () => {
   const { profile } = useAuth();
+  const labels = getSegmentLabels(profile);
   const [candidatos, setCandidatos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -322,8 +324,8 @@ const Triagem = () => {
     <div className="space-y-6">
       <PageHeader
         icon={ClipboardCheck}
-        title="Triagem de Candidatos"
-        description="Fila de avaliação e captação de novos motoristas para sua frota"
+        title="Triagem & Inscrições"
+        description={labels.triagemSubtitle}
         actions={
           <button
             onClick={handleRefresh}
@@ -476,7 +478,7 @@ const Triagem = () => {
           </p>
           <p className="mt-1 text-xs text-[#7a7a7a]">
             {candidatos.length === 0
-              ? 'Compartilhe o link de inscrição para começar a receber motoristas interessados.'
+              ? 'Compartilhe o link de inscrição para começar a receber novos interessados.'
               : 'Tente limpar a busca ou selecionar outro status.'}
           </p>
         </div>

@@ -55,11 +55,22 @@ const CandidatoDetalheModal = ({ candidato, onClose }) => {
               <Field label="CPF" value={candidato.cpf || 'Não informado'} />
               <Field label="Telefone" value={candidato.telefone} />
               <Field label="E-mail" value={candidato.email} />
-              <Field label="Faixa etária" value={candidato.idade_faixa} />
-              <Field label="Trabalha com aplicativo" value={formatBoolean(candidato.trabalha_em_app)} />
-              <Field label="Possui tomada 220V" value={formatBoolean(candidato.tem_220v)} />
-              <Field label="Caução disponível" value={candidato.caucao_disponivel} />
-              <Field label="Processos criminais declarados" value={formatBoolean(candidato.possui_processos_criminais)} />
+              {candidato.idade_faixa && <Field label="Faixa etária" value={candidato.idade_faixa} />}
+              {candidato.trabalha_em_app !== null && candidato.trabalha_em_app !== undefined && (
+                <Field label="Trabalha com aplicativo" value={formatBoolean(candidato.trabalha_em_app)} />
+              )}
+              {candidato.tem_220v !== null && candidato.tem_220v !== undefined && (
+                <Field label="Possui tomada 220V" value={formatBoolean(candidato.tem_220v)} />
+              )}
+              {candidato.caucao_disponivel && <Field label="Caução disponível" value={candidato.caucao_disponivel} />}
+              {candidato.possui_processos_criminais !== null && candidato.possui_processos_criminais !== undefined && (
+                <Field label="Processos criminais declarados" value={formatBoolean(candidato.possui_processos_criminais)} />
+              )}
+              {candidato.respostas_extras && typeof candidato.respostas_extras === 'object' &&
+                Object.entries(candidato.respostas_extras).map(([key, value]) => (
+                  <Field key={key} label={key.replace(/_/g, ' ')} value={String(value)} />
+                ))
+              }
             </div>
           </section>
 

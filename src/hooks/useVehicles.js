@@ -12,8 +12,8 @@ export function useVehicles(userId) {
       setLoading(true);
       const data = await veiculosService.list(userId);
       setVeiculos(data);
-    } catch (err) {
-      toast.error('Erro ao carregar veículos');
+    } catch {
+      toast.error('Erro ao carregar itens');
     } finally {
       setLoading(false);
     }
@@ -23,19 +23,19 @@ export function useVehicles(userId) {
 
   const create = async (data) => {
     await veiculosService.create(data);
-    toast.success('Veículo cadastrado!');
+    toast.success('Item cadastrado!');
     await fetch();
   };
 
   const update = async (id, data) => {
     await veiculosService.update(id, data);
-    toast.success('Veículo atualizado!');
+    toast.success('Item atualizado!');
     await fetch();
   };
 
   const remove = async (id) => {
     await veiculosService.remove(id);
-    toast.success('Veículo removido!');
+    toast.success('Item removido!');
     await fetch();
   };
 

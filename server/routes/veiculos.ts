@@ -7,24 +7,68 @@ import { requireAuth } from '../middleware/auth.js';
 const router = Router();
 router.use(requireAuth);
 
-const vehicleSchema = z.object({
-  placa: z.string().trim().min(1, 'Placa é obrigatória.').transform((v) => v.toUpperCase()),
-  modelo: z.string().trim().min(1, 'Modelo é obrigatório.'),
+const assetInputSchema = z.object({
+  placa: z.string().trim().optional(),
+  identificador: z.string().trim().optional(),
+  modelo: z.string().trim().optional(),
+  titulo: z.string().trim().optional(),
+  nome: z.string().trim().optional(),
   marca: z.string().trim().optional().nullable(),
   cor: z.string().trim().optional().nullable(),
   ano: z.union([z.coerce.number().int(), z.null()]).optional(),
+  tipo: z.string().trim().max(40).optional().nullable(),
+  categoria: z.string().trim().max(80).optional().nullable(),
+  descricao: z.string().trim().max(500).optional().nullable(),
+  atributos: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional().nullable(),
   ativo: z.boolean().optional(),
 });
 
+function parseAttributes(raw: unknown): Record<string, string | number | boolean | null> | null {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, string | number | boolean | null>;
+    }
+  } catch {
+    // Mantém nulo caso atributos salvos não sejam JSON válido
+  }
+  return null;
+}
+
+function serializeAttributes(raw: unknown): string | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const clean: Record<string, string | number | boolean | null> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>).slice(0, 20)) {
+    const key = k.trim().slice(0, 40);
+    if (!key) continue;
+    if (typeof v === 'string') {
+      const trimmed = v.trim().slice(0, 160);
+      if (trimmed) clean[key] = trimmed;
+    } else if (typeof v === 'number' || typeof v === 'boolean') {
+      clean[key] = v;
+    }
+  }
+  return Object.keys(clean).length > 0 ? JSON.stringify(clean) : null;
+}
+
 function formatVehicleRow(row: Record<string, unknown>) {
+  const placa = String(row.placa);
+  const modelo = String(row.modelo);
   return {
     id: String(row.id),
     id_usuario: String(row.id_usuario),
-    placa: String(row.placa),
-    modelo: String(row.modelo),
+    placa,
+    identificador: placa,
+    modelo,
+    titulo: modelo,
     marca: row.marca ? String(row.marca) : null,
     cor: row.cor ? String(row.cor) : null,
     ano: row.ano !== null && row.ano !== undefined ? Number(row.ano) : null,
+    tipo: row.tipo ? String(row.tipo) : 'item',
+    categoria: row.categoria ? String(row.categoria) : null,
+    descricao: row.descricao ? String(row.descricao) : null,
+    atributos: parseAttributes(row.atributos_json),
     ativo: Number(row.ativo) === 1,
     created_at: String(row.created_at),
   };
@@ -53,6 +97,7 @@ router.get('/', (req, res) => {
 
   const contractsByVehicle = new Map<string, Array<{ id: string; status: string }>>();
   for (const c of contractRows) {
+    if (!c.id_veiculo) continue;
     const list = contractsByVehicle.get(c.id_veiculo) || [];
     list.push({ id: c.id, status: c.status });
     contractsByVehicle.set(c.id_veiculo, list);
@@ -70,28 +115,45 @@ router.get('/', (req, res) => {
 });
 
 router.post('/', (req, res) => {
-  const parsed = vehicleSchema.safeParse(req.body);
+  const parsed = assetInputSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Dados do veículo inválidos.' });
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Dados do item inválidos.' });
+    return;
+  }
+
+  const input = parsed.data;
+  const code = (input.placa || input.identificador || '').trim().toUpperCase();
+  const title = (input.modelo || input.titulo || input.nome || '').trim();
+  if (!code) {
+    res.status(400).json({ error: 'Código / identificador é obrigatório.' });
+    return;
+  }
+  if (!title) {
+    res.status(400).json({ error: 'Nome / descrição principal é obrigatório.' });
     return;
   }
 
   const db = getDb();
   const userId = req.user!.id;
   const id = crypto.randomUUID();
-  const input = parsed.data;
 
   db.prepare(`
-    INSERT INTO veiculos (id, id_usuario, placa, modelo, marca, cor, ano, ativo)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO veiculos (
+      id, id_usuario, placa, modelo, marca, cor, ano, tipo, categoria, descricao, atributos_json, ativo
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     userId,
-    input.placa,
-    input.modelo,
+    code,
+    title,
     input.marca || null,
     input.cor || null,
     input.ano ?? null,
+    input.tipo || 'item',
+    input.categoria || null,
+    input.descricao || null,
+    serializeAttributes(input.atributos),
     input.ativo === false ? 0 : 1,
   );
 
@@ -103,9 +165,9 @@ router.post('/', (req, res) => {
 });
 
 router.put('/:id', (req, res) => {
-  const parsed = vehicleSchema.partial().safeParse(req.body);
+  const parsed = assetInputSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Dados do veículo inválidos.' });
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Dados do item inválidos.' });
     return;
   }
 
@@ -116,7 +178,7 @@ router.put('/:id', (req, res) => {
     .get(req.params.id, userId);
 
   if (!existing) {
-    res.status(404).json({ error: 'Veículo não encontrado.' });
+    res.status(404).json({ error: 'Item não encontrado.' });
     return;
   }
 
@@ -124,14 +186,33 @@ router.put('/:id', (req, res) => {
   const updates: string[] = [];
   const values: Array<string | number | null> = [];
 
-  if (input.placa !== undefined) {
+  const nextCode = input.placa !== undefined ? input.placa : input.identificador;
+  if (nextCode !== undefined) {
+    const normalized = nextCode.trim().toUpperCase();
+    if (!normalized) {
+      res.status(400).json({ error: 'Código / identificador não pode ficar vazio.' });
+      return;
+    }
     updates.push('placa = ?');
-    values.push(input.placa);
+    values.push(normalized);
   }
-  if (input.modelo !== undefined) {
+
+  const nextTitle =
+    input.modelo !== undefined
+      ? input.modelo
+      : input.titulo !== undefined
+        ? input.titulo
+        : input.nome;
+  if (nextTitle !== undefined) {
+    const normalized = nextTitle.trim();
+    if (!normalized) {
+      res.status(400).json({ error: 'Nome / descrição principal não pode ficar vazio.' });
+      return;
+    }
     updates.push('modelo = ?');
-    values.push(input.modelo);
+    values.push(normalized);
   }
+
   if (input.marca !== undefined) {
     updates.push('marca = ?');
     values.push(input.marca || null);
@@ -143,6 +224,22 @@ router.put('/:id', (req, res) => {
   if (input.ano !== undefined) {
     updates.push('ano = ?');
     values.push(input.ano ?? null);
+  }
+  if (input.tipo !== undefined) {
+    updates.push('tipo = ?');
+    values.push(input.tipo || 'item');
+  }
+  if (input.categoria !== undefined) {
+    updates.push('categoria = ?');
+    values.push(input.categoria || null);
+  }
+  if (input.descricao !== undefined) {
+    updates.push('descricao = ?');
+    values.push(input.descricao || null);
+  }
+  if (input.atributos !== undefined) {
+    updates.push('atributos_json = ?');
+    values.push(serializeAttributes(input.atributos));
   }
   if (input.ativo !== undefined) {
     updates.push('ativo = ?');

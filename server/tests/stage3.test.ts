@@ -168,6 +168,67 @@ test('Stage 3: CRUD locatarios (CPF cifrado), veiculos e contratos com isolament
       headers: authA,
     });
     assert.equal(delLocOk.status, 200);
+
+    // 7. Fluxo agnóstico: /api/ativos com atributos genéricos + contrato sem item físico (id_veiculo = null)
+    const locServiceRes = await fetch(`${baseUrl}/api/locatarios`, {
+      method: 'POST',
+      headers: authA,
+      body: JSON.stringify({
+        nome_completo: 'Empresa Alpha Ltda',
+        whatsapp: '11988887777',
+        documento: 'CPF',
+        cpf: '52998224725',
+      }),
+    });
+    assert.equal(locServiceRes.status, 201);
+    const locService = ((await locServiceRes.json()) as { data: { id: string } }).data;
+
+    const createAtivoRes = await fetch(`${baseUrl}/api/ativos`, {
+      method: 'POST',
+      headers: authA,
+      body: JSON.stringify({
+        identificador: 'sala-204',
+        titulo: 'Sala Comercial Centro',
+        categoria: 'Imóvel',
+        descricao: '40m² mobiliada',
+        atributos: { andar: 2, area_m2: 40 },
+      }),
+    });
+    assert.equal(createAtivoRes.status, 201);
+    const createdAtivo = ((await createAtivoRes.json()) as {
+      data: { id: string; placa: string; identificador: string; categoria: string; atributos: { andar: number } };
+    }).data;
+    assert.equal(createdAtivo.identificador, 'SALA-204');
+    assert.equal(createdAtivo.placa, 'SALA-204');
+    assert.equal(createdAtivo.categoria, 'Imóvel');
+    assert.equal(createdAtivo.atributos.andar, 2);
+
+    const serviceContractRes = await fetch(`${baseUrl}/api/contratos`, {
+      method: 'POST',
+      headers: authA,
+      body: JSON.stringify({
+        id_locatario: locService.id,
+        id_veiculo: null,
+        valor: 500,
+        recorrencia: '{"frequencia":"monthly","intervalo":1}',
+        data_inicio: '2026-11-26',
+        proxima_cobranca: '2026-11-26T20:00:00.000Z',
+        status: 'ativo',
+      }),
+    });
+    assert.equal(serviceContractRes.status, 201);
+    const serviceContract = ((await serviceContractRes.json()) as {
+      data: { id: string; id_veiculo: string | null; veiculos: unknown };
+    }).data;
+    assert.equal(serviceContract.id_veiculo, null);
+    assert.equal(serviceContract.veiculos, null);
+
+    const opStatsRes = await fetch(`${baseUrl}/api/dashboard/operational-stats`, { headers: authA });
+    assert.equal(opStatsRes.status, 200);
+    const opStats = (await opStatsRes.json()) as { fleetStats: { total: number; alugados: number; disponiveis: number } };
+    assert.equal(opStats.fleetStats.total, 1);
+    assert.equal(opStats.fleetStats.alugados, 0);
+    assert.equal(opStats.fleetStats.disponiveis, 1);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

@@ -222,9 +222,9 @@ router.get('/operational-stats', (req, res) => {
     .all(userId) as Array<{ id: string; ativo: number }>;
 
   const activeVehicleContracts = db
-    .prepare(`SELECT DISTINCT id_veiculo FROM contratos WHERE id_usuario = ? AND status = 'ativo'`)
-    .all(userId) as Array<{ id_veiculo: string }>;
-  const rentedVehicleIds = new Set(activeVehicleContracts.map((c) => c.id_veiculo));
+    .prepare(`SELECT DISTINCT id_veiculo FROM contratos WHERE id_usuario = ? AND status = 'ativo' AND id_veiculo IS NOT NULL`)
+    .all(userId) as Array<{ id_veiculo: string | null }>;
+  const rentedVehicleIds = new Set(activeVehicleContracts.map((c) => c.id_veiculo).filter(Boolean) as string[]);
 
   const total = vehicles.length;
   const alugados = vehicles.filter((v) => Number(v.ativo) === 1 && rentedVehicleIds.has(v.id)).length;
@@ -251,8 +251,10 @@ router.get('/operational-stats', (req, res) => {
     }
   }
 
+  const fleetStats = { total, alugados, disponiveis, inativos, ocupacao, loading: false };
   res.json({
-    fleetStats: { total, alugados, disponiveis, inativos, ocupacao, loading: false },
+    fleetStats,
+    itemStats: fleetStats,
     candidateStats: { emAnalise, preAprovados, total: candidates.length, loading: false },
   });
 });

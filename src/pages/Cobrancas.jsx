@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { useAuth } from '../contexts/AuthContext';
+import { getSegmentLabels } from '../utils/segmentConfig';
 import { useBilling } from '../hooks/useBilling';
 import { cobrancasService } from '../services/cobrancas';
 import { contratosService } from '../services/contratos';
@@ -33,6 +34,7 @@ const SummaryTile = ({ label, value, color, desc, isTotal = false }) => (
 
 const Cobrancas = () => {
   const { profile } = useAuth();
+  const labels = getSegmentLabels(profile);
   const { cobrancas, locatarios, loading, fetch: fetchCobrancas, markAsPaid, cancel, runDailyBilling } = useBilling(profile?.id);
   const [generating, setGenerating] = useState(false);
   const [showConfirmBillingModal, setShowConfirmBillingModal] = useState(false);
@@ -96,7 +98,7 @@ const Cobrancas = () => {
               setIsMessageModalOpen(true);
               toast.info('Nenhum template de confirmação configurado. Escolha um template para enviar.');
             } else {
-              toast.warning('Locatário não encontrado para notificação.');
+              toast.warning(`${labels.customerSingular} não encontrado para notificação.`);
             }
           } else {
             throw confirmErr;
@@ -287,7 +289,7 @@ const Cobrancas = () => {
   useEffect(() => { setCurrentPage(1); setInnerPages({}); }, [searchTerm, filterStatus, startDate, endDate, sortOrder]);
 
   const handleExportCSV = () => {
-    const headers = ["Locatário", "Placa", "Vencimento", "Categoria", "Valor", "Status"];
+    const headers = [labels.customerSingular, labels.itemCodeLabel, "Vencimento", "Categoria", "Valor", "Status"];
     const rows = filteredData.map(c => [
       c.contratos?.locatarios?.nome_completo || "Lançamento Avulso",
       c.contratos?.veiculos?.placa || "N/A", c.data_vencimento, c.categoria, c.valor, c.status
@@ -305,7 +307,7 @@ const Cobrancas = () => {
     <div className="space-y-6">
       <PageHeader
         title="Fluxo de Caixa"
-        description="Visão agrupada por locatário para melhor organização."
+        description={`Visão agrupada por ${labels.customerSingular.toLowerCase()} para melhor organização.`}
       />
 
       <div className="flex flex-wrap items-center gap-3">
@@ -346,8 +348,8 @@ const Cobrancas = () => {
           aria-label="Ordem de exibição"
         >
           <option value="pendente_desc">Ordenar: Maior Pendência</option>
-          <option value="nome_asc">Ordenar: Locatário (A-Z)</option>
-          <option value="nome_desc">Ordenar: Locatário (Z-A)</option>
+          <option value="nome_asc">Ordenar: {labels.customerSingular} (A-Z)</option>
+          <option value="nome_desc">Ordenar: {labels.customerSingular} (Z-A)</option>
         </select>
       </div>
 
@@ -466,7 +468,7 @@ const Cobrancas = () => {
             <div className="bg-zinc-800 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
               <Search className="text-zinc-600" size={32} />
             </div>
-            <p className="text-zinc-500 font-medium italic">Nenhum locatário com cobranças para os filtros selecionados.</p>
+            <p className="text-zinc-500 font-medium italic">Nenhum {labels.customerSingular.toLowerCase()} com cobranças para os filtros selecionados.</p>
           </div>
         )}
 
@@ -475,7 +477,7 @@ const Cobrancas = () => {
           totalPages={totalPages}
           onPrev={() => setCurrentPage(p => Math.max(p - 1, 1))}
           onNext={() => setCurrentPage(p => Math.min(p + 1, totalPages))}
-          label={`Exibindo ${startIndex + 1}-${Math.min(startIndex + itemsPerPage, groupedData.length)} de ${groupedData.length} Locatários`}
+          label={`Exibindo ${startIndex + 1}-${Math.min(startIndex + itemsPerPage, groupedData.length)} de ${groupedData.length} ${labels.customerPlural}`}
         />
       </div>
 
@@ -498,10 +500,10 @@ const Cobrancas = () => {
 
             {manualData.tipo === 'receita' && (
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Locatário Responsável</label>
+                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">{labels.customerSingular} Responsável</label>
                 <select required className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-4 text-white text-sm outline-none focus:border-indigo-500"
                   value={manualData.id_locatario} onChange={e => setManualData({ ...manualData, id_locatario: e.target.value })}>
-                  <option value="">Selecione o locatário...</option>
+                  <option value="">Selecione o {labels.customerSingular.toLowerCase()}...</option>
                   {sortedLocatarios.map(l => <option key={l.id} value={l.id}>{l.nome_completo}</option>)}
                 </select>
               </div>
@@ -549,11 +551,11 @@ const Cobrancas = () => {
               <label className="text-[10px] font-black text-zinc-500 uppercase">Categoria</label>
               <select className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm outline-none"
                 value={manualData.categoria} onChange={e => setManualData({ ...manualData, categoria: e.target.value })}>
-                <option value="aluguel">Aluguel (Ajuste)</option>
-                <option value="manutencao">Manutenção / Peças</option>
-                <option value="multa">Multa de Trânsito</option>
+                <option value="aluguel">Mensalidade / Locação (Ajuste)</option>
+                <option value="manutencao">Manutenção / Serviço</option>
+                <option value="multa">Taxa / Multa</option>
                 <option value="bonus">Bônus / Crédito</option>
-                <option value="limpeza">Limpeza / Estética</option>
+                <option value="limpeza">Outros / Adicional</option>
               </select>
             </div>
           </ModalBody>
@@ -566,7 +568,7 @@ const Cobrancas = () => {
       <Modal isOpen={showBaixaModal} onClose={() => { if (!baixaLoading) { setShowBaixaModal(false); setBaixaTarget(null); } }} title="Confirmar Baixa" size="max-w-sm">
         <div className="p-4 space-y-4">
           <p className="text-zinc-300 text-sm leading-relaxed">
-            Deseja apenas dar baixa nesta cobranca ou tambem notificar o locatario?
+            Deseja apenas dar baixa nesta cobrança ou também notificar o {labels.customerSingular.toLowerCase()}?
           </p>
           {baixaTarget && (
             <div className="p-3 bg-zinc-950 border border-zinc-800 rounded-xl">
@@ -616,7 +618,7 @@ const Cobrancas = () => {
               <option value="">Selecione o contrato...</option>
               {contratosAtivos.map(c => (
                 <option key={c.id} value={c.id}>
-                  {c.locatarios?.nome_completo} — {c.veiculos?.placa} (R$ {Number(c.valor).toFixed(2)})
+                  {c.locatarios?.nome_completo}{c.veiculos?.placa ? ` — ${c.veiculos.placa}` : ''} (R$ {Number(c.valor).toFixed(2)})
                 </option>
               ))}
             </select>
@@ -626,12 +628,16 @@ const Cobrancas = () => {
             <div className="p-5 bg-zinc-950 border border-zinc-800 rounded-2xl space-y-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Locatario</p>
+                  <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">{labels.customerSingular}</p>
                   <p className="text-white font-bold">{selectedContrato.locatarios?.nome_completo}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Veiculo</p>
-                  <p className="text-indigo-400 font-mono font-bold">{selectedContrato.veiculos?.placa} — {selectedContrato.veiculos?.modelo}</p>
+                  <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">{labels.itemSingular}</p>
+                  <p className="text-indigo-400 font-mono font-bold">
+                    {selectedContrato.veiculos?.placa
+                      ? `${selectedContrato.veiculos.placa} — ${selectedContrato.veiculos.modelo}`
+                      : 'Serviço / Sem item vinculado'}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center justify-between border-t border-zinc-800/50 pt-3">

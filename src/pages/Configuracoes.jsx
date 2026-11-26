@@ -3,6 +3,7 @@ import { Bell, Cloud, Key, Loader2, MessageCircle, Save, Settings, User, X } fro
 import { toast } from 'react-toastify';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../services/api';
+import { getSegmentPresetList } from '../utils/segmentConfig';
 import ZernioIntegrationCard from '../components/ZernioIntegrationCard';
 import MetaIntegrationCard from '../components/MetaIntegrationCard';
 import EmailNotificacoesCard from '../components/EmailNotificacoesCard';
@@ -32,6 +33,17 @@ export default function Configuracoes() {
   const [formData, setFormData] = useState({
     nome_completo: '',
     whatsapp: '',
+    empresa_nome: '',
+    segmento: 'geral',
+    segmento_config: {
+      customerSingular: '',
+      customerPlural: '',
+      itemSingular: '',
+      itemPlural: '',
+      itemCodeLabel: '',
+      itemNameLabel: '',
+      usesItems: true,
+    },
     access_token_mercado_pago: '',
     reminder_stagger_minutes: 2,
     reminder_dispatch_delay_seconds: 5,
@@ -41,10 +53,22 @@ export default function Configuracoes() {
 
   useEffect(() => {
     if (!profile) return;
+    const custom = profile.segmento_config || {};
     setFormData((current) => ({
       ...current,
       nome_completo: profile.nome_completo || '',
       whatsapp: profile.whatsapp || '',
+      empresa_nome: profile.empresa_nome || '',
+      segmento: profile.segmento || 'geral',
+      segmento_config: {
+        customerSingular: custom.customerSingular || '',
+        customerPlural: custom.customerPlural || '',
+        itemSingular: custom.itemSingular || '',
+        itemPlural: custom.itemPlural || '',
+        itemCodeLabel: custom.itemCodeLabel || '',
+        itemNameLabel: custom.itemNameLabel || '',
+        usesItems: typeof custom.usesItems === 'boolean' ? custom.usesItems : true,
+      },
       reminder_stagger_minutes: profile.reminder_stagger_minutes ?? 2,
       reminder_dispatch_delay_seconds: profile.reminder_dispatch_delay_seconds ?? 5,
     }));
@@ -97,6 +121,14 @@ export default function Configuracoes() {
       await api.put('/account/profile', {
         nome_completo: formData.nome_completo,
         whatsapp: formData.whatsapp,
+        empresa_nome: formData.empresa_nome,
+        ...(isLandlord
+          ? {
+            segmento: formData.segmento,
+            segmento_config:
+              formData.segmento === 'personalizado' ? formData.segmento_config : null,
+          }
+          : {}),
         reminder_stagger_minutes: Math.max(0, Math.min(60, Number(formData.reminder_stagger_minutes) || 0)),
         reminder_dispatch_delay_seconds: Math.max(0, Math.min(30, Number(formData.reminder_dispatch_delay_seconds) || 0)),
       });
@@ -188,7 +220,100 @@ export default function Configuracoes() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="text-xs text-slate-500">Nome completo<input className="mt-1 w-full rounded-lg border border-slate-600 bg-input px-4 py-2 text-sm text-white outline-none focus:border-accent" value={formData.nome_completo} onChange={(event) => setFormData({ ...formData, nome_completo: event.target.value })} /></label>
                 <label className="text-xs text-slate-500">WhatsApp de contato<input className="mt-1 w-full rounded-lg border border-slate-600 bg-input px-4 py-2 text-sm text-white outline-none focus:border-accent" value={formData.whatsapp} onChange={(event) => setFormData({ ...formData, whatsapp: event.target.value })} /></label>
+                <label className="text-xs text-slate-500 sm:col-span-2">Nome da empresa / negócio<input className="mt-1 w-full rounded-lg border border-slate-600 bg-input px-4 py-2 text-sm text-white outline-none focus:border-accent" placeholder="Ex: Locadora Prime, Espaço Central, Studio XP" value={formData.empresa_nome} onChange={(event) => setFormData({ ...formData, empresa_nome: event.target.value })} /></label>
               </div>
+              {isLandlord && (
+                <div className="mt-6 border-t border-slate-700/60 pt-6 space-y-4">
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">
+                      Segmento de Atuação
+                    </h3>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Adapta automaticamente menus, termos do painel e formulário de triagem ao seu modelo de negócio.
+                    </p>
+                  </div>
+                  <label className="block text-xs text-slate-500">
+                    Perfil do negócio
+                    <select
+                      className="mt-1 w-full rounded-lg border border-slate-600 bg-input px-4 py-2 text-sm text-white outline-none focus:border-accent"
+                      value={formData.segmento}
+                      onChange={(e) => setFormData({ ...formData, segmento: e.target.value })}
+                    >
+                      {getSegmentPresetList().map((preset) => (
+                        <option key={preset.id} value={preset.id}>
+                          {preset.name} — {preset.description}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {formData.segmento === 'personalizado' && (
+                    <div className="grid gap-3 rounded-xl border border-slate-700 bg-slate-900/40 p-4 sm:grid-cols-2">
+                      <label className="text-xs text-slate-400">
+                        Cliente (singular)
+                        <input
+                          className="mt-1 w-full rounded-lg border border-slate-600 bg-input px-3 py-2 text-sm text-white outline-none focus:border-accent"
+                          placeholder="Ex: Aluno, Hóspede, Inquilino"
+                          value={formData.segmento_config.customerSingular}
+                          onChange={(e) => setFormData({ ...formData, segmento_config: { ...formData.segmento_config, customerSingular: e.target.value } })}
+                        />
+                      </label>
+                      <label className="text-xs text-slate-400">
+                        Clientes (plural)
+                        <input
+                          className="mt-1 w-full rounded-lg border border-slate-600 bg-input px-3 py-2 text-sm text-white outline-none focus:border-accent"
+                          placeholder="Ex: Alunos, Hóspedes, Inquilinos"
+                          value={formData.segmento_config.customerPlural}
+                          onChange={(e) => setFormData({ ...formData, segmento_config: { ...formData.segmento_config, customerPlural: e.target.value } })}
+                        />
+                      </label>
+                      <label className="text-xs text-slate-400">
+                        Item / Ativo (singular)
+                        <input
+                          className="mt-1 w-full rounded-lg border border-slate-600 bg-input px-3 py-2 text-sm text-white outline-none focus:border-accent"
+                          placeholder="Ex: Sala, Equipamento, Quarto"
+                          value={formData.segmento_config.itemSingular}
+                          onChange={(e) => setFormData({ ...formData, segmento_config: { ...formData.segmento_config, itemSingular: e.target.value } })}
+                        />
+                      </label>
+                      <label className="text-xs text-slate-400">
+                        Itens / Ativos (plural)
+                        <input
+                          className="mt-1 w-full rounded-lg border border-slate-600 bg-input px-3 py-2 text-sm text-white outline-none focus:border-accent"
+                          placeholder="Ex: Salas, Equipamentos, Quartos"
+                          value={formData.segmento_config.itemPlural}
+                          onChange={(e) => setFormData({ ...formData, segmento_config: { ...formData.segmento_config, itemPlural: e.target.value } })}
+                        />
+                      </label>
+                      <label className="text-xs text-slate-400">
+                        Rótulo do código / identificador
+                        <input
+                          className="mt-1 w-full rounded-lg border border-slate-600 bg-input px-3 py-2 text-sm text-white outline-none focus:border-accent"
+                          placeholder="Ex: Nº Série, Unidade, Código"
+                          value={formData.segmento_config.itemCodeLabel}
+                          onChange={(e) => setFormData({ ...formData, segmento_config: { ...formData.segmento_config, itemCodeLabel: e.target.value } })}
+                        />
+                      </label>
+                      <label className="text-xs text-slate-400">
+                        Rótulo do nome principal
+                        <input
+                          className="mt-1 w-full rounded-lg border border-slate-600 bg-input px-3 py-2 text-sm text-white outline-none focus:border-accent"
+                          placeholder="Ex: Título, Modelo, Descrição"
+                          value={formData.segmento_config.itemNameLabel}
+                          onChange={(e) => setFormData({ ...formData, segmento_config: { ...formData.segmento_config, itemNameLabel: e.target.value } })}
+                        />
+                      </label>
+                      <label className="sm:col-span-2 flex items-center gap-2 text-xs text-slate-300 pt-1">
+                        <input
+                          type="checkbox"
+                          checked={formData.segmento_config.usesItems !== false}
+                          onChange={(e) => setFormData({ ...formData, segmento_config: { ...formData.segmento_config, usesItems: e.target.checked } })}
+                        />
+                        Exibir módulo de cadastro de itens / ativos no menu e dashboard
+                      </label>
+                    </div>
+                  )}
+                </div>
+              )}
               <label className="mt-4 block text-xs text-slate-500">
                 Token de acesso do Mercado Pago
                 <input

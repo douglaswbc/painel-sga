@@ -5,6 +5,7 @@ import {
   Link as LinkIcon,
   DollarSign,
   Car,
+  Package,
   Users,
   FileText,
   Check,
@@ -12,9 +13,14 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { toast } from 'react-toastify';
+import { useAuth } from '../contexts/AuthContext';
+import { getSegmentLabels } from '../utils/segmentConfig';
 import { candidatosService } from '../services/candidatos';
 
 export default function QuickActionsMenu() {
+  const { profile } = useAuth();
+  const labels = getSegmentLabels(profile);
+  const ItemIcon = labels.isVehicles ? Car : Package;
   const [isOpen, setIsOpen] = useState(false);
   const [copyingLink, setCopyingLink] = useState(false);
   const [copiedSuccess, setCopiedSuccess] = useState(false);
@@ -120,21 +126,23 @@ export default function QuickActionsMenu() {
             </div>
           </button>
 
-          {/* Novo Veículo */}
-          <button
-            onClick={() => handleNavigate('/veiculos')}
-            className="w-full flex items-center gap-3 px-4 py-2.5 text-left text-sm transition hover:bg-black/5"
-          >
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-50 text-amber-700 shrink-0">
-              <Car size={16} />
-            </div>
-            <div>
-              <p className="font-medium text-[#1d1d1f]">Cadastrar Veículo</p>
-              <p className="text-xs text-[#7a7a7a]">Adicionar moto/carro à frota</p>
-            </div>
-          </button>
+          {/* Novo Item */}
+          {labels.usesItems && (
+            <button
+              onClick={() => handleNavigate('/veiculos')}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-left text-sm transition hover:bg-black/5"
+            >
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-50 text-amber-700 shrink-0">
+                <ItemIcon size={16} />
+              </div>
+              <div>
+                <p className="font-medium text-[#1d1d1f]">Cadastrar {labels.itemSingular}</p>
+                <p className="text-xs text-[#7a7a7a]">Adicionar ao catálogo de {labels.itemPlural.toLowerCase()}</p>
+              </div>
+            </button>
+          )}
 
-          {/* Novo Locatário */}
+          {/* Novo Cliente / Locatário */}
           <button
             onClick={() => handleNavigate('/locatarios')}
             className="w-full flex items-center gap-3 px-4 py-2.5 text-left text-sm transition hover:bg-black/5"
@@ -143,8 +151,8 @@ export default function QuickActionsMenu() {
               <Users size={16} />
             </div>
             <div>
-              <p className="font-medium text-[#1d1d1f]">Novo Locatário</p>
-              <p className="text-xs text-[#7a7a7a]">Cadastrar motorista</p>
+              <p className="font-medium text-[#1d1d1f]">Novo {labels.customerSingular}</p>
+              <p className="text-xs text-[#7a7a7a]">Cadastrar {labels.customerSingular.toLowerCase()}</p>
             </div>
           </button>
 
@@ -158,7 +166,11 @@ export default function QuickActionsMenu() {
             </div>
             <div>
               <p className="font-medium text-[#1d1d1f]">Novo Contrato</p>
-              <p className="text-xs text-[#7a7a7a]">Vincular locatário e veículo</p>
+              <p className="text-xs text-[#7a7a7a]">
+                {labels.usesItems
+                  ? `Vincular ${labels.customerSingular.toLowerCase()} e ${labels.itemSingular.toLowerCase()}`
+                  : `Criar recorrência para ${labels.customerSingular.toLowerCase()}`}
+              </p>
             </div>
           </button>
         </div>

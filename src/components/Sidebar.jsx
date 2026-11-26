@@ -1,10 +1,12 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { getSegmentLabels } from '../utils/segmentConfig';
 import {
   LayoutDashboard,
   Users,
   Car,
+  Package,
   FileText,
   DollarSign,
   MessageSquareText,
@@ -17,41 +19,46 @@ import {
   Sparkles,
 } from 'lucide-react';
 
-const MENU_GROUPS = [
-  {
-    title: 'Operação Diária',
-    items: [
-      { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { path: '/cobrancas', label: 'Cobranças', icon: DollarSign, badgeKey: 'cobrancasAtrasadas', badgeTone: 'red' },
-      { path: '/veiculos', label: 'Veículos & Frota', icon: Car },
-    ],
-  },
-  {
-    title: 'Gestão de Contratos',
-    items: [
-      { path: '/locatarios', label: 'Locatários', icon: Users },
-      { path: '/contratos', label: 'Contratos', icon: FileText },
-      { path: '/triagem', label: 'Triagem & Candidatos', icon: ClipboardCheck, badgeKey: 'candidatosPendentes', badgeTone: 'amber' },
-    ],
-  },
-  {
-    title: 'Comunicação & Segurança',
-    items: [
-      { path: '/mensagens', label: 'Mensagens WhatsApp', icon: MessageSquareText },
-      { path: '/acessos', label: 'Controle de Acessos', icon: ShieldCheck },
-    ],
-  },
-  {
-    title: 'Sistema',
-    items: [
-      { path: '/configuracoes', label: 'Configurações', icon: Settings },
-    ],
-  },
-];
+function buildMenuGroups(labels) {
+  const ItemIcon = labels.isVehicles ? Car : Package;
+  return [
+    {
+      title: 'Operação Diária',
+      items: [
+        { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+        { path: '/cobrancas', label: 'Cobranças', icon: DollarSign, badgeKey: 'cobrancasAtrasadas', badgeTone: 'red' },
+        ...(labels.usesItems ? [{ path: '/veiculos', label: labels.itemPlural, icon: ItemIcon }] : []),
+      ],
+    },
+    {
+      title: 'Gestão de Contratos',
+      items: [
+        { path: '/locatarios', label: labels.customerPlural, icon: Users },
+        { path: '/contratos', label: 'Contratos', icon: FileText },
+        { path: '/triagem', label: 'Triagem & Inscrições', icon: ClipboardCheck, badgeKey: 'candidatosPendentes', badgeTone: 'amber' },
+      ],
+    },
+    {
+      title: 'Comunicação & Segurança',
+      items: [
+        { path: '/mensagens', label: 'Mensagens WhatsApp', icon: MessageSquareText },
+        { path: '/acessos', label: 'Controle de Acessos', icon: ShieldCheck },
+      ],
+    },
+    {
+      title: 'Sistema',
+      items: [
+        { path: '/configuracoes', label: 'Configurações', icon: Settings },
+      ],
+    },
+  ];
+}
 
 const Sidebar = ({ isOpen, toggleSidebar, counts = {} }) => {
   const { profile, signOut } = useAuth();
   const isAdmin = profile?.role === 'admin';
+  const labels = getSegmentLabels(profile);
+  const menuGroups = buildMenuGroups(labels);
 
   const getBadge = (item) => {
     if (!item.badgeKey) return null;
@@ -98,7 +105,7 @@ const Sidebar = ({ isOpen, toggleSidebar, counts = {} }) => {
               <h3 className="text-base font-semibold tracking-tight text-white leading-tight">
                 {profile?.empresa_nome || 'Painel SGA'}
               </h3>
-              <p className="text-[11px] font-medium text-slate-400">Gestão de Locações</p>
+              <p className="text-[11px] font-medium text-slate-400">{labels.appSubtitle}</p>
             </div>
           </div>
           <button
@@ -112,7 +119,7 @@ const Sidebar = ({ isOpen, toggleSidebar, counts = {} }) => {
 
         {/* Navegação Agrupada */}
         <nav className="flex-1 overflow-y-auto py-3 px-3 space-y-4">
-          {!isAdmin && MENU_GROUPS.map((group) => (
+          {!isAdmin && menuGroups.map((group) => (
             <div key={group.title}>
               <div className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                 {group.title}

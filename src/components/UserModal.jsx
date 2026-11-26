@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Loader2, User, Key, Shield, Smartphone } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { getSegmentPresetList } from '../utils/segmentConfig';
 import { usuariosService } from '../services/usuarios';
 import { toast } from 'react-toastify';
 import { formatWhatsAppToAPI } from '../utils/formatters';
@@ -14,6 +15,7 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
     email: '',
     whatsapp: '',
     role: 'locatario',
+    segmento: 'geral',
     ativo: true,
     password: ''
   });
@@ -25,6 +27,7 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
         email: userToEdit.email || '',
         whatsapp: userToEdit.whatsapp || '',
         role: userToEdit.role || 'locatario',
+        segmento: userToEdit.segmento || 'geral',
         ativo: Boolean(userToEdit.ativo),
         password: ''
       });
@@ -34,6 +37,7 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
         email: '', 
         whatsapp: '', 
         role: 'locatario', 
+        segmento: 'geral',
         ativo: true, 
         password: ''
       });
@@ -57,6 +61,7 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
           nome_completo: formData.nome_completo,
           whatsapp: cleanWhatsApp,
           role: formData.role,
+          segmento: formData.segmento,
           ativo: Boolean(formData.ativo),
         });
         toast.success("Perfil atualizado!");
@@ -153,14 +158,29 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
               value={formData.role}
               onChange={e => setFormData({...formData, role: e.target.value})}
             >
-              <option value="locatario">Locatário (Cliente)</option>
-              <option value="locador">Locador (Dono de Frota)</option>
+              <option value="locatario">Cliente / Final (Locatário)</option>
+              <option value="locador">Operador / Empresa (Locador)</option>
               <option value="admin">Administrador do Sistema</option>
             </select>
             {isSelf && (
               <p className="mt-1 text-[11px] text-slate-500">Você não pode alterar o seu próprio tipo de usuário.</p>
             )}
           </div>
+
+          {formData.role === 'locador' && (
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Segmento de Atuação</label>
+              <select
+                className="w-full bg-input border border-slate-600 rounded-lg px-4 py-2 text-white focus:border-accent outline-none"
+                value={formData.segmento}
+                onChange={e => setFormData({ ...formData, segmento: e.target.value })}
+              >
+                {getSegmentPresetList().map((preset) => (
+                  <option key={preset.id} value={preset.id}>{preset.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="flex items-center gap-2 pt-2">
             <input

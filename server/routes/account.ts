@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { SEGMENT_IDS, serializeSegmentConfig } from '../config/segments.js';
 import { getDb } from '../db/database.js';
 import { getSafeUserById, requireAuth } from '../middleware/auth.js';
 import { getUserMpToken, setUserMpToken } from '../services/secrets.js';
@@ -17,6 +18,8 @@ const updateProfileSchema = z.object({
   nome_completo: z.string().trim().max(160, 'Nome muito longo.').nullable().optional(),
   whatsapp: z.string().trim().max(30, 'WhatsApp muito longo.').nullable().optional(),
   empresa_nome: z.string().trim().max(160, 'Nome da empresa muito longo.').nullable().optional(),
+  segmento: z.enum(SEGMENT_IDS).optional(),
+  segmento_config: z.record(z.string(), z.unknown()).nullable().optional(),
   reminder_stagger_minutes: z.coerce.number().int().min(0).max(60).optional(),
   reminder_dispatch_delay_seconds: z.coerce.number().int().min(0).max(30).optional(),
   current_password: z.string().optional(),
@@ -94,6 +97,14 @@ router.put('/profile', async (req, res, next) => {
     if (data.empresa_nome !== undefined) {
       sets.push('empresa_nome = ?');
       params.push(data.empresa_nome ? data.empresa_nome : null);
+    }
+    if (data.segmento !== undefined) {
+      sets.push('segmento = ?');
+      params.push(data.segmento);
+    }
+    if (data.segmento_config !== undefined) {
+      sets.push('segmento_config_json = ?');
+      params.push(serializeSegmentConfig(data.segmento_config));
     }
     if (data.reminder_stagger_minutes !== undefined) {
       sets.push('reminder_stagger_minutes = ?');

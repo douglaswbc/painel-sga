@@ -1,15 +1,21 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import { getSegmentLabels } from '../utils/segmentConfig';
 import {
   LayoutDashboard,
   DollarSign,
   Car,
+  Package,
+  FileText,
   Menu,
   Plus,
 } from 'lucide-react';
 
 export default function BottomNav({ onOpenMenu, onOpenQuickActions, counts }) {
-
+  const { profile } = useAuth();
+  const labels = getSegmentLabels(profile);
+  const ItemIcon = labels.isVehicles ? Car : Package;
   const atrasadas = counts?.cobrancasAtrasadas || 0;
 
   return (
@@ -57,17 +63,30 @@ export default function BottomNav({ onOpenMenu, onOpenQuickActions, counts }) {
         </div>
       </button>
 
-      {/* 4. Veículos */}
-      <NavLink
-        to="/veiculos"
-        className={({ isActive }) => `
-          flex flex-1 flex-col items-center justify-center py-1 text-[11px] font-medium transition active:scale-95
-          ${isActive ? 'text-[#0066cc]' : 'text-[#7a7a7a] hover:text-[#1d1d1f]'}
-        `}
-      >
-        <Car size={20} />
-        <span className="mt-1">Veículos</span>
-      </NavLink>
+      {/* 4. Itens ou Contratos */}
+      {labels.usesItems ? (
+        <NavLink
+          to="/veiculos"
+          className={({ isActive }) => `
+            flex flex-1 flex-col items-center justify-center py-1 text-[11px] font-medium transition active:scale-95
+            ${isActive ? 'text-[#0066cc]' : 'text-[#7a7a7a] hover:text-[#1d1d1f]'}
+          `}
+        >
+          <ItemIcon size={20} />
+          <span className="mt-1 truncate max-w-[70px]">{labels.itemPlural.split(' ')[0]}</span>
+        </NavLink>
+      ) : (
+        <NavLink
+          to="/contratos"
+          className={({ isActive }) => `
+            flex flex-1 flex-col items-center justify-center py-1 text-[11px] font-medium transition active:scale-95
+            ${isActive ? 'text-[#0066cc]' : 'text-[#7a7a7a] hover:text-[#1d1d1f]'}
+          `}
+        >
+          <FileText size={20} />
+          <span className="mt-1">Contratos</span>
+        </NavLink>
+      )}
 
       {/* 5. Menu Completo (Abre Sidebar) */}
       <button

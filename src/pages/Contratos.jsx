@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { Plus, Pencil, Trash2, User, Car, DollarSign, Calendar } from 'lucide-react';
+import { Plus, Pencil, Trash2, User, Car, Package, DollarSign, Calendar } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { getSegmentLabels } from '../utils/segmentConfig';
 import { useContracts } from '../hooks/useContracts';
 import { Button } from '../components/ui/Button';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -35,6 +36,8 @@ const defaultForm = {
 
 const Contratos = () => {
   const { profile } = useAuth();
+  const labels = getSegmentLabels(profile);
+  const ItemIcon = labels.isVehicles ? Car : Package;
   const { contracts, locatarios, veiculos, loading, save: saveContract, toggleStatus, remove } = useContracts(profile?.id);
   const [showModal, setShowModal] = useState(false);
   const [editingContract, setEditingContract] = useState(null);
@@ -45,7 +48,7 @@ const Contratos = () => {
 
   const availableVehicles = useMemo(() => {
     const occupiedIds = contracts
-      .filter(c => c.status === 'ativo' && (!editingContract || c.id !== editingContract.id))
+      .filter(c => c.status === 'ativo' && c.id_veiculo && (!editingContract || c.id !== editingContract.id))
       .map(c => c.id_veiculo);
     return veiculos
       .filter(v => !occupiedIds.includes(v.id))
@@ -148,7 +151,7 @@ const Contratos = () => {
         valor: formData.valor,
         data_inicio: formData.data_inicio,
         id_locatario: formData.id_locatario,
-        id_veiculo: formData.id_veiculo,
+        id_veiculo: formData.id_veiculo || null,
         id_usuario: profile.id,
         proxima_cobranca: proximaCobrancaISO,
       };
@@ -156,7 +159,7 @@ const Contratos = () => {
       await saveContract(payload, editingContract?.id);
       setShowModal(false);
     } catch (err) {
-      toast.error(err.code === '23505' ? 'Este veículo já possui um contrato ativo!' : err.message);
+      toast.error(err.code === '23505' ? `Este ${labels.itemSingular.toLowerCase()} já possui um contrato ativo!` : err.message);
     }
   };
 
@@ -166,9 +169,11 @@ const Contratos = () => {
   };
 
   const filtered = useMemo(() => {
+    const q = searchTerm.toLowerCase();
     const list = contracts.filter(c =>
-      (c.locatarios?.nome_completo || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (c.veiculos?.placa || '').toLowerCase().includes(searchTerm.toLowerCase())
+      (c.locatarios?.nome_completo || '').toLowerCase().includes(q) ||
+      (c.veiculos?.placa || '').toLowerCase().includes(q) ||
+      (c.veiculos?.modelo || '').toLowerCase().includes(q)
     );
 
     return list.sort((a, b) => {
@@ -189,7 +194,7 @@ const Contratos = () => {
     <div className="space-y-6 animate-in fade-in duration-500">
       <PageHeader
         title="Gestão de Contratos"
-        description="Controle de frotas e recorrências."
+        description="Controle de vínculos, serviços e recorrências."
         actions={
           <Button icon={Plus} onClick={openNew}>Novo Contrato</Button>
         }
@@ -199,7 +204,7 @@ const Contratos = () => {
         <SearchInput
           value={searchTerm}
           onChange={setSearchTerm}
-          placeholder="Buscar por locatário ou placa..."
+          placeholder={`Buscar por ${labels.customerSingular.toLowerCase()} ou ${labels.itemCodeLabel.toLowerCase()}...`}
           className="max-w-sm"
         />
 
@@ -210,16 +215,16 @@ const Contratos = () => {
           aria-label="Ordenar contratos"
         >
           <option value="recentes">Mais recentes</option>
-          <option value="locatario_asc">Locatário (A-Z)</option>
-          <option value="locatario_desc">Locatário (Z-A)</option>
-          <option value="veiculo_asc">Veículo / Placa (A-Z)</option>
+          <option value="locatario_asc">{labels.customerSingular} (A-Z)</option>
+          <option value="locatario_desc">{labels.customerSingular} (Z-A)</option>
+          <option value="veiculo_asc">{labels.itemSingular} / {labels.itemCodeLabel} (A-Z)</option>
         </select>
       </div>
 
       <Table>
         <Thead>
           <tr>
-            <Th>Locatário / Veículo</Th>
+            <Th>{labels.customerSingular} / {labels.itemSingular}</Th>
             <Th>Valor</Th>
             <Th>Próximo Envio</Th>
             <Th>Recorrência</Th>
@@ -236,8 +241,14 @@ const Contratos = () => {
                     <User size={14} className="text-indigo-400" /> {item.locatarios?.nome_completo}
                   </div>
                   <div className="flex items-center gap-2 text-zinc-500 text-xs font-medium">
-                    <Car size={14} className="text-zinc-600" />
-                    {item.veiculos?.modelo} • <span className="text-indigo-500 font-mono font-bold">{item.veiculos?.placa}</span>
+                    <ItemIcon size={14} className="text-zinc-600" />
+                    {item.veiculos?.placa ? (
+                      <>
+                        {item.veiculos?.modelo} • <span className="text-indigo-500 font-mono font-bold">{item.veiculos?.placa}</span>
+                      </>
+                    ) : (
+                      <span>Contrato de serviço / sem item vinculado</span>
+                    )}
                   </div>
                 </div>
               </Td>
@@ -279,7 +290,14 @@ const Contratos = () => {
                   <User size={14} className="text-indigo-500" /> {item.locatarios?.nome_completo}
                 </div>
                 <div className="flex items-center gap-2 text-zinc-500 text-[10px] font-bold">
-                  <Car size={14} /> {item.veiculos?.modelo} • <span className="text-indigo-500 font-mono underline decoration-indigo-500/30">{item.veiculos?.placa}</span>
+                  <ItemIcon size={14} />{' '}
+                  {item.veiculos?.placa ? (
+                    <>
+                      {item.veiculos?.modelo} • <span className="text-indigo-500 font-mono underline decoration-indigo-500/30">{item.veiculos?.placa}</span>
+                    </>
+                  ) : (
+                    <span>Sem item vinculado (serviço / plano)</span>
+                  )}
                 </div>
               </div>
               <button onClick={() => toggleStatus(item)}>
@@ -324,19 +342,20 @@ const Contratos = () => {
             <div>
               <SectionHeader className="mb-4">Partes do Contrato</SectionHeader>
               <div className="space-y-4">
-                <Select icon={User} label="Locatário (Cliente)" value={formData.id_locatario || ''}
+                <Select icon={User} label={labels.customerSingular} value={formData.id_locatario || ''}
                   onChange={e => setFormData({...formData, id_locatario: e.target.value})}>
-                  <option value="">Selecione um locatário...</option>
+                  <option value="">Selecione um {labels.customerSingular.toLowerCase()}...</option>
                   {sortedLocatarios.map(l => <option key={l.id} value={l.id}>{l.nome_completo}</option>)}
                 </Select>
-                <Select icon={Car} label="Veículo" value={formData.id_veiculo || ''}
-                  onChange={e => setFormData({...formData, id_veiculo: e.target.value})}
-                  disabled={availableVehicles.length === 0 && !editingContract}>
-                  <option value="">
-                    {availableVehicles.length === 0 && !editingContract ? "Nenhum veículo livre no momento" : "Selecione um veículo..."}
-                  </option>
-                  {availableVehicles.map(v => <option key={v.id} value={v.id}>{v.placa} - {v.modelo}</option>)}
-                </Select>
+                {labels.usesItems && (
+                  <Select icon={ItemIcon} label={`${labels.itemSingular} (opcional)`} value={formData.id_veiculo || ''}
+                    onChange={e => setFormData({...formData, id_veiculo: e.target.value})}>
+                    <option value="">
+                      Sem item vinculado (contrato de serviço / plano)
+                    </option>
+                    {availableVehicles.map(v => <option key={v.id} value={v.id}>{v.placa} - {v.modelo}</option>)}
+                  </Select>
+                )}
               </div>
             </div>
 

@@ -8,7 +8,14 @@ export const veiculosService = {
 
   listSimple: async (_userId) => {
     const res = await api.get('/veiculos?ativo=true');
-    return (res.data || []).map(({ id, placa, modelo }) => ({ id, placa, modelo }));
+    return (res.data || []).map((item) => ({
+      id: item.id,
+      placa: item.placa,
+      identificador: item.identificador || item.placa,
+      modelo: item.modelo,
+      titulo: item.titulo || item.modelo,
+      categoria: item.categoria || null,
+    }));
   },
 
   create: async (data) => {

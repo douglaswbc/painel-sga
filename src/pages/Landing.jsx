@@ -2,7 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowRight,
-  Car,
+  Layers,
   CreditCard,
   FileText,
   MessageSquare,
@@ -14,13 +14,13 @@ import {
 const features = [
   {
     icon: Users,
-    title: 'Gestão de locatários',
+    title: 'Gestão de clientes',
     description: 'Cadastros organizados, validação de documentos e histórico de atividade em um só lugar.',
   },
   {
-    icon: Car,
-    title: 'Controle de frota',
-    description: 'Acompanhe veículos, disponibilidade e vínculos com contratos ativos.',
+    icon: Layers,
+    title: 'Ativos, unidades e frotas',
+    description: 'Adapte o painel para veículos, imóveis, equipamentos ou contratos puros de serviço.',
   },
   {
     icon: FileText,
@@ -35,12 +35,12 @@ const features = [
   {
     icon: MessageSquare,
     title: 'WhatsApp oficial',
-    description: 'Conecte o canal pela Zernio e envie templates aprovados pela Meta.',
+    description: 'Conecte pela Meta Cloud API ou Zernio e envie templates e lembretes automáticos.',
   },
   {
     icon: ShieldCheck,
     title: 'Acesso e auditoria',
-    description: 'Gerencie permissões e consulte os registros das principais operações.',
+    description: 'Controle de fechaduras inteligentes, permissões e registro completo de operações.',
   },
 ];
 
@@ -65,12 +65,12 @@ const Landing = () => (
     <main>
       <section className="bg-[#f5f5f7] px-5 py-20 text-center sm:py-28 lg:py-32">
         <div className="mx-auto max-w-4xl">
-          <p className="mb-5 text-sm font-semibold text-[#0066cc]">Gestão de frotas e contratos</p>
+          <p className="mb-5 text-sm font-semibold text-[#0066cc]">Gestão recorrente multi-segmento</p>
           <h1 className="text-4xl font-semibold leading-tight tracking-[-0.03em] text-[#1d1d1f] sm:text-5xl lg:text-[56px] lg:leading-[1.07]">
-            Mais clareza para cuidar do seu negócio de aluguel.
+            Mais clareza para cuidar das suas locações e assinaturas.
           </h1>
           <p className="mx-auto mt-5 max-w-2xl text-base leading-7 tracking-[-0.01em] text-[#555559] sm:text-[17px] sm:leading-[1.47]">
-            Organize locatários, veículos, contratos e cobranças em um painel integrado, com automações pelo WhatsApp.
+            Organize clientes, ativos (veículos, imóveis ou equipamentos), contratos e cobranças em um painel integrado, com automações pelo WhatsApp.
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <Link to="/login" className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-full bg-[#0066cc] px-6 text-[17px] font-normal text-white transition-transform hover:bg-[#005ab4] active:scale-95 sm:w-auto">
@@ -87,7 +87,7 @@ const Landing = () => (
         <div className="mx-auto max-w-7xl">
           <div className="mb-9 max-w-2xl">
             <h2 className="text-3xl font-semibold tracking-tight text-[#1d1d1f] sm:text-[34px]">Tudo conectado à sua operação.</h2>
-            <p className="mt-3 text-base leading-7 text-[#66666a] sm:text-[17px]">As rotinas principais da locação ficam organizadas em um único fluxo.</p>
+            <p className="mt-3 text-base leading-7 text-[#66666a] sm:text-[17px]">As rotinas principais de contratos, cobranças e atendimento em um único fluxo.</p>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {features.map(({ icon: Icon, title, description }) => (

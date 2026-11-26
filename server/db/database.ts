@@ -6,16 +6,19 @@ import { loadEnv } from '../config/env.js';
 import { hashPassword } from '../utils/crypto.js';
 import { initialSchemaSql } from './migrations/001_initial_schema.js';
 import { applyMetaWebhookCredentialsMigration } from './migrations/002_meta_webhook_credentials.js';
+import { applyAgnosticSegmentsMigration } from './migrations/003_agnostic_segments.js';
 
 type Migration = {
   id: string;
   sql?: string;
   up?: (db: DatabaseSync) => void;
+  disableForeignKeys?: boolean;
 };
 
 const MIGRATIONS: Migration[] = [
   { id: '001_initial_schema', sql: initialSchemaSql },
   { id: '002_meta_webhook_credentials', up: applyMetaWebhookCredentialsMigration },
+  { id: '003_agnostic_segments', up: applyAgnosticSegmentsMigration, disableForeignKeys: true },
 ];
 
 let dbInstance: DatabaseSync | null = null;
@@ -52,6 +55,9 @@ function runMigrations(db: DatabaseSync): void {
     const alreadyApplied = selectApplied.get(migration.id);
     if (alreadyApplied) continue;
 
+    if (migration.disableForeignKeys) {
+      db.exec('PRAGMA foreign_keys = OFF;');
+    }
     db.exec('BEGIN');
     try {
       if (migration.sql) {
@@ -66,6 +72,10 @@ function runMigrations(db: DatabaseSync): void {
     } catch (error) {
       db.exec('ROLLBACK');
       throw error;
+    } finally {
+      if (migration.disableForeignKeys) {
+        db.exec('PRAGMA foreign_keys = ON;');
+      }
     }
   }
 }

@@ -88,6 +88,15 @@ test('Stage 6: Link de inscricao publico, cota diaria, auditoria de status e res
     assert.equal(status1Json.exists, true);
     assert.equal(status1Json.active, true);
 
+    const metaRes = await fetch(`${baseUrl}/api/public/inscricao/${linkJson.token}`);
+    assert.equal(metaRes.status, 200);
+    const metaJson = (await metaRes.json()) as { valid: boolean; segmento: string };
+    assert.equal(metaJson.valid, true);
+    assert.equal(metaJson.segmento, 'geral');
+
+    const badMetaRes = await fetch(`${baseUrl}/api/public/inscricao/${'b'.repeat(64)}`);
+    assert.equal(badMetaRes.status, 404);
+
     const validAnswers = {
       nome: 'João Pedro Silva',
       cpf: '52998224725',

@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Loader2 } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { getSegmentLabels } from '../utils/segmentConfig';
 import { locatariosService } from '../services/locatarios';
 import { veiculosService } from '../services/veiculos';
 import { contratosService } from '../services/contratos';
@@ -33,6 +35,8 @@ const recurrenceOption = (value) => {
 };
 
 const ContratoModal = ({ isOpen, onClose, onSuccess, contrato = null, userId }) => {
+  const { profile } = useAuth();
+  const labels = getSegmentLabels(profile);
   const [loading, setLoading] = useState(false);
   const [dataOptions, setDataOptions] = useState({ locatarios: [], veiculos: [] });
   const [formData, setFormData] = useState({
@@ -92,6 +96,7 @@ const ContratoModal = ({ isOpen, onClose, onSuccess, contrato = null, userId }) 
 
       const payload = { 
         ...formData, 
+        id_veiculo: formData.id_veiculo || null,
         id_usuario: userId, 
         valor: parseFloat(formData.valor),
         recorrencia: JSON.stringify(recurrence),
@@ -129,30 +134,31 @@ const ContratoModal = ({ isOpen, onClose, onSuccess, contrato = null, userId }) 
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-400 mb-1">Locatário</label>
+            <label className="block text-sm font-medium text-slate-400 mb-1">{labels.customerSingular}</label>
             <select 
               required
               className="w-full bg-input border border-slate-600 rounded-lg px-4 py-2 text-white outline-none"
               value={formData.id_locatario}
               onChange={e => setFormData({...formData, id_locatario: e.target.value})}
             >
-              <option value="">Selecionar Cliente</option>
+              <option value="">Selecionar {labels.customerSingular}</option>
               {dataOptions.locatarios.map(l => <option key={l.id} value={l.id}>{l.nome_completo}</option>)}
             </select>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-400 mb-1">Veículo</label>
-            <select 
-              required
-              className="w-full bg-input border border-slate-600 rounded-lg px-4 py-2 text-white outline-none"
-              value={formData.id_veiculo}
-              onChange={e => setFormData({...formData, id_veiculo: e.target.value})}
-            >
-              <option value="">Selecionar Veículo</option>
-              {dataOptions.veiculos.map(v => <option key={v.id} value={v.id}>{v.modelo} ({v.placa})</option>)}
-            </select>
-          </div>
+          {labels.usesItems && (
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">{labels.itemSingular} (opcional)</label>
+              <select 
+                className="w-full bg-input border border-slate-600 rounded-lg px-4 py-2 text-white outline-none"
+                value={formData.id_veiculo || ''}
+                onChange={e => setFormData({...formData, id_veiculo: e.target.value})}
+              >
+                <option value="">Sem item vinculado (serviço / plano)</option>
+                {dataOptions.veiculos.map(v => <option key={v.id} value={v.id}>{v.modelo} ({v.placa})</option>)}
+              </select>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div>

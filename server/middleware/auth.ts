@@ -1,6 +1,12 @@
 import type { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { loadEnv } from '../config/env.js';
+import {
+  normalizeSegmentConfig,
+  normalizeSegmentId,
+  type SegmentCustomConfig,
+  type SegmentId,
+} from '../config/segments.js';
 import { getDb } from '../db/database.js';
 
 export type AuthUser = {
@@ -10,6 +16,8 @@ export type AuthUser = {
   whatsapp: string | null;
   role: 'admin' | 'locador' | 'locatario';
   empresa_nome: string | null;
+  segmento: SegmentId;
+  segmento_config: SegmentCustomConfig | null;
   ativo: boolean;
   created_at: string;
   mp_notification_url: string | null;
@@ -83,7 +91,7 @@ export function getSafeUserById(userId: string): AuthUser | null {
   const db = getDb();
   const row = db.prepare(`
     SELECT
-      id, nome_completo, whatsapp, email, role, empresa_nome, ativo, created_at,
+      id, nome_completo, whatsapp, email, role, empresa_nome, segmento, segmento_config_json, ativo, created_at,
       mp_notification_url, reminder_stagger_minutes, reminder_dispatch_delay_seconds
     FROM usuarios
     WHERE id = ?
@@ -98,6 +106,8 @@ export function getSafeUserById(userId: string): AuthUser | null {
     whatsapp: row.whatsapp ? String(row.whatsapp) : null,
     role: row.role as AuthUser['role'],
     empresa_nome: row.empresa_nome ? String(row.empresa_nome) : null,
+    segmento: normalizeSegmentId(row.segmento),
+    segmento_config: normalizeSegmentConfig(row.segmento_config_json),
     ativo: Number(row.ativo) === 1,
     created_at: String(row.created_at),
     mp_notification_url: row.mp_notification_url ? String(row.mp_notification_url) : null,

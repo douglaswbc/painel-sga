@@ -4,6 +4,12 @@ import path from 'node:path';
 import { Router } from 'express';
 import { z } from 'zod';
 import { loadEnv } from '../config/env.js';
+import {
+  SEGMENT_IDS,
+  normalizeSegmentConfig,
+  normalizeSegmentId,
+  serializeSegmentConfig,
+} from '../config/segments.js';
 import { getDb } from '../db/database.js';
 import { getSafeUserById, requireAdmin, requireAuth } from '../middleware/auth.js';
 import { hashPassword } from '../utils/crypto.js';
@@ -23,6 +29,8 @@ const createUserSchema = z.object({
   role: roleSchema,
   ativo: z.boolean().optional().default(true),
   empresa_nome: z.string().trim().max(160, 'Nome da empresa muito longo.').nullable().optional(),
+  segmento: z.enum(SEGMENT_IDS).optional().default('geral'),
+  segmento_config: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 
 const updateUserSchema = z.object({
@@ -31,6 +39,8 @@ const updateUserSchema = z.object({
   role: roleSchema,
   ativo: z.boolean({ error: 'Informe o status ativo do usuário.' }),
   empresa_nome: z.string().trim().max(160, 'Nome da empresa muito longo.').nullable().optional(),
+  segmento: z.enum(SEGMENT_IDS).optional(),
+  segmento_config: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 
 const statusSchema = z.object({
@@ -48,7 +58,7 @@ router.get('/usuarios', (_req, res, next) => {
     const db = getDb();
     const rows = db
       .prepare(
-        `SELECT id, nome_completo, whatsapp, email, role, empresa_nome, ativo, created_at,
+        `SELECT id, nome_completo, whatsapp, email, role, empresa_nome, segmento, segmento_config_json, ativo, created_at,
                 mp_notification_url, reminder_stagger_minutes, reminder_dispatch_delay_seconds
          FROM usuarios
          ORDER BY created_at DESC`,
@@ -62,6 +72,8 @@ router.get('/usuarios', (_req, res, next) => {
       email: String(row.email),
       role: String(row.role),
       empresa_nome: row.empresa_nome ? String(row.empresa_nome) : null,
+      segmento: normalizeSegmentId(row.segmento),
+      segmento_config: normalizeSegmentConfig(row.segmento_config_json),
       ativo: Number(row.ativo) === 1,
       created_at: String(row.created_at),
       mp_notification_url: row.mp_notification_url ? String(row.mp_notification_url) : null,
@@ -105,9 +117,21 @@ router.post('/usuarios', async (req, res, next) => {
     try {
       db.prepare(
         `INSERT INTO usuarios (
-          id, nome_completo, whatsapp, email, password_hash, role, empresa_nome, ativo, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(userId, nome, whatsapp, email, passwordHash, parsed.data.role, empresa, ativoInt, now);
+          id, nome_completo, whatsapp, email, password_hash, role, empresa_nome, segmento, segmento_config_json, ativo, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        userId,
+        nome,
+        whatsapp,
+        email,
+        passwordHash,
+        parsed.data.role,
+        empresa,
+        parsed.data.segmento,
+        serializeSegmentConfig(parsed.data.segmento_config),
+        ativoInt,
+        now,
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';
       if (msg.includes('UNIQUE constraint failed: usuarios.whatsapp')) {
@@ -168,6 +192,14 @@ router.put('/usuarios/:id', (req, res, next) => {
     if (parsed.data.empresa_nome !== undefined) {
       sets.push('empresa_nome = ?');
       params.push(normalizeNullable(parsed.data.empresa_nome));
+    }
+    if (parsed.data.segmento !== undefined) {
+      sets.push('segmento = ?');
+      params.push(parsed.data.segmento);
+    }
+    if (parsed.data.segmento_config !== undefined) {
+      sets.push('segmento_config_json = ?');
+      params.push(serializeSegmentConfig(parsed.data.segmento_config));
     }
 
     try {

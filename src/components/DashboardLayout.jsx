@@ -7,20 +7,25 @@ import QuickSearchModal from './QuickSearchModal';
 import QuickActionsMenu from './QuickActionsMenu';
 import MetaAlertBanner from './MetaAlertBanner';
 import { useNavCounts } from '../hooks/useNavCounts';
+import { getSegmentLabels } from '../utils/segmentConfig';
 import { Menu, Search, Command } from 'lucide-react';
 
-const PAGE_TITLES = {
-  '/dashboard': 'Dashboard',
-  '/cobrancas': 'Cobranças & PIX',
-  '/veiculos': 'Veículos & Frota',
-  '/locatarios': 'Locatários',
-  '/contratos': 'Contratos',
-  '/triagem': 'Triagem de Candidatos',
-  '/mensagens': 'Mensagens WhatsApp',
-  '/acessos': 'Controle de Acessos',
-  '/configuracoes': 'Configurações',
-  '/admin': 'Painel Admin',
-};
+function getPageTitles(labels) {
+  return {
+    '/dashboard': 'Dashboard',
+    '/cobrancas': 'Cobranças & PIX',
+    '/veiculos': labels.itemPlural,
+    '/ativos': labels.itemPlural,
+    '/locatarios': labels.customerPlural,
+    '/clientes': labels.customerPlural,
+    '/contratos': 'Contratos',
+    '/triagem': 'Triagem & Inscrições',
+    '/mensagens': 'Mensagens WhatsApp',
+    '/acessos': 'Controle de Acessos',
+    '/configuracoes': 'Configurações',
+    '/admin': 'Painel Admin',
+  };
+}
 
 const DashboardLayout = () => {
   const { user, profile, loading } = useAuth();
@@ -29,6 +34,8 @@ const DashboardLayout = () => {
   const location = useLocation();
   const isAdmin = profile?.role === 'admin';
   const isLandlord = profile?.role === 'locador';
+  const labels = getSegmentLabels(profile);
+  const pageTitles = getPageTitles(labels);
 
   const { counts } = useNavCounts(isLandlord ? user?.id : null);
 
@@ -51,7 +58,7 @@ const DashboardLayout = () => {
     return <Navigate to="/admin" replace />;
   }
 
-  const currentTitle = PAGE_TITLES[location.pathname] || 'Painel SGA';
+  const currentTitle = pageTitles[location.pathname] || 'Painel SGA';
 
   return (
     <div className="sga-app flex h-screen overflow-hidden bg-[#f5f5f7] text-[#1d1d1f]">
@@ -90,7 +97,9 @@ const DashboardLayout = () => {
               >
                 <div className="flex items-center gap-2 truncate">
                   <Search size={16} className="text-[#0066cc] shrink-0" />
-                  <span className="truncate">Buscar locatário, placa, página...</span>
+                  <span className="truncate">
+                    Buscar {labels.customerSingular.toLowerCase()}, {labels.itemCodeLabel.toLowerCase()}, página...
+                  </span>
                 </div>
                 <kbd className="hidden md:inline-flex items-center gap-0.5 rounded border border-black/15 bg-[#f5f5f7] px-1.5 py-0.5 text-[10px] font-semibold text-[#7a7a7a]">
                   <Command size={10} /> K

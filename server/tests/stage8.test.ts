@@ -219,6 +219,8 @@ test('Stage 8: Conta (/api/account), Zernio + Onboarding, Meta Cloud API e Email
       headers: { Authorization: `Bearer ${ownerToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         nome_completo: 'Locador Oito Atualizado',
+        segmento: 'personalizado',
+        segmento_config: { customerSingular: 'Aluno', customerPlural: 'Alunos', usesItems: false },
         reminder_stagger_minutes: 4,
         reminder_dispatch_delay_seconds: 8,
         current_password: 'Senha123!',
@@ -228,6 +230,9 @@ test('Stage 8: Conta (/api/account), Zernio + Onboarding, Meta Cloud API e Email
     assert.equal(updProfile.status, 200);
     const updJson = await updProfile.json();
     assert.equal(updJson.user.nome_completo, 'Locador Oito Atualizado');
+    assert.equal(updJson.user.segmento, 'personalizado');
+    assert.equal(updJson.user.segmento_config.customerSingular, 'Aluno');
+    assert.equal(updJson.user.segmento_config.usesItems, false);
     assert.equal(updJson.user.reminder_stagger_minutes, 4);
 
     // Verify login works with new password

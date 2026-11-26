@@ -48,6 +48,10 @@ export const candidatosService = {
     return api.del('/candidatos/link-inscricao');
   },
 
+  getPublicApplicationMeta: async (token) => {
+    return api.get(`/public/inscricao/${encodeURIComponent(token)}`, { skipAuthRedirect: true });
+  },
+
   submitApplication: async (token, answers, startedAt, privacyNoticeRead, website) => {
     return api.post('/public/inscricao', {
       token,

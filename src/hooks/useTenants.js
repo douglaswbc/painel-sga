@@ -12,8 +12,8 @@ export function useTenants(userId) {
       setLoading(true);
       const data = await locatariosService.list(userId);
       setTenants(data);
-    } catch (err) {
-      toast.error('Erro ao buscar locatários');
+    } catch {
+      toast.error('Erro ao buscar cadastros');
     } finally {
       setLoading(false);
     }
@@ -23,7 +23,7 @@ export function useTenants(userId) {
 
   const create = async (data) => {
     await locatariosService.create(data);
-    toast.success('Locatário cadastrado!');
+    toast.success('Cadastro realizado!');
     await fetch();
   };
 
@@ -40,7 +40,7 @@ export function useTenants(userId) {
 
   const remove = async (id) => {
     await locatariosService.remove(id);
-    toast.success('Locatário removido');
+    toast.success('Cadastro removido!');
     await fetch();
   };
 

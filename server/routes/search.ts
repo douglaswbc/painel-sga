@@ -8,7 +8,7 @@ const router = Router();
 router.get('/', requireAuth, (req, res) => {
   const term = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   if (term.length < 2) {
-    res.json({ tenants: [], vehicles: [] });
+    res.json({ tenants: [], vehicles: [], assets: [] });
     return;
   }
 
@@ -52,27 +52,31 @@ router.get('/', requireAuth, (req, res) => {
 
   const rawVehicles = db
     .prepare(
-      `SELECT id, placa, modelo, marca, ativo
+      `SELECT id, placa, modelo, marca, tipo, categoria, ativo
        FROM veiculos
-       WHERE id_usuario = ? AND (lower(placa) LIKE ? OR lower(modelo) LIKE ?)
+       WHERE id_usuario = ? AND (lower(placa) LIKE ? OR lower(modelo) LIKE ? OR lower(coalesce(categoria, '')) LIKE ?)
        LIMIT 5`,
     )
-    .all(userId, pattern, pattern) as Array<{
+    .all(userId, pattern, pattern, pattern) as Array<{
     id: string;
     placa: string;
     modelo: string;
     marca: string | null;
+    tipo: string | null;
+    categoria: string | null;
     ativo: number;
   }>;
 
   const vehicles = rawVehicles
     .map((row) => ({
       ...row,
+      identificador: row.placa,
+      titulo: row.modelo,
       ativo: Number(row.ativo) === 1,
     }))
     .sort((a, b) => (a.modelo || '').localeCompare(b.modelo || '', 'pt-BR'));
 
-  res.json({ tenants, vehicles });
+  res.json({ tenants, vehicles, assets: vehicles });
 });
 
 export default router;

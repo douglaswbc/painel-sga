@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Search,
   Car,
+  Package,
   Users,
   DollarSign,
   FileText,
@@ -17,20 +18,29 @@ import {
   Loader2,
 } from 'lucide-react';
 import { api } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
+import { getSegmentLabels } from '../utils/segmentConfig';
 
-const SYSTEM_PAGES = [
-  { path: '/dashboard', label: 'Dashboard — Visão Geral', icon: LayoutDashboard, category: 'Páginas' },
-  { path: '/cobrancas', label: 'Cobranças — PIX e Vencimentos', icon: DollarSign, category: 'Páginas' },
-  { path: '/veiculos', label: 'Veículos — Frota e Disponibilidade', icon: Car, category: 'Páginas' },
-  { path: '/locatarios', label: 'Locatários — Cadastro e Motoristas', icon: Users, category: 'Páginas' },
-  { path: '/contratos', label: 'Contratos — Locações Ativas', icon: FileText, category: 'Páginas' },
-  { path: '/triagem', label: 'Triagem — Candidatos e Inscrições', icon: ClipboardCheck, category: 'Páginas' },
-  { path: '/mensagens', label: 'Mensagens — Templates e Disparos Meta', icon: MessageSquareText, category: 'Páginas' },
-  { path: '/acessos', label: 'Controle de Acessos — Fechaduras', icon: ShieldCheck, category: 'Páginas' },
-  { path: '/configuracoes', label: 'Configurações — Zernio, Meta e MP', icon: Settings, category: 'Páginas' },
-];
+function buildSystemPages(labels) {
+  const ItemIcon = labels.isVehicles ? Car : Package;
+  return [
+    { path: '/dashboard', label: 'Dashboard — Visão Geral', icon: LayoutDashboard, category: 'Páginas' },
+    { path: '/cobrancas', label: 'Cobranças — PIX e Vencimentos', icon: DollarSign, category: 'Páginas' },
+    ...(labels.usesItems ? [{ path: '/veiculos', label: `${labels.itemPlural} — Catálogo e Status`, icon: ItemIcon, category: 'Páginas' }] : []),
+    { path: '/locatarios', label: `${labels.customerPlural} — Cadastro e Contatos`, icon: Users, category: 'Páginas' },
+    { path: '/contratos', label: 'Contratos — Recorrências Ativas', icon: FileText, category: 'Páginas' },
+    { path: '/triagem', label: 'Triagem — Inscrições e Reservas', icon: ClipboardCheck, category: 'Páginas' },
+    { path: '/mensagens', label: 'Mensagens — Templates e Disparos', icon: MessageSquareText, category: 'Páginas' },
+    { path: '/acessos', label: 'Controle de Acessos — Fechaduras', icon: ShieldCheck, category: 'Páginas' },
+    { path: '/configuracoes', label: 'Configurações — Segmento, WhatsApp e MP', icon: Settings, category: 'Páginas' },
+  ];
+}
 
 export default function QuickSearchModal({ isOpen, onClose, userId }) {
+  const { profile } = useAuth();
+  const labels = getSegmentLabels(profile);
+  const systemPages = buildSystemPages(labels);
+  const ItemIcon = labels.isVehicles ? Car : Package;
   const [query, setQuery] = useState('');
   const [tenants, setTenants] = useState([]);
   const [vehicles, setVehicles] = useState([]);
@@ -87,12 +97,12 @@ export default function QuickSearchModal({ isOpen, onClose, userId }) {
   if (!isOpen) return null;
 
   const filteredPages = query.trim()
-    ? SYSTEM_PAGES.filter(
+    ? systemPages.filter(
         (p) =>
           p.label.toLowerCase().includes(query.toLowerCase()) ||
           p.path.toLowerCase().includes(query.toLowerCase())
       )
-    : SYSTEM_PAGES.slice(0, 4);
+    : systemPages.slice(0, 4);
 
   const handleSelectPage = (path) => {
     navigate(path);
@@ -123,7 +133,7 @@ export default function QuickSearchModal({ isOpen, onClose, userId }) {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Buscar locatário, placa, contrato ou página..."
+            placeholder={`Buscar ${labels.customerSingular.toLowerCase()}, ${labels.itemCodeLabel.toLowerCase()}, contrato ou página...`}
             className="w-full bg-transparent text-base font-normal text-[#1d1d1f] placeholder:text-[#7a7a7a] outline-none"
           />
           {loading && <Loader2 size={18} className="animate-spin text-[#7a7a7a] shrink-0" />}
@@ -145,11 +155,11 @@ export default function QuickSearchModal({ isOpen, onClose, userId }) {
 
         {/* Resultados */}
         <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4">
-          {/* Locatários Encontrados */}
+          {/* Clientes Encontrados */}
           {tenants.length > 0 && (
             <div>
               <div className="px-2 pb-1.5 text-xs font-semibold uppercase tracking-wider text-[#7a7a7a]">
-                Locatários
+                {labels.customerPlural}
               </div>
               <ul className="space-y-1">
                 {tenants.map((t) => (
@@ -179,11 +189,11 @@ export default function QuickSearchModal({ isOpen, onClose, userId }) {
             </div>
           )}
 
-          {/* Veículos Encontrados */}
+          {/* Itens Encontrados */}
           {vehicles.length > 0 && (
             <div>
               <div className="px-2 pb-1.5 text-xs font-semibold uppercase tracking-wider text-[#7a7a7a]">
-                Veículos
+                {labels.itemPlural}
               </div>
               <ul className="space-y-1">
                 {vehicles.map((v) => (
@@ -194,7 +204,7 @@ export default function QuickSearchModal({ isOpen, onClose, userId }) {
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 shrink-0">
-                          <Car size={16} />
+                          <ItemIcon size={16} />
                         </div>
                         <div className="truncate">
                           <div className="flex items-center gap-2">

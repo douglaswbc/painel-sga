@@ -1,9 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { X, Loader2 } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { getSegmentLabels } from '../utils/segmentConfig';
 import { locatariosService } from '../services/locatarios';
 import { toast } from 'react-toastify';
 
 const LocatarioModal = ({ isOpen, onClose, onSuccess, locatario = null, userId }) => {
+  const { profile } = useAuth();
+  const labels = getSegmentLabels(profile);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     nome_completo: '',
@@ -34,7 +38,7 @@ const LocatarioModal = ({ isOpen, onClose, onSuccess, locatario = null, userId }
         await locatariosService.create(payload);
       }
 
-      toast.success(locatario ? "Locatário atualizado!" : "Locatário cadastrado!");
+      toast.success(locatario ? `${labels.customerSingular} atualizado!` : `${labels.customerSingular} cadastrado!`);
       onSuccess();
       onClose();
     } catch (error) {
@@ -51,7 +55,7 @@ const LocatarioModal = ({ isOpen, onClose, onSuccess, locatario = null, userId }
       <div className="bg-card w-full max-w-lg rounded-xl border border-slate-700 shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between p-6 border-b border-slate-700">
           <h3 className="text-xl font-bold text-white">
-            {locatario ? 'Editar Locatário' : 'Novo Locatário'}
+            {locatario ? `Editar ${labels.customerSingular}` : `Novo ${labels.customerSingular}`}
           </h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
             <X size={24} />
@@ -105,7 +109,7 @@ const LocatarioModal = ({ isOpen, onClose, onSuccess, locatario = null, userId }
               checked={formData.ativo}
               onChange={e => setFormData({...formData, ativo: e.target.checked})}
             />
-            <label htmlFor="ativo" className="text-sm text-slate-300">Locatário Ativo</label>
+            <label htmlFor="ativo" className="text-sm text-slate-300">{labels.customerSingular} Ativo</label>
           </div>
 
           <div className="flex justify-end gap-3 mt-8">
@@ -122,7 +126,7 @@ const LocatarioModal = ({ isOpen, onClose, onSuccess, locatario = null, userId }
               className="bg-accent hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-semibold flex items-center gap-2 disabled:opacity-50"
             >
               {loading && <Loader2 className="animate-spin" size={18} />}
-              Salvar Locatário
+              Salvar {labels.customerSingular}
             </button>
           </div>
         </form>

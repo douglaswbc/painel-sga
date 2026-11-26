@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { loadEnv } from '../config/env.js';
+import { normalizeSegmentConfig, normalizeSegmentId } from '../config/segments.js';
 import { getDb } from '../db/database.js';
 import { sha256Hex } from '../utils/crypto.js';
 import { getUserMpToken } from './secrets.js';
@@ -50,12 +51,42 @@ function jsBoolToSql(val: unknown): number | null {
   return null;
 }
 
+function parseExtrasJson(raw: unknown): Record<string, string | number | boolean> | null {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, string | number | boolean>;
+    }
+  } catch {
+    // Mantém nulo se não for JSON válido
+  }
+  return null;
+}
+
+function serializeExtrasJson(raw: unknown): string | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const clean: Record<string, string | number | boolean> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>).slice(0, 20)) {
+    const key = k.trim().slice(0, 48);
+    if (!key) continue;
+    if (typeof v === 'string') {
+      const trimmed = v.trim().slice(0, 240);
+      if (trimmed) clean[key] = trimmed;
+    } else if (typeof v === 'number' || typeof v === 'boolean') {
+      clean[key] = v;
+    }
+  }
+  return Object.keys(clean).length > 0 ? JSON.stringify(clean) : null;
+}
+
 export function formatCandidateRow(row: JsonRecord) {
   return {
     ...row,
     tem_220v: sqlBoolToJs(row.tem_220v),
     trabalha_em_app: sqlBoolToJs(row.trabalha_em_app),
     possui_processos_criminais: sqlBoolToJs(row.possui_processos_criminais),
+    respostas_extras: parseExtrasJson(row.respostas_extras_json),
   };
 }
 
@@ -714,6 +745,36 @@ export function deactivateApplicationLink(userId: string) {
   return { success: true };
 }
 
+export function getPublicApplicationMeta(rawToken: string) {
+  const token = typeof rawToken === 'string' ? rawToken.trim().toLowerCase() : '';
+  if (!/^[0-9a-f]{64}$/.test(token)) {
+    throw new PublicError('Este link de inscrição é inválido ou expirou.', 404);
+  }
+
+  const nowIso = new Date().toISOString();
+  const row = getDb()
+    .prepare(
+      `SELECT u.empresa_nome, u.segmento, u.segmento_config_json
+       FROM candidate_application_links l
+       JOIN usuarios u ON u.id = l.id_usuario
+       WHERE l.token_hash = ? AND l.ativo = 1 AND l.expires_at > ?`,
+    )
+    .get(sha256Hex(token), nowIso) as
+    | { empresa_nome: string | null; segmento: string | null; segmento_config_json: string | null }
+    | undefined;
+
+  if (!row) {
+    throw new PublicError('Este link de inscrição é inválido ou expirou.', 404);
+  }
+
+  return {
+    valid: true,
+    empresa_nome: row.empresa_nome ? String(row.empresa_nome) : null,
+    segmento: normalizeSegmentId(row.segmento),
+    segmento_config: normalizeSegmentConfig(row.segmento_config_json),
+  };
+}
+
 export function submitPublicCandidateApplication(body: JsonRecord, contentLength = 0) {
   if (contentLength > 16000) {
     throw new PublicError('Inscrição muito grande.', 413);
@@ -770,6 +831,7 @@ export function submitPublicCandidateApplication(body: JsonRecord, contentLength
     typeof form.caucao_disponivel === 'string' && form.caucao_disponivel.length <= 120
       ? form.caucao_disponivel.trim() || null
       : null;
+  const extrasJson = serializeExtrasJson(form.respostas_extras);
 
   const tokenHash = sha256Hex(token);
   const nowIso = new Date().toISOString();
@@ -820,9 +882,9 @@ export function submitPublicCandidateApplication(body: JsonRecord, contentLength
     db.prepare(
       `INSERT INTO candidatos (
         id, id_usuario, id_link_inscricao, nome, cpf, telefone, email, idade_faixa,
-        tem_220v, trabalha_em_app, caucao_disponivel, possui_processos_criminais,
+        tem_220v, trabalha_em_app, caucao_disponivel, possui_processos_criminais, respostas_extras_json,
         status, aviso_privacidade_versao, aviso_privacidade_lido_em, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Em análise', ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Em análise', ?, ?, ?, ?)`,
     ).run(
       candidateId,
       link.id_usuario,
@@ -836,6 +898,7 @@ export function submitPublicCandidateApplication(body: JsonRecord, contentLength
       jsBoolToSql(form.trabalha_em_app),
       caucao,
       jsBoolToSql(form.possui_processos_criminais),
+      extrasJson,
       PRIVACY_NOTICE_VERSION,
       nowIso,
       nowIso,

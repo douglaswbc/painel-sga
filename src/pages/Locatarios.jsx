@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { useAuth } from '../contexts/AuthContext';
+import { getSegmentLabels } from '../utils/segmentConfig';
 import { useTenants } from '../hooks/useTenants';
 import { Button } from '../components/ui/Button';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -50,6 +51,7 @@ const emptyForm = { nome_completo: '', whatsapp: '', email: '', documento: 'CPF'
 
 const Locatarios = () => {
   const { profile } = useAuth();
+  const labels = getSegmentLabels(profile);
   const { tenants, loading, create, update, toggleStatus, remove } = useTenants(profile?.id);
 
   const [showModal, setShowModal] = useState(false);
@@ -195,12 +197,12 @@ const Locatarios = () => {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Excluir este locatário? Esta ação não pode ser desfeita.')) return;
+    if (!window.confirm(`Excluir este ${labels.customerSingular.toLowerCase()}? Esta ação não pode ser desfeita.`)) return;
     try {
       await remove(id);
     } catch (err) {
       if (err.code === '23503') {
-        toast.error("Não é possível excluir: este locatário possui contratos vinculados.");
+        toast.error(`Não é possível excluir: este ${labels.customerSingular.toLowerCase()} possui contratos vinculados.`);
       } else {
         toast.error(err.message);
       }
@@ -225,8 +227,8 @@ const Locatarios = () => {
     <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
       <PageHeader
         icon={UserCheck}
-        title="Locatários"
-        description="Gestão de clientes e cadastros."
+        title={labels.customerPlural}
+        description={`Gestão de ${labels.customerPlural.toLowerCase()} e cadastros.`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -236,7 +238,7 @@ const Locatarios = () => {
                 setSelectedTenantForMessage(null);
                 setIsMessageModalOpen(true);
               }}
-              title="Disparo de mensagem Meta para múltiplos locatários"
+              title={`Disparo de mensagem Meta para múltiplos ${labels.customerPlural.toLowerCase()}`}
             >
               Disparo em Lote
             </Button>
@@ -247,11 +249,11 @@ const Locatarios = () => {
                 setSelectedTenantForAgendamento(null);
                 setIsAgendamentoModalOpen(true);
               }}
-              title="Configurar agendamento de mensagem para múltiplos locatários"
+              title={`Configurar agendamento de mensagem para múltiplos ${labels.customerPlural.toLowerCase()}`}
             >
               Agendar em Lote
             </Button>
-            <Button icon={Plus} onClick={openNew}>Novo Locatário</Button>
+            <Button icon={Plus} onClick={openNew}>Novo {labels.customerSingular}</Button>
           </div>
         }
       />
@@ -264,7 +266,7 @@ const Locatarios = () => {
             value={sortOrder}
             onChange={(e) => setSortOrder(e.target.value)}
             className="rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs font-semibold text-zinc-300 outline-none cursor-pointer focus:border-indigo-500"
-            aria-label="Ordenar locatários"
+            aria-label={`Ordenar ${labels.customerPlural.toLowerCase()}`}
           >
             <option value="nome_asc">Nome: A-Z (Alfabética)</option>
             <option value="nome_desc">Nome: Z-A</option>
@@ -275,7 +277,7 @@ const Locatarios = () => {
         <Table>
           <Thead>
             <tr>
-              <Th>Locatário / Doc</Th>
+              <Th>{labels.customerSingular} / Doc</Th>
               <Th>Contato Principal</Th>
               <Th>Localização</Th>
               <Th className="text-center">Status</Th>
@@ -291,7 +293,7 @@ const Locatarios = () => {
                   <div className="flex flex-col items-center justify-center gap-1.5 text-zinc-500">
                     <Search size={22} className="text-zinc-600 mb-1" />
                     <p className="text-xs font-bold text-zinc-300">
-                      Nenhum locatário encontrado {searchTerm ? `para "${searchTerm}"` : ''}
+                      Nenhum {labels.customerSingular.toLowerCase()} encontrado {searchTerm ? `para "${searchTerm}"` : ''}
                     </p>
                     <p className="text-[11px] text-zinc-500">
                       Tente buscar por outro termo, nome, CPF/CNPJ, WhatsApp ou e-mail.
@@ -339,7 +341,7 @@ const Locatarios = () => {
             <div className="p-8 text-center text-zinc-500 space-y-1">
               <Search size={22} className="mx-auto text-zinc-600 mb-2" />
               <p className="text-xs font-bold text-zinc-300">
-                Nenhum locatário encontrado {searchTerm ? `para "${searchTerm}"` : ''}
+                Nenhum {labels.customerSingular.toLowerCase()} encontrado {searchTerm ? `para "${searchTerm}"` : ''}
               </p>
               <p className="text-[11px] text-zinc-500">
                 Tente buscar por outro termo ou documento.

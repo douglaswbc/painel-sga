@@ -78,6 +78,7 @@ export function createApp() {
   app.use('/api/public', publicRouter);
   app.use('/api/search', searchRouter);
   app.use('/api/veiculos', veiculosRouter);
+  app.use('/api/ativos', veiculosRouter);
   app.use('/api/webhooks', webhooksRouter);
   app.use('/api/whatsapp', whatsappRouter);
   app.use('/pagar', payLinkRouter);

@@ -16,6 +16,7 @@ import {
   RefreshCw,
   X,
   Car,
+  Package,
   ClipboardCheck,
   Link as LinkIcon,
   Plus,
@@ -25,6 +26,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { useAuth } from '../contexts/AuthContext';
+import { getSegmentLabels } from '../utils/segmentConfig';
 import { cobrancasService } from '../services/cobrancas';
 import { candidatosService } from '../services/candidatos';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -233,6 +235,8 @@ const ChargeActions = ({ charge, processing, onSend, onOpenLink, compact = false
 
 const Dashboard = () => {
   const { profile } = useAuth();
+  const labels = getSegmentLabels(profile);
+  const ItemIcon = labels.isVehicles ? Car : Package;
   const navigate = useNavigate();
 
   const [summary, setSummary] = useState(null);
@@ -373,7 +377,7 @@ const Dashboard = () => {
       if (url) {
         await navigator.clipboard.writeText(url);
         setCandidateLinkCopied(true);
-        toast.success('Link de inscrição copiado! Envie para o motorista no WhatsApp.');
+        toast.success('Link de inscrição copiado! Compartilhe no WhatsApp.');
         setTimeout(() => setCandidateLinkCopied(false), 2500);
       } else {
         toast.info('Abra a tela de Triagem para configurar seu link.');
@@ -470,91 +474,95 @@ const Dashboard = () => {
               <span>Nova Cobrança</span>
             </Link>
 
-            {/* Cadastrar Veículo */}
-            <Link
-              to="/veiculos"
-              className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-full border border-black/15 bg-white px-3.5 text-xs sm:text-sm font-medium text-[#1d1d1f] hover:bg-black/5 active:scale-95"
-            >
-              <Car size={15} className="text-[#0066cc]" />
-              <span>Frota</span>
-            </Link>
+            {/* Cadastrar Item */}
+            {labels.usesItems && (
+              <Link
+                to="/veiculos"
+                className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-full border border-black/15 bg-white px-3.5 text-xs sm:text-sm font-medium text-[#1d1d1f] hover:bg-black/5 active:scale-95"
+              >
+                <ItemIcon size={15} className="text-[#0066cc]" />
+                <span>{labels.itemPlural}</span>
+              </Link>
+            )}
 
-            {/* Cadastrar Locatário */}
+            {/* Cadastrar Cliente / Locatário */}
             <Link
               to="/locatarios"
               className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-full border border-black/15 bg-white px-3.5 text-xs sm:text-sm font-medium text-[#1d1d1f] hover:bg-black/5 active:scale-95"
             >
               <Users size={15} className="text-[#0066cc]" />
-              <span>Locatários</span>
+              <span>{labels.customerPlural}</span>
             </Link>
           </div>
         </div>
       </section>
 
-      {/* 2. RESUMO OPERACIONAL: FROTA & CANDIDATOS */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {/* Card de Frota */}
-        <section className="rounded-[18px] border border-black/10 bg-white p-5 flex flex-col justify-between transition-colors hover:border-black/20">
-          <div>
-            <div className="flex items-center justify-between pb-3 border-b border-black/5">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-[#0066cc]">
-                  <Car size={18} />
+      {/* 2. RESUMO OPERACIONAL: ITENS & CANDIDATOS */}
+      <div className={`grid grid-cols-1 gap-4 ${labels.usesItems ? 'lg:grid-cols-2' : ''}`}>
+        {/* Card de Itens / Frota */}
+        {labels.usesItems && (
+          <section className="rounded-[18px] border border-black/10 bg-white p-5 flex flex-col justify-between transition-colors hover:border-black/20">
+            <div>
+              <div className="flex items-center justify-between pb-3 border-b border-black/5">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-[#0066cc]">
+                    <ItemIcon size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-[#1d1d1f]">{labels.dashboardItemTitle}</h3>
+                    <p className="text-xs text-[#7a7a7a]">{fleetStats.total} registro(s) em {labels.itemPlural.toLowerCase()}</p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-[#1d1d1f]">Frota de Veículos</h3>
-                  <p className="text-xs text-[#7a7a7a]">{fleetStats.total} veículo(s) cadastrado(s)</p>
+
+                <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-[#0066cc] border border-blue-100">
+                  <Percent size={12} /> {fleetStats.ocupacao}% ocupação
+                </span>
+              </div>
+
+              {/* Barra de Progresso de Ocupação */}
+              <div className="mt-4">
+                <div className="h-2.5 w-full rounded-full bg-[#f5f5f7] overflow-hidden flex">
+                  <div
+                    className="bg-[#0066cc] transition-all duration-500"
+                    style={{ width: `${fleetStats.ocupacao}%` }}
+                    title={`${fleetStats.alugados} ${labels.rentedStatusLabel.toLowerCase()}`}
+                  />
                 </div>
               </div>
 
-              <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-[#0066cc] border border-blue-100">
-                <Percent size={12} /> {fleetStats.ocupacao}% ocupação
-              </span>
-            </div>
+              {/* Indicadores de Itens */}
+              <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-xl bg-emerald-50/70 p-3 border border-emerald-100">
+                  <p className="text-[11px] font-medium text-emerald-800">Disponíveis</p>
+                  <p className="mt-1 text-xl font-bold text-emerald-700">{fleetStats.disponiveis}</p>
+                  <p className="text-[10px] text-emerald-600">prontos p/ contrato</p>
+                </div>
 
-            {/* Barra de Progresso de Ocupação da Frota */}
-            <div className="mt-4">
-              <div className="h-2.5 w-full rounded-full bg-[#f5f5f7] overflow-hidden flex">
-                <div
-                  className="bg-[#0066cc] transition-all duration-500"
-                  style={{ width: `${fleetStats.ocupacao}%` }}
-                  title={`${fleetStats.alugados} alugados`}
-                />
+                <div className="rounded-xl bg-blue-50/70 p-3 border border-blue-100">
+                  <p className="text-[11px] font-medium text-blue-800">{labels.rentedStatusLabel}</p>
+                  <p className="mt-1 text-xl font-bold text-[#0066cc]">{fleetStats.alugados}</p>
+                  <p className="text-[10px] text-blue-600">em contrato ativo</p>
+                </div>
+
+                <div className="rounded-xl bg-[#f5f5f7] p-3 border border-black/5">
+                  <p className="text-[11px] font-medium text-[#7a7a7a]">{labels.inactiveStatusLabel}</p>
+                  <p className="mt-1 text-xl font-bold text-[#1d1d1f]">{fleetStats.inativos}</p>
+                  <p className="text-[10px] text-[#7a7a7a]">indisponíveis</p>
+                </div>
               </div>
             </div>
 
-            {/* Indicadores de Veículos */}
-            <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-              <div className="rounded-xl bg-emerald-50/70 p-3 border border-emerald-100">
-                <p className="text-[11px] font-medium text-emerald-800">Disponíveis</p>
-                <p className="mt-1 text-xl font-bold text-emerald-700">{fleetStats.disponiveis}</p>
-                <p className="text-[10px] text-emerald-600">prontos p/ locar</p>
-              </div>
-
-              <div className="rounded-xl bg-blue-50/70 p-3 border border-blue-100">
-                <p className="text-[11px] font-medium text-blue-800">Alugados</p>
-                <p className="mt-1 text-xl font-bold text-[#0066cc]">{fleetStats.alugados}</p>
-                <p className="text-[10px] text-blue-600">em contrato ativo</p>
-              </div>
-
-              <div className="rounded-xl bg-[#f5f5f7] p-3 border border-black/5">
-                <p className="text-[11px] font-medium text-[#7a7a7a]">Oficina / Inativos</p>
-                <p className="mt-1 text-xl font-bold text-[#1d1d1f]">{fleetStats.inativos}</p>
-                <p className="text-[10px] text-[#7a7a7a]">indisponíveis</p>
-              </div>
+            <div className="mt-4 pt-3 border-t border-black/5 flex items-center justify-between text-xs">
+              <span className="text-[#7a7a7a]">{labels.dashboardItemSubtitle}</span>
+              <Link
+                to="/veiculos"
+                className="inline-flex items-center gap-1 font-semibold text-[#0066cc] hover:underline"
+              >
+                Gerenciar {labels.itemPlural.toLowerCase()} <ArrowUpRight size={14} />
+              </Link>
             </div>
-          </div>
-
-          <div className="mt-4 pt-3 border-t border-black/5 flex items-center justify-between text-xs">
-            <span className="text-[#7a7a7a]">Status em tempo real da garagem</span>
-            <Link
-              to="/veiculos"
-              className="inline-flex items-center gap-1 font-semibold text-[#0066cc] hover:underline"
-            >
-              Gerenciar veículos <ArrowUpRight size={14} />
-            </Link>
-          </div>
-        </section>
+          </section>
+        )}
 
         {/* Card de Triagem & Pipeline */}
         <section className="rounded-[18px] border border-black/10 bg-white p-5 flex flex-col justify-between transition-colors hover:border-black/20">
@@ -565,8 +573,8 @@ const Dashboard = () => {
                   <ClipboardCheck size={18} />
                 </div>
                 <div>
-                  <h3 className="text-sm font-semibold text-[#1d1d1f]">Triagem de Candidatos</h3>
-                  <p className="text-xs text-[#7a7a7a]">Pipeline de novos motoristas</p>
+                  <h3 className="text-sm font-semibold text-[#1d1d1f]">Triagem & Inscrições</h3>
+                  <p className="text-xs text-[#7a7a7a]">{labels.triagemSubtitle}</p>
                 </div>
               </div>
 
@@ -837,7 +845,9 @@ const Dashboard = () => {
               <table className="w-full text-left">
                 <thead className="bg-[#fafafc] border-b border-black/5">
                   <tr>
-                    <th className="px-5 py-3 text-xs font-semibold text-[#7a7a7a]">Locatário / Veículo</th>
+                    <th className="px-5 py-3 text-xs font-semibold text-[#7a7a7a]">
+                      {labels.customerSingular}{labels.usesItems ? ` / ${labels.itemSingular}` : ''}
+                    </th>
                     <th className="px-5 py-3 text-xs font-semibold text-[#7a7a7a]">Vencimento / PIX</th>
                     <th className="px-5 py-3 text-xs font-semibold text-[#7a7a7a]">Valor</th>
                     <th className="px-5 py-3 text-center text-xs font-semibold text-[#7a7a7a]">Status</th>
