@@ -39,6 +39,10 @@ const META_PATCH_COLUMNS = new Set([
   'meta_phone_number_id',
   'meta_access_token_ciphertext',
   'meta_token_last4',
+  'meta_app_secret_ciphertext',
+  'meta_app_secret_last4',
+  'meta_webhook_verify_token_ciphertext',
+  'meta_webhook_verify_token_last4',
   'meta_token_expires_at',
   'meta_display_phone_number',
   'meta_verified_name',
@@ -91,7 +95,7 @@ export function getMetaStatus(ownerId: string) {
   assertActiveLandlord(ownerId);
   const integration = getIntegrationRow(ownerId);
   const alerts = activeMetaAlerts(ownerId);
-  const webhookUrl = metaWebhookUrl();
+  const webhookUrl = metaWebhookUrl(ownerId);
   return {
     integration: publicIntegration(integration),
     alerts: publicMetaAlerts(alerts),
@@ -156,6 +160,10 @@ export function disconnectMetaChannel(ownerId: string) {
              meta_phone_number_id = NULL,
              meta_access_token_ciphertext = NULL,
              meta_token_last4 = NULL,
+             meta_app_secret_ciphertext = NULL,
+             meta_app_secret_last4 = NULL,
+             meta_webhook_verify_token_ciphertext = NULL,
+             meta_webhook_verify_token_last4 = NULL,
              meta_token_expires_at = NULL,
              meta_display_phone_number = NULL,
              meta_verified_name = NULL,
@@ -176,9 +184,55 @@ export function disconnectMetaChannel(ownerId: string) {
   return { integration: publicIntegration(getIntegrationRow(ownerId)), alerts: [] };
 }
 
+function buildWebhookCredentialsPatch(
+  ownerId: string,
+  body: { appSecret?: unknown; webhookVerifyToken?: unknown },
+): Record<string, string | null> {
+  const patch: Record<string, string | null> = {};
+  const appSecret = typeof body.appSecret === 'string' ? body.appSecret.trim() : '';
+  const webhookVerifyToken = typeof body.webhookVerifyToken === 'string' ? body.webhookVerifyToken.trim() : '';
+
+  if (appSecret) {
+    if (appSecret.length < 8 || appSecret.length > 200) {
+      throw new PublicError('Informe um App Secret da Meta válido (entre 8 e 200 caracteres).', 400);
+    }
+    patch.meta_app_secret_ciphertext = encryptSecret(appSecret, ownerId, 'meta');
+    patch.meta_app_secret_last4 = appSecret.slice(-4);
+  }
+
+  if (webhookVerifyToken) {
+    if (webhookVerifyToken.length < 4 || webhookVerifyToken.length > 200) {
+      throw new PublicError('Informe um Verify Token de webhook válido (entre 4 e 200 caracteres).', 400);
+    }
+    patch.meta_webhook_verify_token_ciphertext = encryptSecret(webhookVerifyToken, ownerId, 'meta');
+    patch.meta_webhook_verify_token_last4 = webhookVerifyToken.slice(-4);
+  }
+
+  return patch;
+}
+
+export function saveMetaWebhookSettings(
+  ownerId: string,
+  body: { appSecret?: unknown; webhookVerifyToken?: unknown },
+) {
+  assertActiveLandlord(ownerId);
+  const patch = buildWebhookCredentialsPatch(ownerId, body);
+  if (Object.keys(patch).length === 0) {
+    throw new PublicError('Informe o App Secret e/ou o Verify Token do webhook da Meta.', 400);
+  }
+  const saved = saveMetaState(ownerId, patch);
+  return { integration: publicIntegration(saved), alerts: publicMetaAlerts(activeMetaAlerts(ownerId)) };
+}
+
 export async function validateManualMeta(
   ownerId: string,
-  body: { accessToken?: unknown; phoneNumberId?: unknown; wabaId?: unknown },
+  body: {
+    accessToken?: unknown;
+    phoneNumberId?: unknown;
+    wabaId?: unknown;
+    appSecret?: unknown;
+    webhookVerifyToken?: unknown;
+  },
 ) {
   assertActiveLandlord(ownerId);
   const accessToken = typeof body.accessToken === 'string' ? body.accessToken.trim() : '';
@@ -191,6 +245,7 @@ export async function validateManualMeta(
   if (!META_ID.test(phoneNumberId) || !META_ID.test(wabaId)) {
     throw new PublicError('Informe o Phone Number ID e o WABA ID apenas com dígitos.', 400);
   }
+  const webhookPatch = buildWebhookCredentialsPatch(ownerId, body);
 
   let waba: Record<string, unknown>;
   let numbers: Awaited<ReturnType<typeof listPhoneNumbers>>;
@@ -222,6 +277,7 @@ export async function validateManualMeta(
   const tokenInfo = await debugToken(accessToken).catch(() => null);
   const ciphertext = encryptSecret(accessToken, ownerId, 'meta');
   const saved = saveMetaState(ownerId, {
+    ...webhookPatch,
     meta_access_token_ciphertext: ciphertext,
     meta_token_last4: accessToken.slice(-4),
     meta_token_expires_at: tokenExpiryIso(tokenInfo?.expiresAt ?? null),

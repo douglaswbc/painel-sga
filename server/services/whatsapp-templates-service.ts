@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { loadEnv } from '../config/env.js';
 import { getDb } from '../db/database.js';
 import { decryptSecret } from '../utils/crypto.js';
+import { metaWebhookUrl } from './whatsapp-provider.js';
 import {
   classifyMetaError,
   recordAndNotifyMetaAlert,
@@ -58,8 +59,8 @@ function paymentButtonUrlTemplate(): string {
   return `${loadEnv().urls.sgaApp}/pagar/{{1}}`;
 }
 
-function metaCallbackUrl(): string {
-  return loadEnv().urls.metaWebhook;
+function metaCallbackUrl(ownerId: string): string {
+  return metaWebhookUrl(ownerId);
 }
 
 function normalizeTemplateComponents(components: JsonRecord[]): JsonRecord[] {
@@ -235,7 +236,7 @@ export async function getWhatsappHealth(ownerId: string) {
     .get(ownerId) as JsonRecord | undefined;
 
   const provider = normalizeProvider(integration?.provider);
-  const callbackUrl = metaCallbackUrl();
+  const callbackUrl = metaCallbackUrl(ownerId);
 
   if (provider === 'meta') {
     if (!integration?.meta_access_token_ciphertext || !integration?.meta_phone_number_id) {

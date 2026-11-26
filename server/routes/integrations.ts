@@ -15,6 +15,7 @@ import {
   listMetaAlerts,
   refreshMetaStatus,
   registerMetaNumber,
+  saveMetaWebhookSettings,
   validateManualMeta,
 } from '../services/meta-integration-service.js';
 import { PublicError } from '../services/whatsapp-sender.js';
@@ -244,6 +245,9 @@ router.post('/meta', async (req, res) => {
       case 'validate_manual':
         res.json(await validateManualMeta(userId, body));
         return;
+      case 'save_webhook':
+        res.json(saveMetaWebhookSettings(userId, body));
+        return;
       case 'register':
         res.json(await registerMetaNumber(userId, body));
         return;
@@ -279,6 +283,14 @@ router.post('/meta/validate-manual', async (req, res) => {
     res.json(await validateManualMeta(req.user!.id, req.body ?? {}));
   } catch (error) {
     handleError(res, error, 'Não foi possível validar o token manual da Meta.');
+  }
+});
+
+router.post('/meta/webhook-settings', (req, res) => {
+  try {
+    res.json(saveMetaWebhookSettings(req.user!.id, req.body ?? {}));
+  } catch (error) {
+    handleError(res, error, 'Não foi possível salvar os segredos do webhook da Meta.');
   }
 });
 

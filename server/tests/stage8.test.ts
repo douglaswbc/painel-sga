@@ -362,7 +362,7 @@ test('Stage 8: Conta (/api/account), Zernio + Onboarding, Meta Cloud API e Email
     });
     assert.equal(mStatus.status, 200);
     const mStatusJson = await mStatus.json();
-    assert.equal(mStatusJson.webhookUrl, 'https://sga.teste.local/api/webhooks/meta');
+    assert.equal(mStatusJson.webhookUrl, `https://sga.teste.local/api/webhooks/meta/${ownerId}`);
 
     const mManual = await fetch(`${baseUrl}/api/integrations/meta`, {
       method: 'POST',
@@ -372,12 +372,86 @@ test('Stage 8: Conta (/api/account), Zernio + Onboarding, Meta Cloud API e Email
         accessToken: 'EAA_MANUAL_TOKEN_VALID_123456789012345678901234567890',
         phoneNumberId: '106540352242922',
         wabaId: '102290129340398',
+        appSecret: 'locador1_meta_secret_1234',
+        webhookVerifyToken: 'locador1_verify_5678',
       }),
     });
     assert.equal(mManual.status, 200);
     const mManualJson = await mManual.json();
     assert.equal(mManualJson.integration.provider, 'meta');
     assert.equal(mManualJson.integration.meta.status, 'connected');
+    assert.equal(mManualJson.integration.meta.hasAppSecret, true);
+    assert.equal(mManualJson.integration.meta.appSecretLast4, '1234');
+    assert.equal(mManualJson.integration.meta.hasWebhookVerifyToken, true);
+    assert.equal(mManualJson.integration.meta.webhookVerifyTokenLast4, '5678');
+
+    // Rotate per-landlord webhook credentials independently
+    const mWebhookSave = await fetch(`${baseUrl}/api/integrations/meta/webhook-settings`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${ownerToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        appSecret: 'locador1_rotated_secret_8888',
+        webhookVerifyToken: 'locador1_rotated_verify_9999',
+      }),
+    });
+    assert.equal(mWebhookSave.status, 200);
+    const mWebhookSaveJson = await mWebhookSave.json();
+    assert.equal(mWebhookSaveJson.integration.meta.appSecretLast4, '8888');
+    assert.equal(mWebhookSaveJson.integration.meta.webhookVerifyTokenLast4, '9999');
+
+    // Per-landlord Meta webhook challenge verification (GET /api/webhooks/meta/:ownerId)
+    const whGetGlobalToken = await fetch(
+      `${baseUrl}/api/webhooks/meta/${ownerId}?hub.mode=subscribe&hub.verify_token=meta-verify-token&hub.challenge=NOPE`,
+    );
+    assert.equal(whGetGlobalToken.status, 403);
+
+    const whGetOk = await fetch(
+      `${baseUrl}/api/webhooks/meta/${ownerId}?hub.mode=subscribe&hub.verify_token=locador1_rotated_verify_9999&hub.challenge=CHALLENGE_LOCADOR_1`,
+    );
+    assert.equal(whGetOk.status, 200);
+    assert.equal(await whGetOk.text(), 'CHALLENGE_LOCADOR_1');
+
+    // Per-landlord Meta webhook HMAC validation (POST /api/webhooks/meta/:ownerId)
+    const sampleMetaBody = JSON.stringify({ object: 'whatsapp_business_account', entry: [] });
+    const badSig = crypto.createHmac('sha256', 'meta-secret-456').update(sampleMetaBody).digest('hex');
+    const whPostBad = await fetch(`${baseUrl}/api/webhooks/meta/${ownerId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-hub-signature-256': `sha256=${badSig}` },
+      body: sampleMetaBody,
+    });
+    assert.equal(whPostBad.status, 401);
+
+    const goodSig = crypto
+      .createHmac('sha256', 'locador1_rotated_secret_8888')
+      .update(sampleMetaBody)
+      .digest('hex');
+    const whPostOk = await fetch(`${baseUrl}/api/webhooks/meta/${ownerId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-hub-signature-256': `sha256=${goodSig}` },
+      body: sampleMetaBody,
+    });
+    assert.equal(whPostOk.status, 200);
+    assert.equal((await whPostOk.json()).ok, true);
+
+    // Cross-tenant isolation on /api/webhooks/meta/:otherId
+    const otherToken = signAuthToken(otherId, 'locador');
+    const otherWhSave = await fetch(`${baseUrl}/api/integrations/meta`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${otherToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'save_webhook',
+        appSecret: 'locador2_secret_7777',
+        webhookVerifyToken: 'locador2_verify_5555',
+      }),
+    });
+    assert.equal(otherWhSave.status, 200);
+
+    const crossTenantPost = await fetch(`${baseUrl}/api/webhooks/meta/${otherId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-hub-signature-256': `sha256=${goodSig}` },
+      body: sampleMetaBody,
+    });
+    assert.equal(crossTenantPost.status, 401);
 
     // Switch back to zernio and then back to meta via activate
     const actZernio = await fetch(`${baseUrl}/api/integrations/meta`, {
@@ -409,6 +483,8 @@ test('Stage 8: Conta (/api/account), Zernio + Onboarding, Meta Cloud API e Email
     assert.equal(mDisconnect.status, 200);
     const mDiscJson = await mDisconnect.json();
     assert.equal(mDiscJson.integration.meta.status, 'missing');
+    assert.equal(mDiscJson.integration.meta.hasAppSecret, false);
+    assert.equal(mDiscJson.integration.meta.hasWebhookVerifyToken, false);
     assert.equal(mDiscJson.integration.provider, 'zernio');
 
     // 5. Email Settings + Daily Summary + Cron idempotency

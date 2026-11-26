@@ -18,6 +18,10 @@ export type PublicIntegration = {
     status: string;
     hasToken: boolean;
     tokenLast4: string | null;
+    hasAppSecret: boolean;
+    appSecretLast4: string | null;
+    hasWebhookVerifyToken: boolean;
+    webhookVerifyTokenLast4: string | null;
     tokenExpiresAt: string | null;
     businessId: string | null;
     wabaId: string | null;
@@ -88,6 +92,10 @@ export function publicIntegration(row: IntegrationRow): PublicIntegration {
         status: 'missing',
         hasToken: false,
         tokenLast4: null,
+        hasAppSecret: false,
+        appSecretLast4: null,
+        hasWebhookVerifyToken: false,
+        webhookVerifyTokenLast4: null,
         tokenExpiresAt: null,
         businessId: null,
         wabaId: null,
@@ -129,6 +137,13 @@ export function publicIntegration(row: IntegrationRow): PublicIntegration {
       status: row.meta_status ?? 'missing',
       hasToken: Boolean(row.meta_access_token_ciphertext),
       tokenLast4: typeof row.meta_token_last4 === 'string' ? row.meta_token_last4.trim() || null : null,
+      hasAppSecret: Boolean(row.meta_app_secret_ciphertext),
+      appSecretLast4: typeof row.meta_app_secret_last4 === 'string' ? row.meta_app_secret_last4.trim() || null : null,
+      hasWebhookVerifyToken: Boolean(row.meta_webhook_verify_token_ciphertext),
+      webhookVerifyTokenLast4:
+        typeof row.meta_webhook_verify_token_last4 === 'string'
+          ? row.meta_webhook_verify_token_last4.trim() || null
+          : null,
       tokenExpiresAt: row.meta_token_expires_at ?? null,
       businessId: row.meta_business_id ?? null,
       wabaId: row.meta_waba_id ?? null,
@@ -145,8 +160,9 @@ export function publicIntegration(row: IntegrationRow): PublicIntegration {
   };
 }
 
-export function metaWebhookUrl(): string {
-  return loadEnv().urls.metaWebhook;
+export function metaWebhookUrl(ownerId?: string): string {
+  const base = loadEnv().urls.metaWebhook;
+  return ownerId ? `${base}/${ownerId}` : base;
 }
 
 export function lockWebhookUrl(): string {

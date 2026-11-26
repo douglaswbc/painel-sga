@@ -5,14 +5,17 @@ import { DatabaseSync } from 'node:sqlite';
 import { loadEnv } from '../config/env.js';
 import { hashPassword } from '../utils/crypto.js';
 import { initialSchemaSql } from './migrations/001_initial_schema.js';
+import { applyMetaWebhookCredentialsMigration } from './migrations/002_meta_webhook_credentials.js';
 
 type Migration = {
   id: string;
-  sql: string;
+  sql?: string;
+  up?: (db: DatabaseSync) => void;
 };
 
 const MIGRATIONS: Migration[] = [
   { id: '001_initial_schema', sql: initialSchemaSql },
+  { id: '002_meta_webhook_credentials', up: applyMetaWebhookCredentialsMigration },
 ];
 
 let dbInstance: DatabaseSync | null = null;
@@ -51,7 +54,12 @@ function runMigrations(db: DatabaseSync): void {
 
     db.exec('BEGIN');
     try {
-      db.exec(migration.sql);
+      if (migration.sql) {
+        db.exec(migration.sql);
+      }
+      if (migration.up) {
+        migration.up(db);
+      }
       insertApplied.run(migration.id, new Date().toISOString());
       db.exec('COMMIT');
       console.log(`[db] Migration aplicada: ${migration.id}`);

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { IncomingHttpHeaders } from 'node:http';
+import { loadEnv } from '../config/env.js';
 import { getDb } from '../db/database.js';
 import { decryptSecret, timingSafeEqualStr } from '../utils/crypto.js';
 import { handleLockOtp } from './lock-otp.js';
@@ -38,12 +39,133 @@ function registerWhatsappWebhookEvent(
   return res.changes > 0;
 }
 
-function findDeliveryOwner(messageId: string): string | null {
+function matchesHmacSha256Hex(rawBody: string, secret: string, signature: string): boolean {
+  const expected = crypto.createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex');
+  return timingSafeEqualStr(expected, signature);
+}
+
+export function verifyMetaWebhookChallenge(verifyToken: string, ownerId?: string): boolean {
+  const env = loadEnv();
+  const db = getDb();
+
+  if (ownerId) {
+    const row = db
+      .prepare('SELECT meta_webhook_verify_token_ciphertext FROM zernio_integracoes WHERE id_usuario = ?')
+      .get(ownerId) as { meta_webhook_verify_token_ciphertext?: string | null } | undefined;
+
+    if (row?.meta_webhook_verify_token_ciphertext) {
+      try {
+        const expected = decryptSecret(String(row.meta_webhook_verify_token_ciphertext), ownerId);
+        return timingSafeEqualStr(verifyToken, expected);
+      } catch {
+        return false;
+      }
+    }
+
+    if (env.meta.webhookVerifyToken) {
+      return timingSafeEqualStr(verifyToken, env.meta.webhookVerifyToken);
+    }
+    return false;
+  }
+
+  if (env.meta.webhookVerifyToken && timingSafeEqualStr(verifyToken, env.meta.webhookVerifyToken)) {
+    return true;
+  }
+
+  const rows = db
+    .prepare(
+      `SELECT id_usuario, meta_webhook_verify_token_ciphertext
+       FROM zernio_integracoes
+       WHERE meta_webhook_verify_token_ciphertext IS NOT NULL`,
+    )
+    .all() as Array<{ id_usuario: string; meta_webhook_verify_token_ciphertext: string }>;
+
+  for (const row of rows) {
+    try {
+      const expected = decryptSecret(String(row.meta_webhook_verify_token_ciphertext), row.id_usuario);
+      if (timingSafeEqualStr(verifyToken, expected)) return true;
+    } catch {
+      // Ignora credencial inválida de outro locador
+    }
+  }
+  return false;
+}
+
+export function verifyMetaWebhookSignature(
+  rawBody: string,
+  signature: string,
+  ownerId?: string,
+): { configured: boolean; valid: boolean; matchedOwnerId?: string } {
+  const env = loadEnv();
+  const db = getDb();
+
+  if (ownerId) {
+    const row = db
+      .prepare('SELECT meta_app_secret_ciphertext FROM zernio_integracoes WHERE id_usuario = ?')
+      .get(ownerId) as { meta_app_secret_ciphertext?: string | null } | undefined;
+
+    if (row?.meta_app_secret_ciphertext) {
+      try {
+        const secret = decryptSecret(String(row.meta_app_secret_ciphertext), ownerId);
+        return {
+          configured: true,
+          valid: matchesHmacSha256Hex(rawBody, secret, signature),
+          matchedOwnerId: ownerId,
+        };
+      } catch {
+        return { configured: true, valid: false };
+      }
+    }
+
+    if (env.meta.appSecret) {
+      return {
+        configured: true,
+        valid: matchesHmacSha256Hex(rawBody, env.meta.appSecret, signature),
+        matchedOwnerId: ownerId,
+      };
+    }
+    return { configured: false, valid: false };
+  }
+
+  if (env.meta.appSecret && matchesHmacSha256Hex(rawBody, env.meta.appSecret, signature)) {
+    return { configured: true, valid: true };
+  }
+
+  const rows = db
+    .prepare(
+      `SELECT id_usuario, meta_app_secret_ciphertext
+       FROM zernio_integracoes
+       WHERE meta_app_secret_ciphertext IS NOT NULL`,
+    )
+    .all() as Array<{ id_usuario: string; meta_app_secret_ciphertext: string }>;
+
+  for (const row of rows) {
+    try {
+      const secret = decryptSecret(String(row.meta_app_secret_ciphertext), row.id_usuario);
+      if (matchesHmacSha256Hex(rawBody, secret, signature)) {
+        return { configured: true, valid: true, matchedOwnerId: row.id_usuario };
+      }
+    } catch {
+      // Ignora credencial inválida de outro locador
+    }
+  }
+
+  return {
+    configured: Boolean(env.meta.appSecret) || rows.length > 0,
+    valid: false,
+  };
+}
+
+function findDeliveryOwner(messageId: string, scopedOwnerId?: string): string | null {
   const db = getDb();
   for (const table of DELIVERY_TABLES) {
-    const row = db
-      .prepare(`SELECT id_usuario FROM ${table} WHERE message_id = ? LIMIT 1`)
-      .get(messageId) as { id_usuario?: string } | undefined;
+    const row = scopedOwnerId
+      ? (db
+          .prepare(`SELECT id_usuario FROM ${table} WHERE message_id = ? AND id_usuario = ? LIMIT 1`)
+          .get(messageId, scopedOwnerId) as { id_usuario?: string } | undefined)
+      : (db
+          .prepare(`SELECT id_usuario FROM ${table} WHERE message_id = ? LIMIT 1`)
+          .get(messageId) as { id_usuario?: string } | undefined);
     if (row?.id_usuario) return row.id_usuario;
   }
   return null;
@@ -112,7 +234,10 @@ async function updateDeliveryStatus(
   return updated;
 }
 
-export async function handleMetaWebhookEvent(payload: JsonRecord): Promise<{ ok: true; inbound: number; statuses: number }> {
+export async function handleMetaWebhookEvent(
+  payload: JsonRecord,
+  scopedOwnerId?: string,
+): Promise<{ ok: true; inbound: number; statuses: number }> {
   const db = getDb();
   const entries = Array.isArray(payload.entry) ? payload.entry : [];
   let inbound = 0;
@@ -129,7 +254,8 @@ export async function handleMetaWebhookEvent(payload: JsonRecord): Promise<{ ok:
       for (const status of Array.isArray(value.statuses) ? value.statuses : []) {
         const messageId = typeof status?.id === 'string' ? status.id : null;
         if (!messageId) continue;
-        const ownerId = findDeliveryOwner(messageId);
+        const ownerId = findDeliveryOwner(messageId, scopedOwnerId);
+        if (scopedOwnerId && ownerId !== scopedOwnerId) continue;
         const fresh = registerWhatsappWebhookEvent(
           `status:${messageId}:${String(status.status ?? '')}`,
           ownerId,
@@ -143,14 +269,23 @@ export async function handleMetaWebhookEvent(payload: JsonRecord): Promise<{ ok:
       const messages = Array.isArray(value.messages) ? value.messages : [];
       if (!messages.length) continue;
 
-      const integrations = db
-        .prepare(
-          `SELECT id_usuario, meta_access_token_ciphertext, meta_status, meta_phone_number_id
-           FROM zernio_integracoes
-           WHERE meta_phone_number_id = ?
-           LIMIT 10`,
-        )
-        .all(phoneNumberId) as Array<{
+      const integrations = (scopedOwnerId
+        ? db
+            .prepare(
+              `SELECT id_usuario, meta_access_token_ciphertext, meta_status, meta_phone_number_id
+               FROM zernio_integracoes
+               WHERE meta_phone_number_id = ? AND id_usuario = ?
+               LIMIT 1`,
+            )
+            .all(phoneNumberId, scopedOwnerId)
+        : db
+            .prepare(
+              `SELECT id_usuario, meta_access_token_ciphertext, meta_status, meta_phone_number_id
+               FROM zernio_integracoes
+               WHERE meta_phone_number_id = ?
+               LIMIT 10`,
+            )
+            .all(phoneNumberId)) as Array<{
         id_usuario: string;
         meta_access_token_ciphertext: string | null;
         meta_status: string;

@@ -18,6 +18,8 @@ const MetaIntegrationCard = () => {
   const [accessToken, setAccessToken] = useState('');
   const [phoneNumberId, setPhoneNumberId] = useState('');
   const [wabaId, setWabaId] = useState('');
+  const [appSecret, setAppSecret] = useState('');
+  const [webhookVerifyToken, setWebhookVerifyToken] = useState('');
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
@@ -75,15 +77,48 @@ const MetaIntegrationCard = () => {
     setErrorMessage('');
     setNotice('');
     try {
-      const data = await invoke('validate_manual', { accessToken, phoneNumberId, wabaId });
+      const data = await invoke('validate_manual', {
+        accessToken,
+        phoneNumberId,
+        wabaId,
+        appSecret,
+        webhookVerifyToken,
+      });
       setIntegration(data.integration);
       setAccessToken('');
+      setAppSecret('');
+      setWebhookVerifyToken('');
       setNotice('Credencial da Meta validada e salva. O canal já está em uso pelo SGA.');
     } catch (error) {
       setErrorMessage(error.message);
     } finally {
       setBusy(false);
     }
+  };
+
+  const saveWebhookCredentials = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    setErrorMessage('');
+    setNotice('');
+    try {
+      const data = await invoke('save_webhook', { appSecret, webhookVerifyToken });
+      setIntegration(data.integration);
+      setAppSecret('');
+      setWebhookVerifyToken('');
+      setNotice('Credenciais do webhook da Meta salvas com sucesso.');
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const generateVerifyToken = () => {
+    const bytes = new Uint8Array(12);
+    window.crypto.getRandomValues(bytes);
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    setWebhookVerifyToken(`sga_meta_${hex}`);
   };
 
   const refreshStatus = async () => {
@@ -286,8 +321,8 @@ const MetaIntegrationCard = () => {
             <div>
               <h3 className="text-sm font-semibold text-white">URL de callback entre a Meta e o SGA</h3>
               <p className="mt-1 text-xs text-slate-400">
-                Endereço que a Meta chama para entregar mensagens recebidas e o status de entrega. Use o mesmo valor em
-                <span className="font-mono"> Webhooks</span> no painel do App da Meta, com o mesmo token de verificação configurado no SGA.
+                Endereço exclusivo do seu locador para a Meta entregar mensagens recebidas e status de entrega. Informe esta URL e o seu <span className="font-mono">Verify Token</span> em
+                <span className="font-mono"> Webhooks</span> no painel do seu App da Meta.
               </p>
             </div>
             <button
@@ -323,6 +358,76 @@ const MetaIntegrationCard = () => {
             <p className="text-[11px] uppercase tracking-wider text-slate-500">Nome / limite</p>
             <p className="mt-1 text-xs text-slate-200">{meta.nameStatus || '—'} · {meta.messagingLimitTier || '—'}</p>
           </div>
+        </div>
+      )}
+
+      {isConnected && (
+        <div className="border-t border-slate-800 pt-4 space-y-3">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Segredos do Webhook do App da Meta</h3>
+            <p className="text-xs text-slate-400 mt-1">
+              Informe o App Secret e o Verify Token do seu App na Meta para validar assinaturas e verificações deste locador. Os valores ficam cifrados no servidor.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-[11px]">
+            <span className={`px-2.5 py-1 rounded-full border ${meta.hasAppSecret ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-300'}`}>
+              App Secret: {meta.hasAppSecret ? `Configurado (•••• ${meta.appSecretLast4 || ''})` : 'Não configurado'}
+            </span>
+            <span className={`px-2.5 py-1 rounded-full border ${meta.hasWebhookVerifyToken ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-300'}`}>
+              Verify Token: {meta.hasWebhookVerifyToken ? `Configurado (•••• ${meta.webhookVerifyTokenLast4 || ''})` : 'Não configurado'}
+            </span>
+          </div>
+          <form onSubmit={saveWebhookCredentials} className="space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1" htmlFor="meta-app-secret">
+                  App Secret (META_APP_SECRET)
+                </label>
+                <input
+                  id="meta-app-secret"
+                  type="password"
+                  autoComplete="new-password"
+                  spellCheck="false"
+                  value={appSecret}
+                  onChange={(event) => setAppSecret(event.target.value)}
+                  placeholder={meta.hasAppSecret ? `Manter atual (•••• ${meta.appSecretLast4 || ''}) ou informar novo` : 'Chave secreta do App na Meta'}
+                  className="w-full bg-input border border-slate-600 rounded-lg px-4 py-2.5 text-white outline-none focus:border-accent font-mono text-sm"
+                />
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs text-slate-400" htmlFor="meta-verify-token">
+                    Verify Token (META_WEBHOOK_VERIFY_TOKEN)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={generateVerifyToken}
+                    className="text-[11px] font-semibold text-indigo-400 hover:underline"
+                  >
+                    Gerar token
+                  </button>
+                </div>
+                <input
+                  id="meta-verify-token"
+                  type="text"
+                  autoComplete="off"
+                  spellCheck="false"
+                  value={webhookVerifyToken}
+                  onChange={(event) => setWebhookVerifyToken(event.target.value)}
+                  placeholder={meta.hasWebhookVerifyToken ? `Manter atual (•••• ${meta.webhookVerifyTokenLast4 || ''}) ou informar novo` : 'Token de verificação do Webhook'}
+                  className="w-full bg-input border border-slate-600 rounded-lg px-4 py-2.5 text-white outline-none focus:border-accent font-mono text-sm"
+                />
+              </div>
+            </div>
+            <button
+              type="submit"
+              disabled={busy || (!appSecret.trim() && !webhookVerifyToken.trim())}
+              className="bg-slate-800 hover:bg-slate-700 border border-slate-600 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2"
+            >
+              {busy ? <Loader2 className="animate-spin" size={15} /> : <ShieldCheck size={15} />}
+              Salvar segredos do webhook
+            </button>
+          </form>
         </div>
       )}
 
@@ -372,6 +477,47 @@ const MetaIntegrationCard = () => {
                   value={wabaId}
                   onChange={(event) => setWabaId(event.target.value.replace(/\D/g, ''))}
                   placeholder="102290129340398"
+                  className="w-full bg-input border border-slate-600 rounded-lg px-4 py-2.5 text-white outline-none focus:border-accent font-mono text-sm"
+                />
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1" htmlFor="meta-app-secret-init">
+                  App Secret (opcional agora)
+                </label>
+                <input
+                  id="meta-app-secret-init"
+                  type="password"
+                  autoComplete="new-password"
+                  spellCheck="false"
+                  value={appSecret}
+                  onChange={(event) => setAppSecret(event.target.value)}
+                  placeholder="Chave secreta do App na Meta"
+                  className="w-full bg-input border border-slate-600 rounded-lg px-4 py-2.5 text-white outline-none focus:border-accent font-mono text-sm"
+                />
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs text-slate-400" htmlFor="meta-verify-token-init">
+                    Verify Token (opcional agora)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={generateVerifyToken}
+                    className="text-[11px] font-semibold text-indigo-400 hover:underline"
+                  >
+                    Gerar token
+                  </button>
+                </div>
+                <input
+                  id="meta-verify-token-init"
+                  type="text"
+                  autoComplete="off"
+                  spellCheck="false"
+                  value={webhookVerifyToken}
+                  onChange={(event) => setWebhookVerifyToken(event.target.value)}
+                  placeholder="Token de verificação do Webhook"
                   className="w-full bg-input border border-slate-600 rounded-lg px-4 py-2.5 text-white outline-none focus:border-accent font-mono text-sm"
                 />
               </div>
