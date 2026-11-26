@@ -12,7 +12,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { toast } from 'react-toastify';
-import { supabase } from '../services/supabase';
+import { api } from '../services/api';
 
 const PREFERENCE_FIELDS = [
   {
@@ -84,19 +84,7 @@ const EmailNotificacoesCard = () => {
   const [sendingSummary, setSendingSummary] = useState(false);
 
   const invoke = async (action, payload = {}) => {
-    const { data, error } = await supabase.functions.invoke('email-settings', {
-      body: { action, ...payload },
-    });
-    if (error) {
-      let message = 'Não foi possível falar com o servidor. Tente novamente.';
-      try {
-        const body = await error.context?.json();
-        if (typeof body?.error === 'string') message = body.error;
-      } catch {}
-      throw new Error(message);
-    }
-    if (data?.error) throw new Error(data.error);
-    return data;
+    return api.post('/integrations/email', { action, ...payload });
   };
 
   const applyConfig = (next) => {

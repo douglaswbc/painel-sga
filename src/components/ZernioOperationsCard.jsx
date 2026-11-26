@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, AlertCircle, CheckCircle2, CircleDollarSign, Clock3, Copy, Loader2, RefreshCw, Search, Send, XCircle } from 'lucide-react';
-import { supabase } from '../services/supabase';
+import { api } from '../services/api';
 
 const periodBounds = (period) => {
   const today = new Date();
@@ -20,14 +20,7 @@ const periodBounds = (period) => {
   return { start: start.toISOString(), end: today.toISOString() };
 };
 
-const errorFrom = async (error, data) => {
-  if (typeof data?.error === 'string') return data.error;
-  try {
-    const payload = await error?.context?.json();
-    if (typeof payload?.error === 'string') return payload.error;
-  } catch { /* Use the SDK message below. */ }
-  return error?.message || 'Não foi possível carregar os dados.';
-};
+const errorFrom = (error) => error?.message || 'Não foi possível carregar os dados.';
 
 const formatDate = (value) => {
   if (!value) return 'Data indisponível';
@@ -81,30 +74,50 @@ export default function ZernioOperationsCard() {
     setAnalyticsNotice('');
     setActivityError('');
     const bounds = periodBounds(period);
-    const [costResult, activityResult, healthResult] = await Promise.all([
-      supabase.functions.invoke('zernio-whatsapp', { body: { action: 'pricing_analytics', ...bounds } }),
-      supabase.functions.invoke('zernio-whatsapp', { body: { action: 'activity', ...bounds, page: activityPage, pageSize: 25, search: searchTerm } }),
-      supabase.functions.invoke('zernio-whatsapp', { body: { action: 'health' } }),
+    const analyticsParams = new URLSearchParams(bounds);
+    const activityParams = new URLSearchParams({
+      ...bounds,
+      page: String(activityPage),
+      pageSize: '25',
+      ...(searchTerm ? { search: searchTerm } : {}),
+    });
+
+    const [costRes, activityRes, healthRes] = await Promise.allSettled([
+      api.get(`/whatsapp/analytics?${analyticsParams.toString()}`),
+      api.get(`/whatsapp/activity?${activityParams.toString()}`),
+      api.get('/whatsapp/health'),
     ]);
-    if (costResult.error || (costResult.data?.error && costResult.data?.costAvailable !== false)) {
+
+    if (costRes.status === 'rejected') {
       setAnalytics([]);
-      setAnalyticsError(await errorFrom(costResult.error, costResult.data));
+      setAnalyticsError(errorFrom(costRes.reason));
     } else {
-      setAnalytics(Array.isArray(costResult.data?.analytics) ? costResult.data.analytics : []);
-      setAnalyticsNotice(costResult.data?.message || 'Estimativa local com base nos envios registrados.');
+      const costData = costRes.value;
+      setAnalytics(Array.isArray(costData?.analytics) ? costData.analytics : []);
+      setAnalyticsNotice(costData?.message || 'Estimativa local com base nos envios registrados.');
     }
-    if (activityResult.error || activityResult.data?.error) {
+
+    if (activityRes.status === 'rejected') {
       setActivity([]);
-      setActivityError(await errorFrom(activityResult.error, activityResult.data));
+      setActivityError(errorFrom(activityRes.reason));
     } else {
-      setActivity(Array.isArray(activityResult.data?.activity) ? activityResult.data.activity : []);
-      setActivityTotal(Number(activityResult.data?.total) || 0);
-      setActivityTotalPages(Number(activityResult.data?.totalPages) || 1);
+      const actData = activityRes.value;
+      setActivity(Array.isArray(actData?.activity) ? actData.activity : []);
+      setActivityTotal(Number(actData?.total) || 0);
+      setActivityTotalPages(Number(actData?.totalPages) || 1);
     }
-    setHealth(healthResult.error || healthResult.data?.error
-      ? { status: 'unavailable', message: await errorFrom(healthResult.error, healthResult.data) }
-      : { status: healthResult.data?.health || 'unavailable', message: healthResult.data?.message || 'Status indisponível.' });
-    setCallbackUrl(healthResult.data?.callbackUrl || '');
+
+    if (healthRes.status === 'rejected') {
+      setHealth({ status: 'unavailable', message: errorFrom(healthRes.reason) });
+      setCallbackUrl('');
+    } else {
+      const hData = healthRes.value;
+      setHealth({
+        status: hData?.health || 'unavailable',
+        message: hData?.message || 'Status indisponível.',
+      });
+      setCallbackUrl(hData?.callbackUrl || '');
+    }
     setLoading(false);
   }, [period, activityPage, searchTerm]);
 

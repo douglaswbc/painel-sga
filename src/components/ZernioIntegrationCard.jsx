@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Loader2, MessageCircle, RefreshCw, ShieldCheck, Trash2, XCircle } from 'lucide-react';
-import { supabase } from '../services/supabase';
+import { api } from '../services/api';
 
 const ZernioIntegrationCard = () => {
   const [integration, setIntegration] = useState(null);
@@ -19,19 +19,7 @@ const ZernioIntegrationCard = () => {
   const accounts = useMemo(() => selectedProfile?.accounts || [], [selectedProfile]);
 
   const invoke = useCallback(async (action, payload = {}) => {
-    const { data, error } = await supabase.functions.invoke('zernio-integration', {
-      body: { action, ...payload },
-    });
-    if (error) {
-      let message = 'Não foi possível falar com o SGA. Tente novamente.';
-      try {
-        const body = await error.context?.json();
-        if (typeof body?.error === 'string') message = body.error;
-      } catch {}
-      throw new Error(message);
-    }
-    if (data?.error) throw new Error(data.error);
-    return data;
+    return api.post('/integrations/zernio', { action, ...payload });
   }, []);
 
   useEffect(() => {
@@ -181,18 +169,10 @@ const ZernioIntegrationCard = () => {
     setErrorMessage('');
     setNotice('');
     try {
-      const { data, error } = await supabase.functions.invoke('zernio-onboarding', {
-        body: { action: 'start', profileId: selectedProfileId, onboardingMode },
+      const data = await api.post('/integrations/zernio/onboarding/start', {
+        profileId: selectedProfileId,
+        onboardingMode,
       });
-      if (error) {
-        let message = 'Não foi possível iniciar o onboarding. Tente novamente.';
-        try {
-          const body = await error.context?.json();
-          if (typeof body?.error === 'string') message = body.error;
-        } catch {}
-        throw new Error(message);
-      }
-      if (data?.error) throw new Error(data.error);
       const authUrl = new URL(data?.authUrl);
       if (authUrl.protocol !== 'https:' || !(authUrl.hostname === 'facebook.com' || authUrl.hostname.endsWith('.facebook.com'))) {
         throw new Error('A Zernio retornou um endereço de conexão inválido.');
@@ -213,18 +193,7 @@ const ZernioIntegrationCard = () => {
     setErrorMessage('');
     setNotice('');
     try {
-      const { data, error } = await supabase.functions.invoke('zernio-onboarding', {
-        body: { action: 'disconnect' },
-      });
-      if (error) {
-        let message = 'Não foi possível desconectar o canal. Tente novamente.';
-        try {
-          const body = await error.context?.json();
-          if (typeof body?.error === 'string') message = body.error;
-        } catch {}
-        throw new Error(message);
-      }
-      if (data?.error) throw new Error(data.error);
+      const data = await api.post('/integrations/zernio/onboarding/disconnect', {});
       setIntegration(data.integration);
       setSelectedAccountId('');
       setChannelStatus('missing');

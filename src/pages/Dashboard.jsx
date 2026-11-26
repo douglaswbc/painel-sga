@@ -27,7 +27,6 @@ import { toast } from 'react-toastify';
 import { useAuth } from '../contexts/AuthContext';
 import { cobrancasService } from '../services/cobrancas';
 import { candidatosService } from '../services/candidatos';
-import { supabase } from '../services/supabase';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Pagination } from '../components/ui/Pagination';
 import { StatusBadge } from '../components/ui/StatusBadge';
@@ -274,48 +273,9 @@ const Dashboard = () => {
   const loadOperationalStats = useCallback(async () => {
     if (!profile?.id) return;
     try {
-      // 1. Frota de veículos
-      const { data: veiculosData, error: veicErr } = await supabase
-        .from('veiculos')
-        .select('id, ativo, contratos(id, status)')
-        .eq('id_usuario', profile.id);
-
-      if (!veicErr && veiculosData) {
-        const total = veiculosData.length;
-        const alugados = veiculosData.filter((v) => v.ativo && v.contratos?.some((c) => c.status === 'ativo')).length;
-        const disponiveis = veiculosData.filter((v) => v.ativo && !v.contratos?.some((c) => c.status === 'ativo')).length;
-        const inativos = veiculosData.filter((v) => !v.ativo).length;
-        const ocupacao = total > 0 ? Math.round((alugados / total) * 100) : 0;
-
-        setFleetStats({
-          total,
-          alugados,
-          disponiveis,
-          inativos,
-          ocupacao,
-          loading: false,
-        });
-      }
-
-      // 2. Candidatos em triagem
-      const { data: candidatosData, error: candErr } = await supabase
-        .from('candidatos')
-        .select('id, status')
-        .eq('id_usuario', profile.id);
-
-      if (!candErr && candidatosData) {
-        const emAnalise = candidatosData.filter((c) => c.status === 'analise').length;
-        const preAprovados = candidatosData.filter(
-          (c) => c.status === 'pre_aprovado' || c.status === 'aguardando_reserva'
-        ).length;
-
-        setCandidateStats({
-          emAnalise,
-          preAprovados,
-          total: candidatosData.length,
-          loading: false,
-        });
-      }
+      const stats = await cobrancasService.getDashboardOperationalStats();
+      if (stats?.fleetStats) setFleetStats(stats.fleetStats);
+      if (stats?.candidateStats) setCandidateStats(stats.candidateStats);
     } catch (err) {
       console.warn('Erro ao carregar métricas operacionais:', err);
     }

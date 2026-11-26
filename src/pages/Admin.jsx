@@ -39,7 +39,7 @@ const Admin = () => {
       toast.success("Status atualizado!");
       fetchUsers();
     } catch (error) {
-      toast.error("Erro ao atualizar status");
+      toast.error(error.message || "Erro ao atualizar status");
     }
   };
 
@@ -125,10 +125,19 @@ const Admin = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700">
-                {filteredUsers.map(u => (
+                {filteredUsers.map(u => {
+                  const isSelf = u.id === profile?.id;
+                  return (
                   <tr key={u.id} className="hover:bg-slate-800/50 transition-colors group">
                     <td className="p-4">
-                      <div className="font-bold text-white">{u.nome_completo || 'Sem Nome'}</div>
+                      <div className="font-bold text-white">
+                        {u.nome_completo || 'Sem Nome'}
+                        {isSelf && (
+                          <span className="ml-2 rounded bg-indigo-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase text-indigo-300">
+                            Você
+                          </span>
+                        )}
+                      </div>
                       <div className="text-xs text-slate-500 flex items-center gap-1">
                         <Mail size={12} /> {u.email}
                       </div>
@@ -144,8 +153,10 @@ const Admin = () => {
                     </td>
                     <td className="p-4">
                       <button 
-                        onClick={() => toggleUserStatus(u.id, u.ativo)}
-                        className={`flex items-center gap-1.5 text-xs font-bold transition-colors ${
+                        onClick={() => !isSelf && toggleUserStatus(u.id, u.ativo)}
+                        disabled={isSelf}
+                        title={isSelf ? 'Você não pode desativar sua própria conta' : undefined}
+                        className={`flex items-center gap-1.5 text-xs font-bold transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
                           u.ativo ? 'text-emerald-500 hover:text-emerald-400' : 'text-red-500 hover:text-red-400'
                         }`}
                       >
@@ -162,16 +173,19 @@ const Admin = () => {
                         <Edit size={18} />
                       </button>
 
-                      <button 
-                        onClick={() => deleteUser(u.id, u.nome_completo)}
-                        className="p-2 text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
-                        title="Excluir Usuário"
-                      >
-                        <Trash2 size={18} />
-                      </button>
+                      {!isSelf && (
+                        <button 
+                          onClick={() => deleteUser(u.id, u.nome_completo)}
+                          className="p-2 text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
+                          title="Excluir Usuário"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      )}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           )}

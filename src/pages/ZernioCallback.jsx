@@ -2,14 +2,18 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AlertCircle, CheckCircle2, Loader2, MessageCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../services/supabase';
+import { api } from '../services/api';
 
 const ZernioCallback = () => {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
-  const callbackParams = useRef(new URLSearchParams(window.location.search));
+  const [callbackParams] = useState(() => new URLSearchParams(window.location.search));
   const started = useRef(false);
-  const [result, setResult] = useState({ status: 'loading', message: 'Verificando o retorno da conexão com a Meta…' });
+  const [result, setResult] = useState(() =>
+    callbackParams.get('sga_state')
+      ? { status: 'loading', message: 'Verificando o retorno da conexão com a Meta…' }
+      : { status: 'error', message: 'O retorno não contém o estado de segurança do SGA. Inicie uma nova conexão nas Configurações.' },
+  );
 
   useEffect(() => {
     if (loading || started.current) return;
@@ -21,38 +25,24 @@ const ZernioCallback = () => {
     }
 
     started.current = true;
-    const params = callbackParams.current;
+    const params = callbackParams;
     const sgaState = params.get('sga_state');
     window.history.replaceState({}, document.title, window.location.pathname);
 
     if (!sgaState) {
-      setResult({ status: 'error', message: 'O retorno não contém o estado de segurança do SGA. Inicie uma nova conexão nas Configurações.' });
       return;
     }
 
     const completeOnboarding = async () => {
       try {
-        const { data, error } = await supabase.functions.invoke('zernio-onboarding', {
-          body: {
-            action: 'complete',
-            sgaState,
-            connected: params.get('connected'),
-            callbackProfileId: params.get('profileId'),
-            accountId: params.get('accountId'),
-            callbackError: params.get('whatsapp_error') || params.get('error'),
-            platform: params.get('platform'),
-          },
+        const data = await api.post('/integrations/zernio/onboarding/complete', {
+          sgaState,
+          connected: params.get('connected'),
+          callbackProfileId: params.get('profileId'),
+          accountId: params.get('accountId'),
+          callbackError: params.get('whatsapp_error') || params.get('error'),
+          platform: params.get('platform'),
         });
-
-        if (error) {
-          let message = 'Não foi possível confirmar o canal WhatsApp. Tente iniciar a conexão novamente.';
-          try {
-            const body = await error.context?.json();
-            if (typeof body?.error === 'string') message = body.error;
-          } catch {}
-          throw new Error(message);
-        }
-        if (data?.error) throw new Error(data.error);
 
         if (data?.outcome === 'completed') {
           setResult({ status: 'success', message: 'WhatsApp conectado e vinculado a este locador.' });
@@ -67,7 +57,7 @@ const ZernioCallback = () => {
     };
 
     completeOnboarding();
-  }, [loading, navigate, user]);
+  }, [callbackParams, loading, navigate, user]);
 
   const isSuccess = result.status === 'success';
   const isLoading = result.status === 'loading';

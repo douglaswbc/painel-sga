@@ -1,59 +1,31 @@
-import { supabase } from './supabase';
+import { api } from './api';
 
 export const contratosService = {
-  list: async (userId) => {
-    const { data, error } = await supabase
-      .from('contratos')
-      .select('*, locatarios(nome_completo), veiculos(placa, modelo)')
-      .eq('id_usuario', userId)
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    return data;
+  list: async (_userId) => {
+    const res = await api.get('/contratos');
+    return res.data || [];
   },
 
   getAtivoByLocatario: async (locatarioId) => {
-    const { data, error } = await supabase
-      .from('contratos')
-      .select('id')
-      .eq('id_locatario', locatarioId)
-      .eq('status', 'ativo')
-      .limit(1)
-      .single();
-    if (error && error.code !== 'PGRST116') throw error;
-    return data || null;
+    const res = await api.get(`/contratos/ativo-por-locatario/${locatarioId}`);
+    return res.data || null;
   },
 
   create: async (payload) => {
-    const { data, error } = await supabase
-      .from('contratos')
-      .insert([payload])
-      .select()
-      .single();
-    if (error) throw error;
-    return data;
+    const res = await api.post('/contratos', payload);
+    return res.data;
   },
 
   update: async (id, payload) => {
-    const { error } = await supabase
-      .from('contratos')
-      .update(payload)
-      .eq('id', id);
-    if (error) throw error;
+    const res = await api.put(`/contratos/${id}`, payload);
+    return res.data;
   },
 
   toggleStatus: async (id, newStatus) => {
-    const { error } = await supabase
-      .from('contratos')
-      .update({ status: newStatus })
-      .eq('id', id);
-    if (error) throw error;
+    await api.patch(`/contratos/${id}/status`, { status: newStatus });
   },
 
   remove: async (id) => {
-    const { error } = await supabase
-      .from('contratos')
-      .delete()
-      .eq('id', id);
-    if (error) throw error;
+    await api.delete(`/contratos/${id}`);
   },
 };

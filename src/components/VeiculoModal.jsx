@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Loader2 } from 'lucide-react';
-import { supabase } from '../services/supabase';
+import { veiculosService } from '../services/veiculos';
 import { toast } from 'react-toastify';
 
 const VeiculoModal = ({ isOpen, onClose, onSuccess, veiculo = null, userId }) => {
@@ -38,19 +38,11 @@ const VeiculoModal = ({ isOpen, onClose, onSuccess, veiculo = null, userId }) =>
         ano: formData.ano ? parseInt(formData.ano) : null,
       };
 
-      let error;
       if (veiculo?.id) {
-        const { error: err } = await supabase
-          .from('veiculos')
-          .update(payload)
-          .eq('id', veiculo.id);
-        error = err;
+        await veiculosService.update(veiculo.id, payload);
       } else {
-        const { error: err } = await supabase.from('veiculos').insert([payload]);
-        error = err;
+        await veiculosService.create(payload);
       }
-
-      if (error) throw error;
 
       toast.success(veiculo ? 'Veículo atualizado!' : 'Veículo cadastrado!');
       onSuccess();

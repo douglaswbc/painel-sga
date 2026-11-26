@@ -1,39 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertOctagon, AlertTriangle, CheckCircle2, Cloud, Copy, Info, Loader2, MessageCircle, RefreshCw, ShieldCheck, Trash2, XCircle } from 'lucide-react';
-import { supabase } from '../services/supabase';
+import { api } from '../services/api';
 import { useMetaAlerts } from '../hooks/useMetaAlerts';
-
-let sdkPromise = null;
-
-const loadFacebookSdk = (appId, graphVersion) => {
-  if (window.FB) {
-    window.FB.init({ appId, xfbml: false, version: graphVersion });
-    return Promise.resolve(window.FB);
-  }
-  if (sdkPromise) return sdkPromise;
-  sdkPromise = new Promise((resolve, reject) => {
-    window.fbAsyncInit = () => {
-      if (!window.FB) {
-        sdkPromise = null;
-        reject(new Error('O SDK da Meta carregou, mas não ficou disponível. Recarregue a página e tente novamente.'));
-        return;
-      }
-      window.FB.init({ appId, xfbml: false, version: graphVersion });
-      resolve(window.FB);
-    };
-    const script = document.createElement('script');
-    script.async = true;
-    script.defer = true;
-    script.crossOrigin = 'anonymous';
-    script.src = 'https://connect.facebook.net/en_US/sdk.js';
-    script.onerror = () => {
-      sdkPromise = null;
-      reject(new Error('Não foi possível carregar o SDK da Meta. Verifique a conexão e bloqueadores de anúncios.'));
-    };
-    document.body.appendChild(script);
-  });
-  return sdkPromise;
-};
 
 const ALERT_TONES = {
   critical: { box: 'border-red-500/30 bg-red-500/10', title: 'text-red-300', icon: AlertOctagon },
@@ -43,16 +11,13 @@ const ALERT_TONES = {
 };
 
 const MetaIntegrationCard = () => {
-  const [app, setApp] = useState(null);
   const [integration, setIntegration] = useState(null);
   const [callbackUrl, setCallbackUrl] = useState('');
   const [copied, setCopied] = useState(false);
-  const [mode, setMode] = useState('signup');
   const [pin, setPin] = useState('');
   const [accessToken, setAccessToken] = useState('');
   const [phoneNumberId, setPhoneNumberId] = useState('');
   const [wabaId, setWabaId] = useState('');
-  const [candidates, setCandidates] = useState([]);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
@@ -61,18 +26,7 @@ const MetaIntegrationCard = () => {
   const { alerts, clearAlert, refresh: refreshAlerts } = useMetaAlerts();
 
   const invoke = useCallback(async (action, payload = {}) => {
-    const { data, error } = await supabase.functions.invoke('meta-integration', {
-      body: { action, ...payload },
-    });
-    if (error) {
-      let message = 'Não foi possível falar com o SGA. Tente novamente.';
-      try {
-        const body = await error.context?.json();
-        if (typeof body?.error === 'string') message = body.error;
-      } catch {}
-      throw new Error(message);
-    }
-    if (data?.error) throw new Error(data.error);
+    const data = await api.post('/integrations/meta', { action, ...payload });
     if (action !== 'status' && action !== 'alerts') refreshAlerts();
     return data;
   }, [refreshAlerts]);
@@ -98,12 +52,8 @@ const MetaIntegrationCard = () => {
     invoke('status')
       .then((data) => {
         if (!active) return;
-        setApp(data.app || null);
         setIntegration(data.integration || null);
         if (data.callbackUrl) setCallbackUrl(data.callbackUrl);
-        // Sem Configuration ID o Embedded Signup não é possível: o caminho
-        // manual é o único disponível e passa a ser o padrão da tela.
-        if (!data.app?.configurationId) setMode('manual');
       })
       .catch((error) => {
         if (active) setErrorMessage(error.message);
@@ -119,56 +69,6 @@ const MetaIntegrationCard = () => {
   const hasToken = Boolean(meta.hasToken);
   const isActiveProvider = integration?.provider === 'meta';
 
-  const connectWithMeta = async () => {
-    if (!/^\d{6}$/.test(pin)) {
-      setErrorMessage('Informe o PIN de 6 dígitos da verificação em duas etapas do WhatsApp.');
-      return;
-    }
-    if (!app?.appId || !app?.configurationId) {
-      setErrorMessage('O aplicativo da Meta ainda não foi configurado no SGA. Informe o App ID e o Configuration ID nos secrets do Supabase.');
-      return;
-    }
-    setBusy(true);
-    setErrorMessage('');
-    setNotice('');
-    try {
-      const sdk = await loadFacebookSdk(app.appId, app.graphVersion || 'v23.0');
-      const code = await new Promise((resolve, reject) => {
-        sdk.login((response) => {
-          if (!response || !response.authResponse) {
-            reject(new Error('A conexão com a Meta foi cancelada. Nenhuma alteração foi feita.'));
-            return;
-          }
-          if (!response.authResponse.code) {
-            reject(new Error('A Meta não devolveu o código de conexão. Tente novamente.'));
-            return;
-          }
-          resolve(response.authResponse.code);
-        }, {
-          config_id: app.configurationId,
-          response_type: 'code',
-          override_default_response_type: true,
-          extras: { setup: { sessionInfoVersion: '3' } },
-        });
-      });
-
-      const data = await invoke('complete_signup', { code, pin });
-      if (data?.needsSelection) {
-        setCandidates(data.candidates || []);
-        setNotice('A conta da Meta tem mais de um número. Escolha qual conectar ao SGA.');
-        return;
-      }
-      setIntegration(data.integration);
-      setPin('');
-      setCandidates([]);
-      setNotice(data.warning || 'WhatsApp conectado à Meta e definido como canal principal.');
-    } catch (error) {
-      setErrorMessage(error.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const saveManualToken = async (event) => {
     event.preventDefault();
     setBusy(true);
@@ -179,27 +79,6 @@ const MetaIntegrationCard = () => {
       setIntegration(data.integration);
       setAccessToken('');
       setNotice('Credencial da Meta validada e salva. O canal já está em uso pelo SGA.');
-    } catch (error) {
-      setErrorMessage(error.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const chooseNumber = async (candidate) => {
-    setBusy(true);
-    setErrorMessage('');
-    setNotice('');
-    try {
-      const data = await invoke('select_number', {
-        phoneNumberId: candidate.phoneNumberId,
-        wabaId: candidate.wabaId,
-        pin,
-      });
-      setIntegration(data.integration);
-      setCandidates([]);
-      setPin('');
-      setNotice(data.warning || 'Número da Meta conectado e definido como canal principal.');
     } catch (error) {
       setErrorMessage(error.message);
     } finally {
@@ -261,7 +140,6 @@ const MetaIntegrationCard = () => {
     try {
       const data = await invoke('disconnect');
       setIntegration(data.integration);
-      setCandidates([]);
       setNotice('Canal da Meta desconectado.');
     } catch (error) {
       setErrorMessage(error.message);
@@ -454,141 +332,63 @@ const MetaIntegrationCard = () => {
         </p>
       )}
 
-      {candidates.length > 0 && (
-        <div className="border-t border-slate-800 pt-4 space-y-3">
-          <h3 className="text-sm font-semibold text-white">Escolha o número do WhatsApp</h3>
-          <div className="grid gap-2">
-            {candidates.map((candidate) => (
-              <button
-                key={`${candidate.wabaId}-${candidate.phoneNumberId}`}
-                type="button"
-                disabled={busy}
-                onClick={() => chooseNumber(candidate)}
-                className="flex items-center justify-between gap-3 rounded-lg border border-slate-700 bg-slate-900/30 px-4 py-3 text-left hover:border-indigo-400 disabled:opacity-50"
-              >
-                <span className="min-w-0">
-                  <span className="block text-sm font-semibold text-slate-100">{candidate.displayPhoneNumber || candidate.phoneNumberId}</span>
-                  <span className="block text-xs text-slate-400">{candidate.verifiedName || 'Nome não informado'}</span>
-                </span>
-                <span className="text-xs text-indigo-400">Conectar</span>
-              </button>
-            ))}
-          </div>
-          <p className="text-[11px] text-slate-500">O PIN informado abaixo é usado para registrar o número na Meta.</p>
-        </div>
-      )}
-
-      {(!isConnected || candidates.length > 0) && (
+      {!isConnected && (
         <div className="border-t border-slate-800 pt-4 space-y-4">
-          <fieldset className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <legend className="sr-only">Modo de conexão com a Meta</legend>
-            <label className={`cursor-pointer rounded-lg border p-3 ${mode === 'signup' ? 'border-indigo-400 bg-indigo-500/10' : 'border-slate-700 bg-slate-900/30'}`}>
-              <span className="flex items-center gap-2 text-sm font-semibold text-white">
-                <input type="radio" name="meta-connection-mode" value="signup" checked={mode === 'signup'} onChange={() => setMode('signup')} />
-                Conectar pela Meta
-              </span>
-              <span className="block text-xs text-slate-400 mt-2">
-                Você será direcionado ao cadastro da Meta e voltará ao SGA ao concluir. Precisa de um App Meta configurado no SGA.
-              </span>
+          <div>
+            <h3 className="text-sm font-semibold text-white">Credenciais da Meta Cloud API</h3>
+            <p className="text-xs text-slate-400 mt-1">
+              Informe um token de acesso do sistema, o Phone Number ID e o WABA ID gerados no Meta Business.
+            </p>
+          </div>
+          <form onSubmit={saveManualToken} className="space-y-3">
+            <label className="block text-xs text-slate-400" htmlFor="meta-access-token">
+              Token de acesso do sistema
             </label>
-            <label className={`cursor-pointer rounded-lg border p-3 ${mode === 'manual' ? 'border-indigo-400 bg-indigo-500/10' : 'border-slate-700 bg-slate-900/30'}`}>
-              <span className="flex items-center gap-2 text-sm font-semibold text-white">
-                <input type="radio" name="meta-connection-mode" value="manual" checked={mode === 'manual'} onChange={() => setMode('manual')} />
-                Token e número manuais
-              </span>
-              <span className="block text-xs text-slate-400 mt-2">
-                Informe um token do sistema, o Phone Number ID e o WABA ID gerados no Meta Business.
-              </span>
-            </label>
-          </fieldset>
-
-          {mode === 'signup' ? (
-            <div className="space-y-3">
-              {!app?.configurationId && (
-                <p className="text-xs rounded-lg p-3 text-amber-300 bg-amber-500/10 border border-amber-500/20">
-                  O App da Meta ainda não tem um <span className="font-mono">Configuration ID</span> configurado no SGA, então o cadastro embutido não está disponível. Use a opção “Token e número manuais” ou peça ao responsável para configurar o App Meta.
-                </p>
-              )}
-              <label className="block text-xs text-slate-400" htmlFor="meta-pin">
-                PIN de 6 dígitos da verificação em duas etapas
-              </label>
-              <div className="flex flex-col sm:flex-row gap-3">
+            <input
+              id="meta-access-token"
+              type="password"
+              autoComplete="new-password"
+              spellCheck="false"
+              value={accessToken}
+              onChange={(event) => setAccessToken(event.target.value)}
+              placeholder="EAA…"
+              className="w-full bg-input border border-slate-600 rounded-lg px-4 py-2.5 text-white outline-none focus:border-accent font-mono text-sm"
+            />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1" htmlFor="meta-phone-number-id">Phone Number ID</label>
                 <input
-                  id="meta-pin"
-                  type="password"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={6}
-                  value={pin}
-                  onChange={(event) => setPin(event.target.value.replace(/\D/g, '').slice(0, 6))}
-                  placeholder="000000"
-                  className="flex-1 min-w-0 bg-input border border-slate-600 rounded-lg px-4 py-2.5 text-white outline-none focus:border-accent font-mono text-sm"
+                  id="meta-phone-number-id"
+                  value={phoneNumberId}
+                  onChange={(event) => setPhoneNumberId(event.target.value.replace(/\D/g, ''))}
+                  placeholder="106540352242922"
+                  className="w-full bg-input border border-slate-600 rounded-lg px-4 py-2.5 text-white outline-none focus:border-accent font-mono text-sm"
                 />
-                <button
-                  type="button"
-                  onClick={connectWithMeta}
-                  disabled={busy || !/^\d{6}$/.test(pin) || !app?.configurationId}
-                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-5 py-2.5 rounded-lg font-bold flex items-center justify-center gap-2"
-                >
-                  {busy ? <Loader2 className="animate-spin" size={17} /> : <ShieldCheck size={17} />}
-                  Conectar com a Meta
-                </button>
               </div>
-              <p className="text-[11px] text-slate-500">
-                O PIN é enviado à Meta no registro do número e não é guardado pelo SGA. Guarde-o: ele será pedido pelo aplicativo WhatsApp.
-              </p>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1" htmlFor="meta-waba-id">WABA ID</label>
+                <input
+                  id="meta-waba-id"
+                  value={wabaId}
+                  onChange={(event) => setWabaId(event.target.value.replace(/\D/g, ''))}
+                  placeholder="102290129340398"
+                  className="w-full bg-input border border-slate-600 rounded-lg px-4 py-2.5 text-white outline-none focus:border-accent font-mono text-sm"
+                />
+              </div>
             </div>
-          ) : (
-            <form onSubmit={saveManualToken} className="space-y-3">
-              <label className="block text-xs text-slate-400" htmlFor="meta-access-token">
-                Token de acesso do sistema
-              </label>
-              <input
-                id="meta-access-token"
-                type="password"
-                autoComplete="new-password"
-                spellCheck="false"
-                value={accessToken}
-                onChange={(event) => setAccessToken(event.target.value)}
-                placeholder="EAA…"
-                className="w-full bg-input border border-slate-600 rounded-lg px-4 py-2.5 text-white outline-none focus:border-accent font-mono text-sm"
-              />
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1" htmlFor="meta-phone-number-id">Phone Number ID</label>
-                  <input
-                    id="meta-phone-number-id"
-                    value={phoneNumberId}
-                    onChange={(event) => setPhoneNumberId(event.target.value.replace(/\D/g, ''))}
-                    placeholder="106540352242922"
-                    className="w-full bg-input border border-slate-600 rounded-lg px-4 py-2.5 text-white outline-none focus:border-accent font-mono text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1" htmlFor="meta-waba-id">WABA ID</label>
-                  <input
-                    id="meta-waba-id"
-                    value={wabaId}
-                    onChange={(event) => setWabaId(event.target.value.replace(/\D/g, ''))}
-                    placeholder="102290129340398"
-                    className="w-full bg-input border border-slate-600 rounded-lg px-4 py-2.5 text-white outline-none focus:border-accent font-mono text-sm"
-                  />
-                </div>
-              </div>
-              <button
-                type="submit"
-                disabled={busy || !accessToken || !phoneNumberId || !wabaId}
-                className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-5 py-2.5 rounded-lg font-bold flex items-center justify-center gap-2"
-              >
-                {busy ? <Loader2 className="animate-spin" size={17} /> : <ShieldCheck size={17} />}
-                Validar e salvar
-              </button>
-            </form>
-          )}
+            <button
+              type="submit"
+              disabled={busy || !accessToken || !phoneNumberId || !wabaId}
+              className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-5 py-2.5 rounded-lg font-bold flex items-center justify-center gap-2"
+            >
+              {busy ? <Loader2 className="animate-spin" size={17} /> : <ShieldCheck size={17} />}
+              Validar e salvar
+            </button>
+          </form>
         </div>
       )}
 
-      {meta.status === 'valid' && !candidates.length && (
+      {meta.status === 'valid' && (
         <div className="border-t border-slate-800 pt-4 space-y-3">
           <h3 className="text-sm font-semibold text-white">Registrar o número na Meta</h3>
           <p className="text-xs text-slate-400">

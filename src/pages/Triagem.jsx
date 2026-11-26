@@ -212,20 +212,18 @@ const Triagem = () => {
   };
 
   const handleCopyApplicationLink = async () => {
-    setApplicationLinkBusy(true);
-    try {
-      const status = await candidatosService.getApplicationLinkStatus();
-      if (!status?.link?.url) {
-        toast.error('Nenhum link ativo encontrado.');
+    if (applicationLink?.url) {
+      try {
+        await navigator.clipboard.writeText(applicationLink.url);
+        toast.success('Link copiado para a área de transferência!');
+        return;
+      } catch {
+        toast.error('Não foi possível copiar o link.');
         return;
       }
-      await navigator.clipboard.writeText(status.link.url);
-      toast.success('Link copiado para a área de transferência!');
-    } catch {
-      toast.error('Não foi possível copiar o link.');
-    } finally {
-      setApplicationLinkBusy(false);
     }
+
+    toast.info('Por segurança, o link completo só é exibido quando gerado. Desative e ative novamente para gerar um novo link.');
   };
 
   const handleAction = async (candidato, nextStatus) => {

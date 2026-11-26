@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { supabase } from '../services/supabase';
+import { api } from '../services/api';
 
 /**
  * Carrega os alertas ativos da Meta do locador logado.
  *
- * A consulta passa pela Edge Function `meta-integration` (service role), porque
- * `meta_alertas` tem RLS fechada para o navegador. O hook atualiza ao focar a
- * janela e a cada minuto, para o banner refletir rapidamente uma regularização.
+ * O hook atualiza ao focar a janela e a cada minuto, para o banner refletir
+ * rapidamente uma regularização.
  */
 export function useMetaAlerts(enabled = true) {
   const [alerts, setAlerts] = useState([]);
@@ -14,47 +13,30 @@ export function useMetaAlerts(enabled = true) {
   const [error, setError] = useState(null);
   const mounted = useRef(true);
 
-  const invoke = useCallback(async (action, payload = {}) => {
-    const { data, error: invokeError } = await supabase.functions.invoke('meta-integration', {
-      body: { action, ...payload },
-    });
-    if (invokeError) {
-      let message = 'Não foi possível consultar os alertas da Meta.';
-      try {
-        const body = await invokeError.context?.json();
-        if (typeof body?.error === 'string') message = body.error;
-      } catch {}
-      throw new Error(message);
-    }
-    if (data?.error) throw new Error(data.error);
-    return data;
-  }, []);
-
   const refresh = useCallback(async ({ silent = true } = {}) => {
     if (!enabled) return;
     if (!silent) setLoading(true);
     try {
-      const data = await invoke('alerts');
+      const data = await api.get('/meta/alerts');
       if (!mounted.current) return;
       setAlerts(Array.isArray(data?.alerts) ? data.alerts : []);
       setError(null);
     } catch (requestError) {
       if (!mounted.current) return;
-      // Contas sem permissão (admin/gestor) simplesmente não têm alertas.
       setError(requestError.message);
     } finally {
       if (mounted.current) setLoading(false);
     }
-  }, [enabled, invoke]);
+  }, [enabled]);
 
   const clearAlert = useCallback(async (tipo) => {
-    const data = await invoke('clear_alert', tipo ? { tipo } : {});
+    const data = await api.post('/meta/alerts/clear', tipo ? { tipo } : {});
     if (mounted.current) {
       setAlerts(Array.isArray(data?.alerts) ? data.alerts : []);
       setError(null);
     }
     return data;
-  }, [invoke]);
+  }, []);
 
   useEffect(() => {
     mounted.current = true;

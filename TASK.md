@@ -1,463 +1,244 @@
-# Plano de trabalho: Zernio e faturamento do SGA
-
-## Decisão de arquitetura
-
-- Cada locador usará a **própria chave de API do Zernio** e a própria conta/perfil/canal WhatsApp.
-- O SGA deverá resolver a chave a partir do usuário autenticado em cada operação. Nunca aceitar `userId` arbitrário para escolher credenciais.
-- A chave Zernio é um segredo: não pode ficar em código do frontend, `localStorage`, logs, mensagens de erro ou respostas da API ao navegador. O frontend chama funções Supabase; somente elas chamam o Zernio.
-- Guardar a chave criptografada no banco, com leitura e gravação restritas ao backend. Permitir que o locador valide, atualize e remova sua chave sem revelar a chave já salva.
-- O fluxo deve suportar perfis e canais que pertencem à chave daquele locador. Não assumir que todos os locadores compartilham uma equipe ou API key Zernio.
-
-## Fase 1 — Corrigir o faturamento automático
-
-- [x] Atualizar `supabase/cron-example.txt` para chamar a Edge Function existente `faturamento-cobrancas` (o exemplo atual usa `gerar-cobrancas-diarias`).
-- [x] Remover do cron o `userId` fixo; executar para todos os locadores ou usar uma rotina de processamento por locador, sem deixar nenhum de fora.
-- [x] Unificar o formato de `contratos.recorrencia` entre o modal e as Edge Functions, aceitando também os rótulos legados.
-- [x] Corrigir a conversão de data do contrato para preservar o dia local de São Paulo e não reiniciar a recorrência ao editar outros campos.
-- [x] Tornar a criação idempotente e segura para execuções simultâneas do cron e do botão manual, com chave estável do Mercado Pago, ciclo de cobrança único e reconciliação após falhas parciais.
-- [x] Fazer `cobrar-contrato` autenticar o locador e verificar que o contrato pertence a ele antes de usar credenciais administrativas.
-- [x] Mostrar na interface o resultado por contrato, inclusive falhas retornadas com HTTP 200.
-- [x] Retornar falhas por contrato e permitir reprocessamento seguro sem criar uma segunda cobrança.
-
-**Estado:** código, migration e crons aplicados no Supabase pelo responsável pelo projeto. A migration foi ajustada para preservar cobranças históricas duplicadas e associar apenas uma cobrança ao ciclo recorrente.
-
-### Critérios de conclusão
-
-- O cron chama a função existente e processa os contratos de todos os locadores elegíveis.
-- Uma recorrência semanal ou quinzenal permanece semanal ou quinzenal depois de salvar e faturar.
-- Cobranças respeitam a data local configurada e não duplicam quando cron e usuário tentam faturar ao mesmo tempo.
-- A interface distingue sucesso, falha e cobrança já existente, com o contrato afetado.
-
-## Fase 2 — Corrigir e endurecer o banco
-
-- [x] Criar migrações incrementais para bancos existentes; não depender de recriar as tabelas em `supabase/sql_banco.txt`.
-- [x] Mudar `cobrancas.data_vencimento` de `text` para `date`, com validação prévia e indicação dos IDs que precisam de correção.
-- [x] Ativar RLS e criar políticas por `auth.uid()` para as tabelas com dados de locador, locatário, veículo, contrato, cobrança, templates, candidatos e fechaduras.
-- [x] Garantir no banco, com FKs compostas, que registros relacionados pertencem ao mesmo `id_usuario`; a migration interrompe e lista IDs se encontrar vínculos cruzados.
-- [x] Manter a unicidade de ciclo da migration 002 e adicionar índices para relacionamentos e consultas de cobrança.
-- [x] Restringir upload/exclusão do Storage à pasta do usuário. A leitura pública foi mantida por compatibilidade com as URLs atuais de mídia; migrar para URLs privadas exige adaptar o envio.
-- [x] Alterar `handle_new_user` para iniciar com papel `locador`; a criação administrativa atribui o papel solicitado via Edge Function com service role.
-- [x] Exigir autenticação e papel `admin` nas Edge Functions `admin-create-user` e `delete-user`, que executam operações privilegiadas.
-- [x] Revogar acesso do cliente às colunas de segredo de `usuarios`, bloquear as RPCs de criptografia para `anon` e corrigir a volatilidade; a execução de `decrypt_val` por `authenticated` é necessária para a view `locatarios_safe`, cujas linhas são limitadas por RLS por locador.
-- [ ] Confirmar no projeto Supabase a estrutura real de `app_config` e as RPCs `get_user_mp_token`/`create_user_mp_secret`, que são chamadas pelas Edge Functions mas não estão definidas no repositório; provisionar/documentar após conferir como os segredos existentes foram armazenados.
-- [x] Identificar `supabase/sql_banco.txt` como referência de instalação inicial e alinhar nele o tipo `date`.
-
-**Estado:** migration `003_security_and_integrity.sql` aplicada no Supabase pelo responsável pelo projeto. Os ajustes de frontend e Edge Functions preparados com ela precisam estar publicados para que todos os fluxos administrativos usem as novas permissões.
-
-### Critérios de conclusão
-
-- Um locador autenticado só pode ler ou alterar os próprios dados pelas APIs do Supabase. (migration aplicada; requer validação ponta a ponta)
-- O banco rejeita relações entre registros de locadores diferentes e duplicatas de cobrança. (migration aplicada)
-- Segredos só podem ser descriptografados por rotinas autorizadas do backend. (migration aplicada; pendente confirmar estrutura de segredos legados)
-
-**Ajuste posterior:** `008_locatarios_safe_decrypt_grant.sql` concede `EXECUTE` de `decrypt_val(bytea)` a `authenticated`, necessário porque `locatarios_safe` usa `security_invoker`; `anon` e `PUBLIC` continuam sem acesso e as linhas da tabela permanecem limitadas por RLS.
-
-## Fase 3 - Persistir e validar a chave Zernio de cada locador
-
-- [x] Criar a migration `004_zernio_integration.sql` com credencial cifrada, estado de validação, `profileId`, `accountId`, metadados do canal e datas de atualização.
-- [x] Criar a Edge Function autenticada `zernio-integration` para validar, salvar, atualizar, remover e selecionar metadados da chave do locador atual.
-- [x] Validar a chave consultando a API do Zernio no servidor e só salvá-la depois da validação bem-sucedida.
-- [x] Listar perfis e canais WhatsApp acessíveis com aquela chave; verificar no servidor o perfil e o canal antes de gravar a seleção.
-- [x] Apresentar orientação se nao houver perfil/canal e nao associar silenciosamente uma conta.
-- [x] Não devolver a chave ao frontend; devolver apenas presença/estado, sufixo curto e metadados selecionados.
-
-**Estado:** o responsavel confirmou que a migration 004 foi aplicada e `ZERNIO_ENCRYPTION_KEY` configurada no Supabase. Código e frontend estao preparados; falta publicar a Edge Function e o frontend. A chave de criptografia deve permanecer fora do `.env` do Vite.
-
-## Fase 4 - Onboarding Meta e retorno ao SGA
-
-- [x] Criar o fluxo que usa a chave Zernio do locador e o `profileId` escolhido para obter a URL de onboarding WhatsApp.
-- [x] Permitir selecionar explicitamente o modo `api` ou coexistencia com WhatsApp Business, explicando as diferenças.
-- [x] Criar estado de onboarding aleatório, de uso único, vinculado ao locador/perfil e com expiração; armazenar somente o hash.
-- [x] Criar a tela de callback que trata sucesso, cancelamento, erro da Meta, sessão expirada e retorno sem canal confirmado.
-- [x] Validar o `accountId` consultando a Zernio com a chave do locador e conferir perfil, plataforma e estado antes de salvar.
-- [x] Atualizar Configuracoes e permitir iniciar reconexão ou desconectar o canal.
-
-**Estado:** implementação local pronta. A migration `005_zernio_onboarding.sql` precisa ser aplicada no Supabase; configurar também `ZERNIO_REDIRECT_BASE_URL` com a origem HTTPS publica do SGA, publicar `zernio-onboarding` e o frontend. O retorno exige que o dominio publico sirva a rota SPA `/zernio/callback`.
-
-### Criterios de conclusao
-
-- O locador inicia no SGA, conclui o onboarding da Meta e retorna ao SGA com resultado visível.
-- Parâmetros alterados manualmente na URL não permitem vincular canal de outro perfil ou locador.
-- Cancelamento ou falha não gravam um novo canal como conectado.
-
-## Fase 5 - Templates Meta e envio de cobrancas
-
-- [x] Criar a Edge Function `zernio-whatsapp` para sincronizar/listar templates, criar template transacional e consultar a aprovacao remota pela chave e canal do locador autenticado.
-- [x] Persistir nome, idioma, categoria, status Meta, motivo de rejeicao, componentes, mapeamento de variaveis e escolha do template padrao.
-- [x] Exibir estados `PENDING`, `APPROVED`, `REJECTED`, `PAUSED`, `DISABLED`, `IN_APPEAL` e `PENDING_DELETION`; o backend so envia templates `APPROVED` confirmados na Meta.
-- [x] Definir o template UTILITY da cobranca com locatario, valor, vencimento e link PIX, incluindo exemplos para analise da Meta.
-- [x] Ligar o envio manual de cobrancas do Dashboard a um template aprovado. Se ainda nao houver link, o SGA gera e salva o PIX antes do envio.
-- [x] Registrar o `messageId`, conversa, status e erro seguro; proteger concorrencia e repeticoes com idempotencia local e da Zernio.
-- [x] Centralizar criacao e gestao dos templates Meta na rota `/mensagens`, remover a criacao manual de modelos legados e manter os registros existentes para os agendamentos ainda em uso.
-- [x] Adicionar formulário guiado com categorias, idiomas, componentes Meta, exemplos de variáveis, limites, botões interativos e prévia de WhatsApp; permitir classificar templates UTILITY compatíveis para cobranças do SGA.
-
-**Estado:** implementação local concluída. Os fluxos de cobrança e mensagem foram migrados na fase 6; a ativação de banco, Edge Functions e interface em produção está listada na fase 7.
-
-### Criterios de conclusao
-
-- O locador cria o template e acompanha a revisao da Meta; somente um aprovado pode ser escolhido e usado.
-- A cobranca e enviada com nome, valor, vencimento e link PIX mapeados nas posicoes definidas pelo template.
-- Falhas ficam no historico sem marcar a cobranca como enviada; repeticoes nao geram uma segunda mensagem.
-
-### Agendamentos Meta na rota `/mensagens`
-
-- [x] Remover as abas de modelos legados da rota e manter Templates Meta e Agendamentos Ativos.
-- [x] Criar agendamento recorrente a partir de template Meta aprovado, com locatário, variáveis, frequência, data e horário.
-- [x] Listar e permitir pausar, reativar ou excluir agendamentos; identificar os registros antigos como legados.
-- [x] Adicionar envio recorrente idempotente por Zernio e registrar tentativas/erros.
-
-**Estado:** implementação local pronta. Aplicar `007_zernio_message_scheduling.sql`, publicar `zernio-whatsapp` e `zernio-message-scheduler`, e instalar os crons de `supabase/cron-example.txt`. A migration 009 pausa os agendamentos antigos de texto livre.
-
-## Fase 6 — Substituir Evolution e RyzeAPI
-
-- [x] Migrar `reenvio-cobranca`, `gerar-cobranca-pix`, `enviar-lembretes-cobranca` e `agendador-mensagens-avulsas` para o serviço Zernio ou desativar as rotas antigas sem deixar chamadas Evolution ativas.
-- [x] Migrar `ryze-proxy`, `instance-status`, `create-instance`, `admin-create-user` e `delete-user`; remover criação/estado de instâncias da Evolution da interface e do cadastro.
-- [x] Migrar `payment-webhook-receiver` para localizar a integração/canal e o template de confirmação aprovado por locador.
-- [x] Migrar `webhook-fechadura` para webhook assinado Zernio, preservando OTP, autorização, auditoria e deduplicação.
-- [x] Atualizar Configurações, telas de mensagens, onboarding de usuários e nomes ativos da interface que indicavam Evolution/RyzeAPI.
-- [x] Remover localmente código e documentação operacional de Evolution/RyzeAPI; deixar colunas antigas para remoção controlada pela migration 012 após validação em produção.
-
-### Progresso de implementação local
-
-- [x] Remover da tela Configurações o estado, QR Code e gerenciamento de instâncias Evolution; a conexão passa pelo cartão Zernio.
-- [x] Remover criação automática de instância ao cadastrar locador e chamada à Evolution ao excluir usuário.
-- [x] Trocar o envio avulso por seleção de templates gerais aprovados da Meta e envio pelo canal Zernio.
-- [x] Migrar o cron de lembretes vencidos para `zernio-whatsapp` com o template de cobrança aprovado e idempotência por cobrança.
-- [x] Remover os diretórios locais das Edge Functions legadas sem chamadas ativas; suas versões já implantadas precisam ser apagadas no Supabase após publicar as funções novas.
-- [ ] Aplicar `009_disable_evolution_message_schedules.sql`; ele pausa agendamentos antigos de texto livre que não podem ser convertidos automaticamente em templates aprovados.
-- [x] Migrar as mensagens de confirmação de pagamento para template UTILITY aprovado, configurado por locador na aba Templates Meta.
-- [x] Migrar o webhook de fechaduras para webhooks assinados Zernio, preservando deduplicação e fluxo OTP.
-- [ ] Aplicar `010_zernio_lock_webhooks.sql` e `011_zernio_payment_confirmation_templates.sql` antes de publicar as funções correspondentes.
-- [ ] Depois de validar os fluxos em produção, aplicar `012_remove_ryze_credentials.sql`, excluir no Supabase as funções implantadas sem uso e remover secrets Evolution antigos.
-
-**Estado:** migração local concluída. A ativação em produção ainda exige aplicar `009`, `010` e `011`, publicar as Edge Functions e o frontend atualizados, configurar o webhook Zernio no cartão de integração e validar OTP/callback de pagamento. Depois da validação, aplicar `012`, excluir as antigas funções já implantadas e retirar secrets Evolution do Supabase.
-
-### Critérios de conclusão
-
-- Nenhum fluxo operacional de WhatsApp depende de Evolution ou RyzeAPI.
-- Cada mensagem usa a credencial e o canal do locador dono do evento/cobrança.
-- Recursos que deixarem de existir (por exemplo, controles de instância Evolution) foram removidos da interface sem quebrar os fluxos mantidos.
-
-## Fase 7 — Operação e implantação
-
-- [x] Atualizar README, exemplo de secrets, cron e esquema base para Zernio; a chave Zernio de cada locador fica cifrada no banco, não no `.env` do Vite.
-- [x] Remover o exemplo de secrets Evolution e corrigir o esquema-base para não incluir `ryze_instance`/`ryze_token`.
-- [x] Remover do repositório as Edge Functions legadas sem chamadas ativas e criar migration `012_remove_ryze_credentials.sql` para a limpeza do banco após validação.
-- [ ] Aplicar migrations `009`–`011`, publicar Edge Functions/frontend/crons Zernio e validar integração, OTP, templates, cobrança e callback em produção.
-- [ ] Fazer uma validação ponta a ponta em ambiente controlado, incluindo isolamento entre dois locadores e revisão dos logs sem exposição de tokens ou dados pessoais completos.
-- [ ] Só após validar os fluxos, aplicar migration `012`, remover no Supabase as funções já implantadas `agendador-mensagens-avulsas`, `create-instance`, `gerar-cobranca-pix`, `instance-status`, `reenvio-cobranca` e `ryze-proxy`, e excluir `EVOLUTION_API_URL`/`EVOLUTION_API_KEY` dos secrets do projeto.
-
-Para apagar uma função já implantada, use `supabase functions delete <nome> --project-ref <project-ref>` para cada função listada acima. Não use `--prune`, pois isso também removeria quaisquer outras funções remotas sem pasta local.
-
-## Inventário inicial verificado
-
-- Faturamento automático: `supabase/functions/faturamento-cobrancas/index.ts`.
-- Cobrança individual: `supabase/functions/cobrar-contrato/index.ts`.
-- Modal de contrato com recorrências legadas: `src/components/ContratoModal.jsx`.
-- Exemplo de cron com endpoint antigo e `userId` fixo: `supabase/cron-example.txt`.
-- Esquema base revisado: `supabase/sql_banco.txt`.
-- Migração de criptografia revisada: `supabase/migrations/001_encrypt.sql`.
-- Integrações legadas Evolution/Ryze removidas do código ativo; migration `003` preservada como histórico de implantação.
-
-## Ordem recomendada
-
-1. Corrigir cron, recorrência, datas e idempotência do faturamento.
-2. Aplicar migrações de banco, RLS e armazenamento seguro de segredos.
-3. Implementar cadastro/validação da chave individual do Zernio.
-4. Implementar conexão Meta e retorno ao SGA.
-5. Implementar templates e envio de mensagens.
-6. Migrar os demais fluxos WhatsApp e retirar Evolution/RyzeAPI.
-7. Validar ponta a ponta e concluir a implantação.
-
-## Plano de trabalho: rota `/triagem`
-
-### Objetivo
-
-Concluir o fluxo de análise de candidatos e reserva de vaga, com status consistentes entre a interface, o Mercado Pago e o webhook, além de controles claros para a operação diária.
-
-### Etapa 1 — Alinhar o fluxo e os status
-
-- [x] Conferir os status existentes em produção e identificar registros que usam nomes diferentes para a mesma etapa.
-- [x] Definir os status canônicos: `Em análise`, `Pré-aprovado`, `Aguardando reserva`, `Vaga reservada` e `Reprovado`.
-- [x] Mapear na interface estados legados como `Aguardando Processamento` e `Reserva Confirmada` para os nomes canônicos sem alterar registros históricos.
-- [x] Restringir as ações disponíveis conforme o status atual e impedir que uma ação comum sobrescreva uma reserva já confirmada.
-- [x] Definir o fluxo provisório de confirmação: somente o webhook confirma automaticamente; a ação manual fica desabilitada até haver registro de operador, data e motivo na etapa 3.
-
-**Critério de conclusão:** a interface e o backend usam os mesmos status, e cada candidato só pode avançar por transições válidas.
-
-**Progresso:** produção tinha um candidato com status `Aguardando Reserva` e default `Aguardando Processamento`; nenhum registro foi alterado. A migration 019 foi aplicada e registrada, e o novo default remoto `Em análise` foi confirmado. A Edge Function `payment-webhook-receiver` foi publicada com a gravação do status canônico. As mudanças de interface permanecem locais.
-
-- [x] Criar a migration `019_triagem_canonical_status_default.sql` para que novos candidatos usem `Em análise`, sem alterar registros existentes.
-- [x] Aplicar e registrar a migration 019 no Supabase depois de conferir os status existentes no ambiente de produção.
-
-**Atenção para operações futuras:** o responsável confirmou que as migrations 001–016 já foram publicadas. Mesmo assim, `supabase migration list` não as reconhece no histórico remoto e mostra também a versão `20260325222643` sem arquivo local. A migration 019 foi aplicada isoladamente; reconciliar o histórico antes do próximo `db push`, pois o CLI pode tentar aplicar migrations antigas.
-
-### Etapa 2 — Implementar a criação da reserva PIX
-
-- [x] Criar localmente a Edge Function `create-reservation-pix`, chamada pelo frontend.
-- [x] Exigir sessão autenticada e confirmar que o candidato pertence ao locador autenticado antes de gerar a cobrança.
-- [x] Obter a credencial do Mercado Pago no backend usando `get_user_mp_token`; nunca enviar o token ao navegador.
-- [x] Criar a cobrança com chave de idempotência persistida no candidato para proteger repetições, concorrência e timeout.
-- [x] Persistir no candidato o identificador do pagamento, os dados PIX, o vencimento e os status de reserva e pagamento.
-- [x] Retornar ao frontend os campos esperados pelo modal: QR Code e código copia e cola.
-- [x] Tratar PIX pendente existente, pagamento já confirmado, PIX expirado, credencial/webhook ausente e falha parcial.
-- [x] Capturar o e-mail do candidato antes da cobrança; a API PIX exige e-mail e o schema de produção não tinha esse campo.
-- [x] Criar a migration `020_candidate_reservation_pix.sql` com os campos `email` e `reserva_idempotency_key`.
-- [x] Confirmar que o secret `MP_WEBHOOK_URL` está cadastrado no projeto Supabase.
-- [x] Aplicar e registrar a migration 020 e publicar `create-reservation-pix` no Supabase.
-- [x] Publicar as alterações do frontend que solicitam o e-mail e o enviam junto com o pedido de PIX.
-
-**Critério de conclusão:** um candidato pré-aprovado recebe uma cobrança PIX única, vinculada ao próprio registro e ao locador correto.
-
-**Progresso:** migration 020 aplicada e registrada; `create-reservation-pix` publicada. Confirmei remotamente as colunas `email` e `reserva_idempotency_key`. O frontend atualizado em `candidatosService` e `/triagem` foi publicado no Cloudflare Pages. O secret `MP_WEBHOOK_URL` está cadastrado. PIX expirado fica bloqueado até a etapa de reconciliação, para evitar gerar cobrança duplicada enquanto o webhook do pagamento anterior pode estar pendente.
-
-### Etapa 3 — Unificar a confirmação de pagamento
-
-- [x] Ajustar `payment-webhook-receiver` para reconhecer a cobrança de reserva e atualizar `pagamento_status`, `status`, `reserva_confirmada_em` e `updated_at` de forma consistente.
-- [x] Tornar o processamento repetido do webhook idempotente, sem duplicar notificações ou reverter o estado da reserva.
-- [x] Definir como tratar pagamentos recusados, cancelados, expirados, devolvidos e contestados; falhas terminais liberam nova tentativa, devoluções liberam a vaga e disputas mantêm a reserva sinalizada.
-- [x] Implementar confirmação manual autenticada, limitada ao proprietário do candidato, com motivo obrigatório e trilha de auditoria; pagamentos PIX ainda ativos bloqueiam a ação.
-- [x] Atualizar a lista da triagem a cada 15 segundos enquanto a tela está visível e após confirmação manual.
-- [x] Criar a migration `021_candidate_reservation_reconciliation.sql` com histórico de tentativas PIX, auditoria e RPC transacional para confirmação manual.
-
-**Critério de conclusão:** o status exibido na triagem representa o estado real da cobrança e da vaga, inclusive após notificações repetidas ou fora de ordem.
-
-**Progresso:** migration 021 aplicada e registrada no Supabase; `payment-webhook-receiver` e `create-reservation-pix` publicados. O histórico remoto confirma a versão 021, e as duas funções constam como ativas (`payment-webhook-receiver` sem JWT obrigatório; `create-reservation-pix` com JWT obrigatório). A configuração local registra essas opções. O frontend permanece local e precisa ser publicado antes da validação ponta a ponta. A migration faz backfill das cobranças PIX já associadas aos candidatos para que notificações atrasadas continuem identificáveis. Ainda falta validar em produção os cenários listados na etapa 6.
-
-### Etapa 4 — Completar estados e ações da tela
-
-- [x] Exibir estados distintos de carregamento, erro com opção de tentar novamente e fila vazia.
-- [x] Adicionar atualização manual da lista e impedir ações duplicadas enquanto uma operação está em andamento.
-- [x] Mostrar mensagens claras quando a criação do PIX falhar ou quando já existir uma cobrança ativa.
-- [x] Permitir abrir novamente os dados PIX de uma reserva pendente, desde que a cobrança ainda esteja válida.
-- [x] Exibir pontuação ausente de forma clara, sem apresentar `null` ou `undefined`.
-- [x] Mostrar confirmação antes de reprovar um candidato ou confirmar uma reserva manualmente.
-
-**Critério de conclusão:** cada ação informa seu resultado, mantém a lista sincronizada e oferece recuperação clara para erros comuns.
-
-**Progresso:** implementação local concluída e validada com `npm.cmd run build`. A interface oferece carregamento, erro recuperável, fila vazia, atualização manual e periódica, reabertura do PIX válido e mensagens específicas retornadas pela Edge Function. O frontend ainda precisa ser publicado para que essas mudanças cheguem à produção.
-
-### Etapa 5 — Busca, filtros e ficha do candidato
-
-- [x] Adicionar busca por nome e telefone e filtros por status.
-- [x] Permitir ordenar por pontuação e data de entrada na fila.
-- [x] Criar uma ficha do candidato com respostas disponíveis no formulário, pontuações, status, dados da reserva, tentativas PIX e histórico de alterações.
-- [x] Mascarar o CPF na lista e mostrar o dado completo somente na ficha, sob a RLS do proprietário autenticado.
-- [x] Incluir paginação na lista de resultados, com 20 candidatos por página.
-- [x] Criar a migration `022_candidate_status_audit.sql` para registrar mudanças de status e pagamento a partir de sua publicação, preservando o motivo da confirmação manual.
-
-**Critério de conclusão:** operadores conseguem localizar candidatos, entender decisões e acompanhar o histórico sem expor dados pessoais na lista geral.
-
-**Progresso:** migration 022 aplicada e registrada no Supabase; ela passa a auditar transições de status e pagamento. O frontend da ficha ainda está local e precisa ser publicado para exibir busca, filtros, paginação e histórico. Confirmações manuais anteriores permanecem no histórico; alterações antigas sem auditoria não podem ser reconstruídas.
-
-### Etapa 6 — Fechar a entrega operacional
-
-- [x] Conferir remotamente o RLS: `candidatos` usa política `ALL` limitada a `id_usuario = auth.uid()`; histórico de pagamentos e auditoria permite leitura somente ao proprietário; RLS está ativo nas três tabelas.
-- [x] Documentar os secrets e a configuração do webhook necessários para a Edge Function de reserva; o secret `MP_WEBHOOK_URL` está configurado e o endpoint esperado consta em `.env.example`, `supabase/secrets.txt` e README.
-- [ ] Fazer validação manual do fluxo: aprovação, geração e reabertura do PIX, pagamento aprovado, repetição do webhook, expiração e confirmação manual. O frontend já foi publicado; a validação de pagamento segue pendente por falta de sandbox/teste Mercado Pago. Nenhuma cobrança real foi criada.
-- [x] Atualizar este plano com o estado real de implantação das migrations, Edge Functions e frontend.
-
-**Critério de conclusão:** o fluxo pode ser acompanhado de ponta a ponta e cada implantação pendente está registrada sem confundir código local com produção.
-
-**Estado verificado em 06/10/2026:** migrations 019–024 aplicadas e registradas; `create-reservation-pix` ativa com JWT obrigatório e `payment-webhook-receiver` ativa sem JWT obrigatório. RLS e presença do secret `MP_WEBHOOK_URL` foram conferidos remotamente sem consultar dados pessoais ou revelar valores secretos. O frontend foi publicado no Cloudflare Pages (conforme informado pelo responsável); build e lint direcionado aos arquivos da triagem passam. O lint global ainda aponta erros preexistentes em arquivos fora da triagem e avisos de globais Deno nas Edge Functions. A validação ponta a ponta também segue pendente porque não há sandbox Mercado Pago; não executar teste que possa gerar uma cobrança real.
-
-## Inscrição pública de candidatos vinculada à rota `/triagem`
-
-### Objetivo e fluxo
-
-O locador gera e compartilha um link individual pela rota `/triagem`. O candidato abre `/inscricao/:codigo`, preenche os dados e envia a inscrição sem criar conta. O backend valida o link, grava a candidatura vinculada ao locador que o criou e inicia o status `Em análise`; a candidatura então aparece na fila existente de triagem.
-
-### Etapa 1 — Implementar o fluxo local
-
-- [x] Criar a rota pública `/inscricao/:codigo`, fora da área autenticada do painel.
-- [x] Adicionar à `/triagem` a geração, cópia, rotação e desativação do link individual do locador, com toggle de estado, validade restante e correções de contraste.
-- [x] Criar a Edge Function autenticada `candidate-application-link`; guardar somente o hash do código e expirar o link após 90 dias.
-- [x] Criar `submit-candidate-application` sem JWT, validando o link, CPF, campos, aviso de privacidade, honeypot e tempo mínimo de preenchimento antes de inserir.
-- [x] Vincular a inscrição ao `id_usuario` obtido exclusivamente do link, começar em `Em análise`, impedir CPF repetido para o mesmo locador e auditar o recebimento.
-- [x] Limitar cada link a 50 envios diários no banco e não expor acesso público direto às tabelas.
-- [x] Mostrar na ficha do candidato a origem e a versão/data do aviso de privacidade aceito.
-- [x] Aplicar e registrar a migration `023_public_candidate_applications.sql` no Supabase.
-- [x] Publicar as Edge Functions `candidate-application-link` (`verify_jwt = true`) e `submit-candidate-application` (`verify_jwt = false`).
-- [x] Publicar o frontend no Cloudflare Pages.
-- [ ] Testar link válido, expirado/desativado, CPF duplicado, limite diário e isolamento entre dois locadores.
-
-**Estado em 06/10/2026:** migration 023 executada e registrada no projeto `cobranca_car`; confirmei remotamente a tabela de links, RLS ativo e RPC de limite diário. As duas Edge Functions estão ativas com as opções JWT esperadas; `candidate-application-link` foi atualizada para retornar o estado e a expiração do link ao painel. O frontend foi publicado no Cloudflare Pages (conforme informado pelo responsável); validar a geração/envio com links válidos, expirados/desativados, CPF duplicado, limite diário e isolamento entre locadores. O formulário pede campos do fluxo existente de candidatos, apresenta aviso de privacidade e não oferece consulta pública de status. O limite de 50 inscrições por link/dia e o campo honeypot são controles básicos contra abuso; acompanhar envios e erros após a publicação.
-
-## Taxa de reserva variável
-
-- [x] Permitir informar a taxa em reais antes de criar o PIX, mantendo R$ 25,00 como valor inicial sugerido.
-- [x] Validar no frontend e no backend valores entre R$ 1,00 e R$ 10.000,00, em centavos e com até duas casas decimais.
-- [x] Gravar a taxa no candidato antes da chamada ao Mercado Pago, para manter o mesmo valor em tentativas concorrentes e reexecuções idempotentes.
-- [x] Exibir o valor escolhido no modal do PIX, ao reabrir o pagamento e na ficha do candidato; preservar o valor real nas tentativas reconciliadas.
-- [x] Criar a migration `024_candidate_reservation_amount.sql` e alinhar o esquema base.
-- [x] Aplicar e registrar a migration 024; publicar a Edge Function `create-reservation-pix` atualizada.
-- [x] Publicar o frontend no Cloudflare Pages.
-- [ ] Validar valores com centavos, valor padrão, limites e reabertura de uma tentativa existente sem criar nova cobrança.
-
-**Estado:** migration 024 aplicada e registrada no Supabase; coluna `candidatos.reserva_valor` e validação de faixa confirmadas remotamente. `create-reservation-pix` está ativa na versão 3, com JWT obrigatório. Frontend publicado no Cloudflare Pages (conforme informado pelo responsável). A validação manual continua pendente; nenhuma cobrança real foi criada durante a implementação.
-
-## Fase 8 — Integração Meta (WhatsApp Cloud API) e abas em `/configuracoes`
-
-### Objetivo
-
-Permitir que o locador use a API oficial da Meta (WhatsApp Cloud API) no lugar da Zernio, escolhendo o provedor na rota `/configuracoes`. O provedor ativo fica em `zernio_integracoes.provider`; a configuração do provedor inativo é preservada para permitir a troca sem reconfigurar.
-
-### Fase 8.1 — Fundação no banco e abstração de provedor
-
-- [x] Criar a migration `025_whatsapp_provider_meta.sql` com `provider`, `provider_connected_at`, `meta_status` e as colunas Meta (`meta_waba_id`, `meta_phone_number_id`, `meta_access_token_ciphertext`, `meta_token_last4`, `meta_token_expires_at`, `meta_display_phone_number`, `meta_verified_name`, `meta_quality_rating`, `meta_name_status`, `meta_messaging_limit_tier`, `meta_code_verification_status`, `meta_business_id`, `meta_validated_at`, `meta_last_checked_at`).
-- [x] Tornar `api_key_ciphertext` e `key_status` opcionais, para que um locador use apenas a Meta.
-- [x] Extrair a cifra AES-GCM para `supabase/functions/_shared/crypto.ts`, preservando o formato `v1.` da Zernio e usando `vm1.` para a Meta (chave `META_ENCRYPTION_KEY`, com fallback para `ZERNIO_ENCRYPTION_KEY`).
-- [x] Criar `supabase/functions/_shared/meta-graph.ts` com o cliente da Graph API, timeout, mapeamento de erros e sanitização das mensagens do provedor.
-- [x] Criar `supabase/functions/_shared/whatsapp-provider.ts` com a leitura pública da integração e a troca de provedor ativo.
-- [x] Adaptar `zernio-integration` para usar os módulos compartilhados, com a ação `activate` e a remoção que agora limpa apenas os campos da Zernio (a linha é compartilhada entre os dois provedores).
-
-**Estado:** migration 025 aplicada e registrada no projeto `cobranca_car`; colunas e restrições confirmadas remotamente. `zernio-integration` republicada (versão 8) com a resposta de `status` mantida compatível com o frontend existente.
-
-### Fase 8.2 — Abas em `/configuracoes` e conexão Meta
-
-- [x] Transformar `/configuracoes` em página com abas **Zernio**, **Meta Cloud API** e **Conta e Pagamentos**, no mesmo padrão visual de `/mensagens`.
-- [x] Mover o formulário de perfil, token do Mercado Pago e redefinição de senha para a aba **Conta e Pagamentos**, carregando `get-secrets` sob demanda.
-- [x] Criar `src/components/MetaIntegrationCard.jsx` com o status do canal, os metadados do número e as ações de atualizar, desconectar e usar o canal.
-- [x] Implementar o Embedded Signup com o SDK do Facebook (`FB.login` com `config_id`, `response_type: 'code'` e `sessionInfoVersion: '3'`), carregado sob demanda.
-- [x] Implementar a entrada manual de token do sistema, Phone Number ID e WABA ID, validada no servidor antes de gravar.
-- [x] Criar a Edge Function autenticada `meta-integration` com as ações `status`, `validate_manual`, `complete_signup`, `select_number`, `register`, `refresh`, `disconnect` e `activate`.
-- [x] Registrar o número na Meta (`POST /{phone_number_id}/register`) com o PIN de 6 dígitos definido pelo locador, sem persistir o PIN.
-- [x] Assinar os webhooks da conta (`POST /{waba_id}/subscribed_apps`) ao concluir a conexão.
-- [x] Adicionar o botão **Usar este canal** nas duas abas e o aviso quando o outro provedor está ativo.
-- [x] Documentar os secrets (`META_APP_ID`, `META_APP_SECRET`, `META_CONFIGURATION_ID`, `META_GRAPH_VERSION`, `META_ENCRYPTION_KEY` opcional) em `supabase/secrets.txt`, `supabase/functions/.env.example` e README.
-- [x] Criar `docs/INTEGRACAO_META_WHATSAPP.md` com o passo a passo do App da Meta, os limites e o roadmap.
-- [x] Aplicar e registrar a migration 025; publicar `meta-integration` e `zernio-integration`; configurar o secret `META_GRAPH_VERSION`.
-
-**Estado:** `meta-integration` está ativa com JWT obrigatório e `zernio-integration` republicada. Um teste de fumaca com locador descartavel confirmou o formato da resposta de `status`, os 409 de `activate` sem canal, o erro limpo de token invalido em `validate_manual` e a rejeicao de codigo invalido em `complete_signup`; o usuario e a linha de teste foram removidos ao final. `META_APP_ID`, `META_APP_SECRET` e `META_CONFIGURATION_ID` ainda nao foram cadastrados: sem eles a aba Meta informa que o App da Meta nao foi configurado. O frontend precisa ser publicado no Cloudflare Pages para a aba aparecer em producao.
-
-### Fase 8.3 — Templates pela Meta
-
-- [x] Criar a migration `026_whatsapp_template_provider.sql` com `provider` em `zernio_whatsapp_templates`, `zernio_whatsapp_deliveries`, `zernio_whatsapp_template_usages` e `zernio_whatsapp_manual_deliveries`.
-- [x] Relaxar o CHECK de `account_id` para aceitar o Phone Number ID da Meta e recriar a chave única como `(id_usuario, provider, account_id, name, language)`.
-- [x] Aceitar os estados extras de template da Meta (`LIMIT_EXCEEDED`, `DEPRECATED`, `PENDING_DEPRECATION`, `ARCHIVED`, `DELETED`, `EXPIRED`) e ler o motivo de recusa em `rejected_reason`.
-- [x] Criar `resolveChannel()` em `zernio-whatsapp`: o canal vem de `zernio_integracoes.provider` e a credencial é descriptografada conforme o prefixo (`v1.` Zernio, `vm1.` Meta).
-- [x] Despachar `list` e `syncTemplates()` para a API do provedor ativo: `GET /whatsapp/templates` na Zernio e `GET /{waba_id}/message_templates` com paginação na Meta.
-- [x] Despachar `create_template`: `POST /whatsapp/templates` na Zernio e `POST /{waba_id}/message_templates` com `parameter_format: POSITIONAL` na Meta.
-- [x] Gravar `provider` nos usos de template e incluir `channel` na resposta de `list`, `create_template`, `set_default` e `save_charge_order`.
-- [x] Adaptar `health` ao provedor ativo.
-- [x] Mostrar provedor e canal nas abas **Templates Meta** e **Agendamentos Ativos**, com atalho para `/configuracoes`.
-- [x] Impedir envio pelo canal errado: envio manual e agendamento respondem com aviso quando o provedor ativo é a Meta, e o cron de lembretes marca a cobrança como `skipped`.
-- [x] Aplicar e registrar a migration 026; publicar `zernio-whatsapp` e `enviar-lembretes-cobranca`.
-
-**Estado:** migration 026 aplicada e registrada no projeto `cobranca_car`; as três constraints foram conferidas remotamente. `zernio-whatsapp` e `enviar-lembretes-cobranca` republicadas. Um teste de fumaca com locador descartavel confirmou o despacho: `provider=zernio` sem chave responde 409 pedindo chave Zernio, `provider=meta` sem credencial responde 409 pedindo numero da Meta, `health` responde `attention` e `validate_manual` com token falso devolve erro sanitizado da Meta sem vazar o token. O envio pela Meta foi habilitado na fase 8.4. O frontend precisa ser publicado no Cloudflare Pages.
-
-**Validacao com a conta Meta real** (WABA `1493104652592138`, numero `1177949292067294` / +55 11 92217-5013, quality GREEN, limite TIER_2K, nameStatus APPROVED): os secrets `META_APP_ID`, `META_APP_SECRET` e `META_GRAPH_VERSION=26` foram cadastrados; `validate_manual` conectou o canal; `list` devolveu os 8 templates da conta com os componentes preservados; `create_template` gravou um template novo com status PENDING e o `meta_template_id` correto. Todos os templates de teste foram removidos da conta (restaram os 8 originais). As duas regras de analise de template da Meta foram medidas empiricamente e implementadas na validacao do SGA.
-
-### Fase 8.4 — Envio por provedor
-
-- [x] Normalizar `META_GRAPH_VERSION` para aceitar `26` ou `v26.0`.
-- [x] Validar no SGA as duas regras de analise de template da Meta (variavel no inicio ou no fim do corpo; corpo curto demais para o numero de variaveis) e repassar o `error_user_msg` da Meta.
-- [x] Adicionar retry com backoff para as chamadas idempotentes da Graph API, que responde com erro transitorio logo apos um POST.
-- [x] Atribuir o system user a WABA (`POST /{waba_id}/assigned_users?user=...&tasks=['MANAGE']`), exigido para excluir templates.
-- [x] Criar `supabase/functions/_shared/meta-messages.ts` com o conversor de `components` (formato de criacao -> formato de envio) e o envio pela Messages API.
-- [x] Fazer `send_charge`, `send_template`, `zernio-message-scheduler` e `payment-webhook-receiver` usarem o provedor ativo.
-- [x] Tratar o numero brasileiro com e sem o 9o digito: a Meta aceita apenas a forma registrada no WhatsApp e responde `#100 Invalid parameter` para a outra.
-- [x] Corrigir a substituicao das variaveis no envio: o cursor dos parametros nao avancava dentro do `map`, e todas as variaveis recebiam o valor da primeira.
-- [x] Criar `supabase/tests/meta-messages.test.ts` com testes do Deno para o conversor de componentes e das variantes de numero, executados por `npm test`.
-- [x] Repassar o erro da Meta no `zernio-whatsapp` em vez da mensagem generica.
-- [ ] Implementar a exclusao de templates pela Graph API (`DELETE /{waba_id}/message_templates?name=...`), hoje validada na conta real mas ainda sem controle na interface.
-
-**Estado:** validado de ponta a ponta na conta Meta real. O teste criou um locador temporario, configurou `aviso_boleto_01` como template de lembrete de cobranca (4 variaveis: nome, valor, vencimento e link PIX) e um template de confirmacao de pagamento (3 variaveis), e enviou um lembrete real pela Cloud API. Resultado: `messageId=wamid...`, linha de auditoria com `status=sent`, `provider=meta` e `account_id=1177949292067294`, cobranca com `tentativas_envio=1`, `ultimo_lembrete_at` preenchido e `next_reminder_at` agendado para 30 minutos depois. Todos os registros de teste foram removidos.
-
-**Correcao das variaveis:** o conversor de componentes mantinha o cursor fixo dentro do `map`, entao toda variavel recebia o valor da primeira ({{1}}) e as demais ficavam com o valor errado. O cursor agora avanca a cada parametro. A numeracao `{{n}}` e global no template (cabecalho, corpo e botoes nessa ordem) e o frontend (`getTemplateParameterSlots`), o mapeamento do backend (`billingTemplateParams`) e o envio (`buildTemplateComponents`) seguem a mesma ordem. O teste de Deno trava esse comportamento.
-
-**Observacao sobre o numero:** o celular da empresa e exibido como `+55 11 92217-5013`, mas no WhatsApp ele esta registrado como `551122175013` (sem o 9o digito). A Meta so aceita a forma registrada, e a tentativa com o 9o digito retorna `#100 Invalid parameter`. O envio tenta as duas formas. A primeira implementacao montava a variante com o prefixo `55` duplicado; a Meta acabava resolvendo para o mesmo numero, mas a forma canonica e a sem o 9o digito.
-
-**Confirmacao de pagamento:** o caminho de envio e o mesmo do lembrete e usa a mesma conversao, mas o disparo depende de um pagamento real do Mercado Pago chegar pelo webhook; por isso nao foi exercitado de ponta a ponta para nao gerar cobranca real.
-
-### Fase 8.5 — Webhooks da Meta
-
-- [x] Criar a migration `027_whatsapp_meta_webhooks.sql` com a tabela `whatsapp_webhook_events` (deduplicacao) e a coluna `meta_status` nas tabelas de entregas.
-- [x] Criar a Edge Function `meta-webhook` (`verify_jwt = false`) com a verificacao `GET` (`hub.mode`, `hub.verify_token`, `hub.challenge`) e a validacao da assinatura `X-Hub-Signature-256` com `META_APP_SECRET`.
-- [x] Tratar as mensagens recebidas: identificar o locador pelo `metadata.phone_number_id`, aplicar o fluxo de OTP das fechaduras e responder por mensagem de texto.
-- [x] Tratar os status de entrega (`accepted`, `sent`, `delivered`, `read`, `failed`), gravando em `meta_status` e marcando a entrega como falha quando a Meta recusar.
-- [x] Extrair o fluxo de OTP das fechaduras para `supabase/functions/_shared/lock-otp.ts`, compartilhado entre os webhooks da Zernio e da Meta.
-- [x] Tratar o mesmo numero conectado em mais de uma conta: quem tem a porta e o locatario autorizado responde primeiro.
-- [x] Registrar o webhook na Meta por API (`POST /{app_id}/subscriptions`, `POST /{waba_id}/subscribed_apps` e o `override_callback_uri` da WABA).
-- [x] Configurar o secret `META_WEBHOOK_VERIFY_TOKEN`.
-- [ ] Exibir o status de entrega da Meta na aba **Custos e Operacao** de `/mensagens`.
-
-**Estado:** validado com um payload no formato exato da Meta. A verificacao `GET` devolve o `hub.challenge` e recusa token errado (403); o `POST` com assinatura invalida responde 401 e com assinatura valida processa. O inbound `abrir portao-teste` gerou a verificacao com OTP de 6 digitos, gravou o log da fechadura e respondeu no WhatsApp (`inbound: 1`). Os status `delivered` e `read` atualizaram `meta_status` e o evento repetido foi deduplicado (2 eventos registrados para 3 envios). Todos os registros de teste foram removidos.
-
-**Correcao durante a implementacao:** o `id_usuario` do evento de status era enviado vazio (coluna uuid) e quebrava o webhook com HTTP 500; agora o dono e localizado pela entrega. A busca do dono tambem deixou de usar `maybeSingle`, que falhava silenciosamente quando o mesmo numero estava conectado em mais de uma conta.
-
-### Fase 8.6 — Exclusao de templates, status de entrega e URL de callback
-
-- [x] Criar a migration `028_activity_log_delivery_status.sql` com a coluna `meta_status` em `zernio_payment_notifications` e a view `zernio_whatsapp_activity_log` recriada com o status de entrega.
-- [x] Criar a acao `delete_template` no `zernio-whatsapp`: apaga o template no provedor ativo (Meta: `DELETE /{waba_id}/message_templates` com `hsm_id` e `name`) e remove o uso na sequencia de lembretes.
-- [x] Preservar o historico quando o template ja tem envios: a linha local passa a `status = 'DELETED'` em vez de ser apagada (a FK das entregas e restritiva).
-- [x] Adicionar o botao **Excluir** na lista de templates de `/mensagens`, com confirmacao.
-- [x] Exibir o status de entrega (`accepted`, `sent`, `delivered`, `read`, `failed`) na aba **Custos e Operacao**.
-- [x] Exibir a URL de callback entre a Meta e o SGA na aba de integracao da Meta e em **Custos e Operacao**, com botao para copiar.
-- [x] Publicar `zernio-whatsapp` e `meta-integration` e aplicar a migration 028.
-
-**Estado:** validado na conta Meta real. A exclusao removeu o template da conta e da base; o caminho de arquivamento preservou a entrega ja registrada e marcou o template como `DELETED`. A URL de callback e devolvida por `meta-integration` (`status`) e por `zernio-whatsapp` (`health`).
-
-**Aviso:** o teste de arquivamento usou `aviso_boleto_01`, que e um template real da conta, e o excluiu na Meta. A Meta bloqueia o mesmo nome por 4 semanas, entao o modelo de 4 variaveis foi recriado como `aviso_boleto_03` (mesmo texto e mesmos exemplos), que volta ao estado APPROVED apos a analise. Os outros modelos da conta (`aviso_boleto_02` e `sga_confirmacao_pagamento_01`) nao foram afetados. Em producao, o teste de exclusao deve usar sempre um template criado para o teste.
-
-**Observacao:** enquanto as fases 8.3 a 8.5 nao forem entregues, os envios do SGA continuam usando exclusivamente o canal da Zernio, mesmo com `provider = 'meta'`.
-
-### Fase 8.7 — Confirmacao de pagamento pelo canal ativo em `/cobrancas`
-
-- [x] Criar a acao `send_payment_confirmation` no `zernio-whatsapp`: resolve o canal ativo, usa o template de confirmacao configurado para esse canal, preenche nome, valor e data do pagamento e envia pelo provedor ativo.
-- [x] Registrar a entrega com o `provider` e garantir idempotencia por cobranca (o segundo envio devolve `alreadySent`).
-- [x] Ligar "Dar Baixa e Notificar" em `/cobrancas` a nova acao, com fallback para o seletor de templates quando nao houver confirmacao configurada.
-- [x] Deixar o seletor de mensagens ciente do provedor ativo (rotulo e cabecalho).
-- [x] Tornar a sincronizacao de templates resistente: uma linha que falha no catalogo nao derruba mais a listagem inteira.
-- [x] Detalhar o erro inesperado na resposta, para nao voltar a mensagem generica sem informacao.
-
-**Estado:** validado na conta Meta real com o template `sga_confirmacao_pagamento_01`. A acao enviou a mensagem (wamid retornado), gravou a entrega com `provider=meta` e o segundo envio nao duplicou. O fluxo antigo (seletor de templates com valores digitados a mao) continua disponivel como fallback.
-
-**Sobre o 500 reportado:** o `list` falhava com um erro generico no catalogo de templates. O dado do locador foi restaurado e a listagem passou; a sincronizacao agora grava linha a linha quando o lote falha, entao um registro inconsistente nao impede mais a leitura do catalogo. Os dados do locador foram conferidos e estao consistentes.
-
-### Fase 8.8 — Erros da Meta com diagnostico e limpeza de templates apagados
-
-- [x] Trocar a traducao generica de HTTP 404 ("A Meta nao encontrou a conta do WhatsApp") por mensagens que dizem **qual chamada** falhou (`describeGraphTarget`) e o motivo devolvido pela Meta.
-- [x] Tratar separadamente template inexistente (`subcode 2593002` e "message template not found"), objeto inacessivel (`subcode 33` e "Unsupported get/post request") e caminho/versao invalidos (`code 2500`).
-- [x] Devolver `detail` (HTTP, code, subcode, endpoint e mensagem sanitizada da Meta) nas respostas de erro do `zernio-whatsapp`, sem expor o token.
-- [x] Marcar como `DELETED` os templates do canal Meta que nao existem mais na conta e remover os usos deles, para a sequencia de lembretes nao tentar enviar um template apagado.
-- [x] Esconder os templates `DELETED` da lista de `/mensagens` (continuam no historico de envios) e avisar quantos foram ocultados.
-- [x] Corrigir a sequencia do locador de teste: `aviso_boleto_01` (apagado) saiu da ordem 1; a sequencia ficou `aviso_boleto_03` (4 variaveis) e `aviso_boleto_02` (2 variaveis), com `sga_confirmacao_pagamento_01` nas confirmacoes.
-- [x] Validar de ponta a ponta: lembrete 1, lembrete 2 e confirmacao de pagamento retornaram `wamid`; o webhook registrou o status (`Message undeliverable` quando o destino e o proprio numero do canal).
-
-**Estado:** `zernio-whatsapp` e `meta-integration` publicados. Com os dados atuais todas as chamadas a Meta respondem 200/400 esperados; o 404 nao e mais traduzido como "WABA/Phone Number ID errado" e, se voltar, a resposta traz `detail` com o endpoint exato.
-
-### Fase 8.9 - Link de pagamento como botao de URL
-
-- [x] Criar a migration `029_charge_pay_token.sql` com `pay_token` (uuid unico) em `cobrancas`.
-- [x] Criar a Edge Function publica `pay-link` (`verify_jwt = false`): resolve `?t=<token>` e responde `302` para o link do Mercado Pago; cobranca paga, cancelada, PIX expirado ou token invalido redirecionam para a pagina publica `/pagar/aviso/<motivo>` do SGA.
-- [x] Expor a base estavel `https://painel-sga.pages.dev/pagar/<token>` pelo `public/_redirects` (placeholders do Cloudflare Pages) e encaminhar para a funcao.
-- [x] Adicionar o campo `payment_token` ao mapeamento de variaveis do template de cobranca (backend e UI), com pre-selecao automatica em variaveis de botao de URL.
-- [x] Documentar na secao 12 de `docs/INTEGRACAO_META_WHATSAPP.md` por que o link no corpo nao e clicavel, a regra de uma variavel no fim da URL e o passo a passo do template com botao.
-- [x] Validar o redirecionamento com uma cobranca real sem efetuar pagamento.
-
-**Estado:** migration 029 aplicada (934 cobrancas, 934 tokens distintos, nenhum nulo). `pay-link` (versao 2, `verify_jwt = false`) e `zernio-whatsapp` (versao 38) publicados e o frontend no ar. Validacao real: `/pagar/<token>` no Cloudflare Pages responde `302` para `/functions/v1/pay-link`, que responde `302` para o ticket do Mercado Pago; cobranca paga, PIX expirado e token inexistente caem em `/pagar/aviso/{pago,expirado,invalido}` (200, HTML). Nenhum pagamento foi efetuado.
-
-**Nota:** o Supabase reescreve respostas `text/html` de Edge Functions para `text/plain`, por isso as paginas de aviso ficam no SPA do Cloudflare Pages (`src/pages/PaymentNotice.jsx`) e a funcao so redireciona. O template com botao (`aviso_boleto_04`) foi aprovado e e o primeiro da sequencia de lembretes.
-
-### Fase 8.10 - Edicao do botao de URL do template pelo SGA
-
-- [x] Adicionar `editMessageTemplate` em `_shared/meta-graph.ts` (`POST /{template_id}` com `components`; a Meta reavalia o template automaticamente).
-- [x] Criar a acao `update_template_button` em `zernio-whatsapp` (somente provedor Meta): valida status `APPROVED`/`REJECTED`/`PAUSED`, reconstroi todos os componentes preservando cabecalho, corpo e exemplos, aceita exemplo antigo em formato de URL completa e sincroniza a lista ao final.
-- [x] Permitir a acao em chamadas de servico com `ownerId`, no mesmo caminho do `send_charge`.
-- [x] Adicionar o modal **Editar botao** em `ZernioTemplatesCard.jsx`, com validacao de HTTPS, uma unica variavel `{{1}}` no fim da URL e exemplo obrigatorio; o card sinaliza em ambar o botao com `%7B%7B1%7D%7D` ou `{{1}}` duplicado.
-- [x] Traduzir os limites da Meta em mensagens amigaveis (1 edicao por template a cada 24h; 10 edicoes em 30 dias).
-- [x] Corrigir o mapeamento de `aviso_boleto_02` (posicao 2 = `payment_token`) e documentar a edicao pela interface na secao 12 de `docs/INTEGRACAO_META_WHATSAPP.md`.
-
-**Estado:** `zernio-whatsapp` publicado com a nova acao. A Meta recusou a correcao de `aviso_boleto_02` e `aviso_boleto_03` hoje por limite de edicao (1 vez a cada 24 horas, pois ambos foram editados no Manager nas ultimas 24h). Os dois aparecem com o aviso ambar em **Editar botao** e podem ser corrigidos pelo SGA assim que a janela abrir. `aviso_boleto_04` (URL correta) esta na ordem 1 da sequencia, `_02` na 2 e `_03` na 3.
-
-### Fase 8.11 - Edicao completa de template pelo SGA
-
-- [x] Extrair as validacoes de componentes de `create_template` para `validateTemplateComponents` (regras unicas para criar e editar) e normalizar os tipos em maiusculas com `normalizeTemplateComponents`.
-- [x] Criar a acao `update_template` em `zernio-whatsapp` (somente Meta): aceita categoria e componentes completos, valida status `APPROVED`/`REJECTED`/`PAUSED`, bloqueia troca de categoria em template aprovado, envia `POST /{template_id}` via `editMessageTemplate` e sincroniza a lista.
-- [x] Remover mapeamentos de variaveis desatualizados quando o numero de variaveis muda, avisando o locador para selecionar o template novamente.
-- [x] Transformar o formulario de template em editor: abre preenchido (`draftFromTemplate`), mantem nome/idioma bloqueados, desabilita a categoria de template aprovado, nao sobrescreve o rascunho de criacao e envia para analise.\n- [x] Exibir o formulario de criar/editar como popup sobre a lista (fecha com Esc, X ou clique fora, trava o scroll da pagina e preserva o rascunho ao fechar).\n- [x] Normalizar o nome do modelo enquanto o usuario digita: espacos/hifens/simbolos viram `_`, acentos sao removidos e tudo fica em minusculas, no padrao aceito pela Meta.\n- [x] Preencher a URL do botao de site com `https://sga.emoveentregas.com/pagar/{{1}}` por padrao (dinamica), com exemplo de uuid, destaque da variavel, previa do link e atalho para restaurar a URL padrao.
-- [x] Liberar `update_template` para chamadas de servico com `ownerId`, no mesmo caminho do `send_charge`.
-- [x] Atualizar a secao 12 de `docs/INTEGRACAO_META_WHATSAPP.md` com o fluxo de edicao completa e os limites da Meta.
-
-**Estado:** `zernio-whatsapp` publicado e frontend com o botao **Editar template** para status aprovado, rejeitado ou pausado. Validado por chamada de servico: troca de categoria em aprovado (409), corpo vazio (400), URL codificada (400) e payload completo chegando na Meta (bloqueado apenas pelo limite de 1 edicao/24h de `aviso_boleto_02` e `_03`). O modal **Editar botao** foi substituido pelo editor completo; a acao `update_template_button` permanece disponivel para automacao.
+# Plano de Migração — Painel SGA (Supabase → Backend Próprio + SQLite na VPS)
+
+> **Objetivo:** Eliminar a dependência do Supabase (Postgres, Auth, Storage, Edge Functions, `pg_cron` e Vault) e consolidar o sistema em um backend próprio (Node.js/TypeScript) com SQLite, pronto para qualquer pessoa clonar o repositório na VPS, preencher um único `.env` e subir a aplicação.
+>
+> *Nota: O histórico anterior de tarefas das integrações Zernio/Meta/Triagem permanece preservado no histórico do Git.*
+
+---
+
+## Etapa 0 — Fundação do Backend, SQLite, Auth, Storage e Agendador
+
+### 0.1 Estrutura do Servidor Backend (`server/`)
+- [x] Inicializar projeto backend em Node.js + TypeScript (Express em `server/`, `tsconfig.server.json`).
+- [x] Criar validação estrita das variáveis de ambiente no startup (`server/config/env.ts` com Zod).
+- [x] Configurar CORS, headers de segurança, parse de JSON (preservando `rawBody` nas rotas de webhook da Meta e Zernio para validação HMAC-SHA256) e tratamento padronizado de erros HTTP (`server/app.ts`).
+- [x] Servir os arquivos estáticos do build do Vite (`dist/`) com fallback SPA (`/* → index.html`) para permitir deploy em processo único na VPS.
+
+### 0.2 Banco de Dados SQLite e Migrations (`server/db/`)
+- [x] Configurar driver SQLite (`node:sqlite` / `DatabaseSync`) com `PRAGMA foreign_keys = ON`, `PRAGMA journal_mode = WAL` e `PRAGMA busy_timeout = 5000` (`server/db/database.ts`).
+- [x] Converter as 28 tabelas e 2 views (`locatarios_safe`, `zernio_whatsapp_activity_log`) de `supabase/sql_banco.txt` para migrations SQLite versionadas e idempotentes, executadas automaticamente ao iniciar o servidor (`server/db/migrations/001_initial_schema.ts`):
+  - [x] Core: `usuarios` (`password_hash`, `mp_token_ciphertext`, `reset_token_hash`, `reset_token_expires_at`), `locatarios`, `veiculos`, `contratos`, `cobrancas`, `mensagens_template`, `mensalidades`.
+  - [x] Triagem: `candidate_application_links`, `candidatos`, `candidato_reserva_pagamentos`, `candidato_reserva_auditoria`.
+  - [x] WhatsApp/Notificações: `zernio_integracoes`, `zernio_onboarding_sessions`, `zernio_whatsapp_templates`, `zernio_whatsapp_template_usages`, `zernio_whatsapp_deliveries`, `zernio_whatsapp_manual_deliveries`, `agendamentos_mensagens`, `zernio_whatsapp_scheduled_deliveries`, `zernio_webhook_events`, `whatsapp_webhook_events`, `zernio_payment_notifications`, `meta_alertas`, `email_notificacoes_config`.
+  - [x] Fechaduras: `fechaduras`, `fechadura_verificacoes`, `fechadura_comandos`, `fechadura_logs`.
+- [x] Preservar todos os índices únicos parciais (`idx_cobrancas_contrato_ciclo_unique`, `idx_zernio_whatsapp_templates_one_default`, `idx_zernio_charge_template_order`, `idx_zernio_payment_confirmation_default`, `idx_zernio_whatsapp_deliveries_charge_sequence`, `idx_zernio_whatsapp_deliveries_charge_sending`).
+- [x] Criar helper de criptografia AES-256-GCM compartilhado (`server/utils/crypto.ts`) compatível com os formatos `v1.` / `vm1.` / `vr1.` / `vp1.` / `vd1.`.
+
+### 0.3 Autenticação, Sessão e Isolamento Multi-Tenant
+- [x] Implementar hash de senhas (`scrypt` + `timingSafeEqual`) e emissão/validação de JWT (`JWT_SECRET`).
+- [x] Criar middleware `requireAuth` (`server/middleware/auth.ts`, valida JWT via header Bearer ou cookie HttpOnly, carrega usuário em `usuarios` e bloqueia se `ativo = 0`).
+- [x] Criar middleware `requireAdmin` (`role === 'admin'`).
+- [x] Criar bootstrap automático do primeiro administrador no startup a partir de `ADMIN_EMAIL` e `ADMIN_PASSWORD` do `.env` quando não houver usuários cadastrados (`bootstrapAdmin`).
+- [x] Garantir em **todas** as queries de serviços/rotas o filtro `id_usuario = req.user.id` (aplicado conforme as rotas de domínio forem criadas nas Etapas 1 a 9).
+
+### 0.4 Storage Local e Agendador Interno (Crons)
+- [x] Criar serviço de storage local em `UPLOAD_DIR` (`server/routes/media.ts`, `./data/uploads/mensagens-midia/<userId>/`) e rota pública estática `/uploads/...` (substituindo bucket `mensagens-midia`).
+- [x] Configurar agendador interno com `node-cron` (`server/cron/scheduler.ts`, ciclo de 5min para `faturamento`, `lembretes` e `agendamentos` + resumo diário às 08:00 `America/Sao_Paulo` com lock contra concorrência).
+
+### 0.5 Webhooks Públicos e Base de URL Dinâmica
+- [x] Centralizar todas as URLs externas a partir de `APP_PUBLIC_URL` (`server/config/env.ts`) e criar router base em `server/routes/webhooks.ts`:
+  - [x] `GET / POST /api/webhooks/meta` (verificação `hub.challenge` + validação `X-Hub-Signature-256` + processamento completo de status/OTP via `handleMetaWebhookEvent`).
+  - [x] `POST /api/webhooks/mercadopago` (portado `payment-webhook-receiver` via `handleMercadoPagoWebhook` em `server/services/billing-service.ts`).
+  - [x] `POST /api/webhooks/fechadura` (portado `webhook-fechadura` + `server/services/lock-otp.ts` via `handleZernioLockWebhook`).
+
+---
+
+## Etapa 1 — Shell Global, Autenticação e Camada de API do Frontend
+
+### Screen/Módulo: Cliente HTTP + `AuthContext` + `DashboardLayout`
+- [x] **Cliente HTTP (`src/services/api.js`)**
+  - [x] Criar cliente `fetch` centralizado com base `/api`, envio automático de credenciais/token (`Bearer` + `credentials: 'include'`) e tratamento unificado de erros (401 dispara `sga:unauthorized` para limpar sessão).
+  - [x] Configurar proxy de desenvolvimento em `vite.config.js` (`/api`, `/uploads`, `/pagar` → backend Node).
+  - [x] Remover dependência de `src/services/supabase.ts` após concluir todas as screens (Etapa 10).
+- [x] **Contexto de Autenticação (`src/contexts/AuthContext.jsx`)**
+  - [x] Substituir `supabase.auth.getSession()` / `onAuthStateChange()` por `GET /api/auth/me`.
+  - [x] Substituir `supabase.auth.signOut()` por `POST /api/auth/logout`.
+- [x] **Hooks Globais (`src/hooks/useNavCounts.js`, `src/hooks/useMetaAlerts.js`)**
+  - [x] Criar endpoint `GET /api/dashboard/nav-counts` para substituir as queries diretas de `cobrancas` atrasadas e `candidatos` pendentes em `useNavCounts.js`.
+  - [x] Migrar `useMetaAlerts.js` de `supabase.functions.invoke('meta-integration')` para `GET /api/meta/alerts` e `POST /api/meta/alerts/clear`.
+- [x] **Busca Rápida (`src/components/QuickSearchModal.jsx`)**
+  - [x] Criar endpoint `GET /api/search?q=...` no backend consultando `locatarios` (descriptografando `cpf_enc`) e `veiculos` do locador logado, substituindo `supabase.from('locatarios_safe')` e `supabase.from('veiculos')`.
+- [x] **Layout e Navegação (`DashboardLayout.jsx`, `Sidebar.jsx`, `BottomNav.jsx`, `QuickActionsMenu.jsx`, `MetaAlertBanner.jsx`)**
+  - [x] Validar que contadores, alertas da Meta e busca rápida funcionam apenas com a nova API.
+
+---
+
+## Etapa 2 — Screens Públicas e Autenticação
+
+### Screen `/`: `src/pages/Landing.jsx`
+- [x] Revisar links e textos para garantir que não haja referências fixas a domínios antigos ou Supabase; validar renderização pública sem autenticação.
+
+### Screen `/login`: `src/pages/Login.jsx`
+- [x] Substituir `supabase.auth.signInWithPassword` e consulta adicional em `usuarios` por `POST /api/auth/login` (que já valida senha, verifica `ativo = 1` e retorna sessão + perfil).
+- [x] Remover `supabase.auth.getSession()` no `useEffect`, usando estado do `AuthContext`.
+- [x] Validar redirecionamento para `redirectTo` (ou `/dashboard`) após login e tratamento de usuário inativo.
+
+### Screen `/pagar/:token` e `/pagar/aviso/:motivo`: `src/pages/PaymentNotice.jsx`
+- [x] **Remover `public/_redirects`** (que apontava `/pagar/:token` para `https://ykvmzelwpodjmvoujumf.supabase.co/functions/v1/pay-link?t=:token`).
+- [x] Criar rota `GET /pagar/:token` no backend (`server/routes/pay-link.ts`, portando `supabase/functions/pay-link/index.ts`):
+  - [x] Validar UUID `pay_token` na tabela `cobrancas`.
+  - [x] Redirecionar (`302`) para `payment_link` HTTPS válido do Mercado Pago.
+  - [x] Em caso de `pago`, `cancelado`, `expirado`, `invalido` ou `indisponivel`, redirecionar (`302`) para `${APP_PUBLIC_URL}/pagar/aviso/<motivo>`.
+- [x] Validar todas as variações da tela `PaymentNotice.jsx` (`/pagar/aviso/{pago,cancelado,expirado,invalido,indisponivel}`) e garantir que `/pagar/aviso/*` siga para o SPA.
+
+---
+
+## Etapa 3 — Cadastros Principais
+
+### Screen `/locatarios`: `src/pages/Locatarios.jsx` + `LocatarioModal.jsx`
+- [x] Criar endpoints REST no backend (`server/routes/locatarios.ts`):
+  - [x] `GET /api/locatarios` (suportando listagem completa, simples, com WhatsApp e `include=agendamentos`; descriptografando `documento_enc` e `cpf_enc` no servidor no padrão da view `locatarios_safe`).
+  - [x] `GET /api/locatarios/:id`
+  - [x] `POST /api/locatarios` (criptografando `documento` e `cpf` antes de gravar).
+  - [x] `PUT /api/locatarios/:id` e `PATCH /api/locatarios/:id/status` (atualizando campos criptografados quando modificados).
+  - [x] `DELETE /api/locatarios/:id` (retornando `409` amigável quando houver vínculo por FK).
+- [x] Atualizar `src/services/locatarios.js` e `src/components/LocatarioModal.jsx` (removido `supabase.from('locatarios')` direto do modal).
+- [x] Integrar `MessageSelectorModal.jsx` e `AgendamentoModal.jsx` (concluídos na Etapa 5).
+
+### Screen `/veiculos`: `src/pages/Veiculos.jsx` + `VeiculoModal.jsx`
+- [x] Criar endpoints REST no backend (`server/routes/veiculos.ts`):
+  - [x] `GET /api/veiculos` (incluindo contratos vinculados `id, status` e opção de filtro `ativo=true`).
+  - [x] `POST /api/veiculos`
+  - [x] `PUT /api/veiculos/:id`
+  - [x] `DELETE /api/veiculos/:id` (retornando `409` amigável quando vinculado a contrato).
+- [x] Atualizar `src/services/veiculos.js`, `src/pages/Veiculos.jsx` (removido `supabase.from('veiculos')` direto na página) e `src/components/VeiculoModal.jsx` (removido `supabase.from('veiculos')` direto no modal).
+
+### Screen `/contratos`: `src/pages/Contratos.jsx` + `ContratoModal.jsx` + `RecurrenceConfig.jsx`
+- [x] Criar endpoints REST no backend (`server/routes/contratos.ts`):
+  - [x] `GET /api/contratos` (com join de `locatarios(nome_completo)` e `veiculos(placa, modelo)`).
+  - [x] `GET /api/contratos/ativo-por-locatario/:locatarioId`
+  - [x] `POST /api/contratos` (validando que `id_locatario` e `id_veiculo` pertencem ao mesmo `id_usuario`, replicando as FKs compostas do Postgres).
+  - [x] `PUT /api/contratos/:id` e `PATCH /api/contratos/:id/status`
+  - [x] `DELETE /api/contratos/:id`
+- [x] Atualizar `src/services/contratos.js` e `src/components/ContratoModal.jsx` (removidas chamadas diretas `supabase.from(...)`).
+- [x] Validar preservação de `recorrencia` e cálculo de `proxima_cobranca` no fuso `America/Sao_Paulo`.
+
+---
+
+## Etapa 4 — Financeiro (`Dashboard` e `Cobranças`)
+
+### Screen `/dashboard`: `src/pages/Dashboard.jsx`
+- [x] Criar endpoint `GET /api/dashboard/summary` portando a lógica SQL de `get_dashboard_summary()` para SQLite + TypeScript com cálculo exato de início/fim do mês em `America/Sao_Paulo`.
+- [x] Criar endpoint `GET /api/dashboard/charges` para substituir `listDashboardCharges` (contagens por status + lista paginada com joins de locatário, contrato e veículo).
+- [x] Remover queries diretas de `supabase.from('veiculos')` e `supabase.from('candidatos')` em `Dashboard.jsx` via endpoint `GET /api/dashboard/operational-stats`.
+- [x] Validar botões de ação rápida do Dashboard: geração de PIX, envio de cobrança via WhatsApp e criação de cobrança avulsa.
+
+### Screen `/cobrancas`: `src/pages/Cobrancas.jsx` + `PixModal.jsx`
+- [x] Criar endpoints REST de cobranças no backend (`server/routes/cobrancas.ts`):
+  - [x] `GET /api/cobrancas` (com joins de locatário, contrato e veículo) e `GET /api/cobrancas/contrato/:contratoId/pendente`.
+  - [x] `POST /api/cobrancas` (aplicando validação equivalente ao trigger `set_cobranca_locatario` e gerando `pay_token` UUID).
+  - [x] `PUT /api/cobrancas/:id`, `PATCH /api/cobrancas/:id/pagar`, `PATCH /api/cobrancas/:id/cancelar`.
+- [x] Portar Edge Functions financeiras para o backend (`server/services/billing-service.ts` e `server/services/whatsapp-sender.ts`):
+  - [x] `POST /api/cobrancas/faturar` e job de cron `faturamento` (portando `faturamento-cobrancas` + `_shared/billing.ts`, usando token MP do locador e `MP_WEBHOOK_URL` derivado de `APP_PUBLIC_URL`).
+  - [x] `POST /api/cobrancas/cobrar-contrato` (portando `cobrar-contrato`).
+  - [x] `POST /api/cobrancas/:id/gerar-pix` e `POST /api/cobrancas/:id/confirmar-pagamento` + job de cron `lembretes` (`enviar-lembretes-cobranca`).
+- [x] Atualizar `src/services/cobrancas.js` e `src/pages/Cobrancas.jsx` (removidos import e chamadas de `supabase`).
+- [x] Validar fluxo de "Dar Baixa e Notificar" (com confirmação automática pelo provedor ativo e fallback para `MessageSelectorModal`, que será migrado na Etapa 5).
+
+---
+
+## Etapa 5 — Mensagens, Templates Meta, Agendamentos e Custos
+
+### Screen `/mensagens`: `src/pages/Mensagens.jsx` + Cards e Modais
+- [x] **Portar serviço WhatsApp (`supabase/functions/zernio-whatsapp` + `_shared/meta-graph.ts` + `_shared/meta-messages.ts` + `_shared/meta-alerts.ts`)** para endpoints REST no backend:
+  - [x] `GET /api/whatsapp/templates` (`list` + `syncTemplates` para Zernio e Meta).
+  - [x] `POST /api/whatsapp/templates` (`create_template` com validação de regras da Meta).
+  - [x] `PUT /api/whatsapp/templates/:id` (`update_template` e `update_template_button`).
+  - [x] `DELETE /api/whatsapp/templates/:id` (`delete_template`, preservando histórico como `DELETED` quando houver entregas).
+  - [x] `POST /api/whatsapp/templates/default`, `DELETE /api/whatsapp/templates/:id/usage/:purpose` e `POST /api/whatsapp/templates/charge-order` (`set_default`, `remove_template_usage`, `save_charge_order`).
+  - [x] `POST /api/whatsapp/send-template` (envio avulso pelo `MessageSelectorModal`).
+  - [x] `GET /api/whatsapp/analytics`, `GET /api/whatsapp/activity` (substituindo view `zernio_whatsapp_activity_log`) e `GET /api/whatsapp/health`.
+- [x] **Corrigir URL padrão hardcoded em `ZernioTemplatesCard.jsx` (`line 42`)**:
+  - [x] Remover `'https://sga.emoveentregas.com/pagar/{{1}}'` e obter a URL pública dinâmica via backend (`APP_PUBLIC_URL`) ou `window.location.origin`.
+- [x] **Agendamentos (`ZernioSchedulesCard.jsx` e `AgendamentoModal.jsx`)**:
+  - [x] Criar endpoints `GET/POST/PATCH/DELETE /api/agendamentos` e `POST /api/whatsapp/schedules` + job de cron `agendamentos` (`scheduled-messages-service.ts`).
+  - [x] Atualizar `ZernioSchedulesCard.jsx`, `ZernioOperationsCard.jsx` e `AgendamentoModal.jsx` para remover import de `supabase`.
+- [x] **Templates legados e Mídia (`src/services/mensagens.js`)**:
+  - [x] Criar endpoints `GET/PUT/DELETE /api/mensagens-template` e `POST/DELETE /api/media` (storage local no lugar do bucket `mensagens-midia`).
+  - [x] Atualizar `MessageSelectorModal.jsx` (remover `supabase.auth.getUser()`, `supabase.from('locatarios_safe')` e `supabase.functions.invoke`).
+
+---
+
+## Etapa 6 — Triagem de Candidatos e Inscrição Pública
+
+### Screen `/triagem`: `src/pages/Triagem.jsx` + `CandidatoDetalheModal.jsx`
+- [x] Criar endpoints REST no backend (`server/routes/candidatos.ts` e `server/services/candidatos-service.ts`):
+  - [x] `GET /api/candidatos`, `PUT /api/candidatos/:id` (registrando auditoria em `candidato_reserva_auditoria` ao alterar `status` ou `pagamento_status`, replicando o trigger `registrar_historico_status_candidato`).
+  - [x] `GET /api/candidatos/:id/reserva-historico` (retornando `candidato_reserva_auditoria` e `candidato_reserva_pagamentos`).
+  - [x] `POST /api/candidatos/:id/reserva-pix` (portando `create-reservation-pix`).
+  - [x] `POST /api/candidatos/:id/confirmar-reserva-manual` (portando RPC `confirmar_reserva_candidato_manual` com bloqueio de PIX ativo e auditoria obrigatória).
+  - [x] `GET/POST/DELETE /api/candidatos/link-inscricao` (portando `candidate-application-link`).
+- [x] Atualizar `src/services/candidatos.js` (e ajustar cópia segura em `Triagem.jsx`) mantendo polling automático de 15s, filtros, paginação, ficha e modal PIX.
+
+### Screen `/inscricao/:token`: `src/pages/CandidateApplication.jsx`
+- [x] Portar `submit-candidate-application` para `POST /api/public/inscricao` (`server/routes/public.ts`):
+  - [x] Validar token via SHA-256 em `candidate_application_links` (`ativo = 1` e `expires_at > now`).
+  - [x] Executar cota diária de 50 envios em transação SQLite (`BEGIN IMMEDIATE`, portando RPC `consumir_cota_inscricao_candidato`).
+  - [x] Validar CPF, campos obrigatórios, honeypot (`website`), tempo mínimo de preenchimento e duplicidade de CPF por `id_usuario`.
+  - [x] Registrar candidatura em `candidatos` + evento `inscricao_recebida` em `candidato_reserva_auditoria`.
+- [x] Atualizar `candidatosService.submitApplication` para consumir `/api/public/inscricao` sem sessão.
+
+---
+
+## Etapa 7 — Controle de Acessos (Fechaduras Inteligentes)
+
+### Screen `/acessos`: `src/pages/Acessos.jsx` + `FechaduraModal.jsx`
+- [x] Criar endpoints REST no backend (`server/routes/fechaduras.ts`):
+  - [x] `GET/POST/PUT/DELETE /api/fechaduras`
+  - [x] `GET /api/fechaduras/logs` (join com `locatarios(nome_completo)` e `fechaduras(nome)`, limite 50).
+- [x] Verificar/portar fluxo completo de OTP e comandos (`server/services/lock-otp.ts`, `server/services/webhooks-service.ts`, `fechadura_verificacoes`, `fechadura_comandos`, `fechadura_logs`) acionado pelos webhooks da Meta (`/api/webhooks/meta`) e Zernio (`/api/webhooks/fechadura`).
+- [x] Atualizar `src/services/fechaduras.js` e `src/components/FechaduraModal.jsx` (remover `supabase.from('fechaduras')` direto do modal).
+
+---
+
+## Etapa 8 — Configurações, Onboarding Zernio e Callback
+
+### Screen `/configuracoes`: `src/pages/Configuracoes.jsx` + Cards de Integração
+- [x] **Aba Zernio (`ZernioIntegrationCard.jsx`)**:
+  - [x] Portar `zernio-integration` para `/api/integrations/zernio` (`status`, `save_key`, `select_profile`, `select_account`, `activate`, `disconnect`, `provision_webhook` apontando para `${APP_PUBLIC_URL}/api/webhooks/fechadura`).
+  - [x] Portar `zernio-onboarding` (`start`, `cancel`) usando `${APP_PUBLIC_URL}/zernio/callback` como redirect base.
+- [x] **Aba Meta Cloud API (`MetaIntegrationCard.jsx`)**:
+  - [x] Portar `meta-integration` para `/api/integrations/meta` (`status`, `validate_manual`, `register`, `refresh`, `disconnect`, `activate`, `alerts`, `clear_alert`), retornando `webhookUrl = ${APP_PUBLIC_URL}/api/webhooks/meta`.
+- [x] **Aba Notificações (`EmailNotificacoesCard.jsx`)**:
+  - [x] Portar `email-settings` (`get`, `save`, `test`, `send_daily_summary`) usando `_shared/resend.ts` e `_shared/daily-summary.ts`.
+- [x] **Aba Conta e Pagamentos (`Configuracoes.jsx`)**:
+  - [x] Portar `get-secrets` e `save-secret` para `GET /api/account/secrets` e `POST /api/account/secrets` (salvando/lendo token do Mercado Pago cifrado).
+  - [x] Atualizar perfil do usuário via `PUT /api/account/profile` (substituindo `usuariosService.update` + `resetPassword`).
+
+### Screen `/zernio/callback`: `src/pages/ZernioCallback.jsx`
+- [x] Migrar chamada `supabase.functions.invoke('zernio-onboarding', { body: { action: 'complete', ... } })` para `POST /api/integrations/zernio/onboarding/complete`.
+- [x] Validar fluxo de retorno OAuth/Embedded Signup (sucesso, erro, cancelamento e estado expirado).
+
+---
+
+## Etapa 9 — Administração de Usuários
+
+### Screen `/admin`: `src/pages/Admin.jsx` + `UserModal.jsx`
+- [x] Criar endpoints administrativos protegidos por `requireAdmin`:
+  - [x] `GET /api/admin/usuarios`
+  - [x] `POST /api/admin/usuarios` (portando `admin-create-user`, criando usuário já com `password_hash` e `role` definidos).
+  - [x] `PUT /api/admin/usuarios/:id` (portando RPC `admin_update_usuario`).
+  - [x] `PATCH /api/admin/usuarios/:id/status` (portando RPC `admin_set_usuario_status`).
+  - [x] `DELETE /api/admin/usuarios/:id` (portando `delete-user`, removendo usuário e dados em cascata).
+- [x] Atualizar `src/services/usuarios.js` e `src/components/UserModal.jsx`.
+
+---
+
+## Etapa 10 — Empacotamento VPS ("Clone, `.env` e Start"), Testes e Limpeza
+
+- [x] **Configuração única de ambiente**:
+  - [x] Substituir `.env.example` e `supabase/functions/.env.example` por **um único `.env.example` na raiz** com:
+    - `PORT`, `APP_PUBLIC_URL`, `DATABASE_PATH`, `UPLOAD_DIR`
+    - `JWT_SECRET`, `ENCRYPTION_KEY` (64 hex chars)
+    - `ADMIN_EMAIL`, `ADMIN_PASSWORD`
+    - `META_APP_ID`, `META_APP_SECRET`, `META_GRAPH_VERSION`, `META_WEBHOOK_VERIFY_TOKEN`
+    - (Opcional) `SMTP_*` / `RESEND_SYSTEM_API_KEY` para recuperação de senha
+- [x] **Deploy simplificado na VPS**:
+  - [x] Criar `Dockerfile` + `docker-compose.yml` com volume persistente `./data:/app/data` (armazenando SQLite + `uploads/`).
+  - [x] Adicionar configuração de exemplo de proxy reverso com HTTPS automático (`Caddyfile` ou Nginx + Certbot) — obrigatório para webhooks da Meta, Zernio e Mercado Pago.
+  - [x] Atualizar `.gitignore` (`data/`, `*.db`, `*.db-wal`, `*.db-shm`, `.env`).
+  - [x] Atualizar `README.md` com guia "Clone → preencha `.env` → suba em 1 comando" + instruções de backup consistente do SQLite (`sqlite3 sga.db ".backup ..."`).
+- [x] **Testes e Limpeza Final**:
+  - [x] Portar os testes de `supabase/tests/` (`daily-summary.test.ts`, `meta-alerts.test.ts`, `meta-messages.test.ts`) para a suíte do novo backend e adicionar testes de integração para Auth, SQLite multi-tenant e webhooks.
+  - [x] Remover dependências e arquivos obsoletos do Supabase (`@supabase/supabase-js`, `supabase` CLI, `src/services/supabase.ts`, pasta `supabase/` após validar paridade total).
+  - [x] Executar validação completa (`build`, `lint`, testes automatizados; deploy ponta a ponta em staging/VPS pronto para validação na infraestrutura de destino).

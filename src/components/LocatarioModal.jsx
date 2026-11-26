@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Loader2 } from 'lucide-react';
-import { supabase } from '../services/supabase';
+import { locatariosService } from '../services/locatarios';
 import { toast } from 'react-toastify';
 
 const LocatarioModal = ({ isOpen, onClose, onSuccess, locatario = null, userId }) => {
@@ -27,22 +27,12 @@ const LocatarioModal = ({ isOpen, onClose, onSuccess, locatario = null, userId }
 
     try {
       const payload = { ...formData, id_usuario: userId };
-      
-      let error;
-      if (locatario?.id) {
-        const { error: err } = await supabase
-          .from('locatarios')
-          .update(payload)
-          .eq('id', locatario.id);
-        error = err;
-      } else {
-        const { error: err } = await supabase
-          .from('locatarios')
-          .insert([payload]);
-        error = err;
-      }
 
-      if (error) throw error;
+      if (locatario?.id) {
+        await locatariosService.update(locatario.id, payload);
+      } else {
+        await locatariosService.create(payload);
+      }
 
       toast.success(locatario ? "Locatário atualizado!" : "Locatário cadastrado!");
       onSuccess();

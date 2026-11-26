@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../services/supabase';
+import { api } from '../services/api';
 
 export function useNavCounts(userId) {
   const [counts, setCounts] = useState({
@@ -14,24 +14,11 @@ export function useNavCounts(userId) {
     const run = async () => {
       if (!userId) return;
       try {
-        const [atrasadasRes, candidatosRes] = await Promise.all([
-          supabase
-            .from('cobrancas')
-            .select('id', { count: 'exact', head: true })
-            .eq('id_usuario', userId)
-            .eq('tipo', 'receita')
-            .eq('status', 'atrasado'),
-          supabase
-            .from('candidatos')
-            .select('id', { count: 'exact', head: true })
-            .eq('id_usuario', userId)
-            .eq('status', 'analise'),
-        ]);
-
+        const data = await api.get('/dashboard/nav-counts');
         if (isMounted) {
           setCounts({
-            cobrancasAtrasadas: atrasadasRes.count || 0,
-            candidatosPendentes: candidatosRes.count || 0,
+            cobrancasAtrasadas: data?.cobrancasAtrasadas || 0,
+            candidatosPendentes: data?.candidatosPendentes || 0,
             loading: false,
           });
         }

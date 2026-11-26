@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { CalendarClock, CheckCircle2, Clock3, Loader2, Pause, Play, Plus, RefreshCw, Search, Trash2, UserRound, X } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../services/supabase';
+import { api } from '../services/api';
+import { agendamentosService } from '../services/agendamentos';
 import { locatariosService } from '../services/locatarios';
 
 const inputClass = 'w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-500';
@@ -77,15 +78,15 @@ function MetaScheduleModal({ templates, tenants, onClose, onCreated }) {
     }
     setSaving(true);
     try {
-      const { data, error } = await supabase.functions.invoke('zernio-whatsapp', {
-        body: {
-          action: 'create_schedule', templateId, tenantId, frequency,
-          frequencyDays: frequency === 'personalizado' ? Number(frequencyDays) : null,
-          scheduledDate, scheduledTime, templateParams: params,
-        },
+      await api.post('/whatsapp/schedules', {
+        templateId,
+        tenantId,
+        frequency,
+        frequencyDays: frequency === 'personalizado' ? Number(frequencyDays) : null,
+        scheduledDate,
+        scheduledTime,
+        templateParams: params,
       });
-      if (error) throw new Error(data?.error || error.message || 'Não foi possível criar o agendamento.');
-      if (data?.error) throw new Error(data.error);
       toast.success('Agendamento Meta criado.');
       await onCreated();
       onClose();
@@ -141,23 +142,19 @@ export default function ZernioSchedulesCard() {
     if (!profile?.id) return;
     setLoading(true);
     try {
-      const [templateResult, tenantResult, scheduleResult] = await Promise.all([
-        supabase.functions.invoke('zernio-whatsapp', { body: { action: 'list' } }),
+      const [templateResult, tenantResult, scheduleResult] = await Promise.allSettled([
+        api.get('/whatsapp/templates'),
         locatariosService.listSimpleWithWhatsApp(profile.id),
-        supabase.from('agendamentos_mensagens').select(`
-          id,id_usuario,id_locatario,id_template,zernio_template_id,template_params,frequencia,frequencia_dias,
-          proximo_envio,horario_envio,ativo,ultimo_erro,ultima_execucao,
-          locatarios!agendamentos_locatario_mesmo_usuario_fkey(id,nome_completo,whatsapp),
-          mensagens_template!agendamentos_template_mesmo_usuario_fkey(titulo)
-        `).eq('id_usuario', profile.id).order('proximo_envio').order('horario_envio'),
+        agendamentosService.list(),
       ]);
-      if (scheduleResult.error) throw scheduleResult.error;
-      const templateError = templateResult.error?.message || templateResult.data?.error || '';
-      setTemplateWarning(templateError ? 'Conecte e valide o canal de WhatsApp em Configurações para criar agendamentos de templates.' : '');
-      setChannel(templateResult.data?.channel || null);
-      setTemplates(templateError ? [] : (templateResult.data?.templates || []));
-      setTenants(tenantResult || []);
-      setSchedules(scheduleResult.data || []);
+
+      if (scheduleResult.status === 'rejected') throw scheduleResult.reason;
+      const tmplOk = templateResult.status === 'fulfilled';
+      setTemplateWarning(tmplOk ? '' : 'Conecte e valide o canal de WhatsApp em Configurações para criar agendamentos de templates.');
+      setChannel(tmplOk ? (templateResult.value?.channel || null) : null);
+      setTemplates(tmplOk ? (templateResult.value?.templates || []) : []);
+      setTenants(tenantResult.status === 'fulfilled' ? (tenantResult.value || []) : []);
+      setSchedules(scheduleResult.value || []);
     } catch (error) {
       toast.error(`Erro ao carregar agendamentos: ${error.message || 'tente novamente.'}`);
     } finally {
@@ -170,11 +167,11 @@ export default function ZernioSchedulesCard() {
   const executeUpdate = async (schedule, change) => {
     setBusyId(schedule.id);
     try {
-      const query = change.__delete
-        ? supabase.from('agendamentos_mensagens').delete().eq('id', schedule.id).eq('id_usuario', profile.id)
-        : supabase.from('agendamentos_mensagens').update(change).eq('id', schedule.id).eq('id_usuario', profile.id);
-      const { error } = await query;
-      if (error) throw error;
+      if (change.__delete) {
+        await agendamentosService.remove(schedule.id);
+      } else {
+        await agendamentosService.update(schedule.id, change);
+      }
       toast.success(change.__delete ? 'Agendamento removido.' : change.ativo ? 'Agendamento reativado.' : 'Agendamento pausado.');
       await load();
     } catch (error) {

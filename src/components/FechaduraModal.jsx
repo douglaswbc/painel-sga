@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { X, Lock, Key, Edit3, Save, ShieldCheck } from 'lucide-react';
-import { supabase } from '../services/supabase';
+import { X, Lock, Key, Save, ShieldCheck } from 'lucide-react';
+import { fechadurasService } from '../services/fechaduras';
 import { toast } from 'react-toastify';
 
-const FechaduraModal = ({ isOpen, onClose, fechadura, profile, onSuccess }) => {
+const FechaduraModal = ({ isOpen, onClose, fechadura, onSuccess }) => {
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     nome: '',
@@ -32,29 +32,13 @@ const FechaduraModal = ({ isOpen, onClose, fechadura, profile, onSuccess }) => {
     try {
       const dataToSave = {
         ...formData,
-        id_usuario: profile.id,
         identificador: formData.identificador.toLowerCase().trim().replace(/\s+/g, '-')
       };
 
-      let error;
       if (fechadura) {
-        const { error: err } = await supabase
-          .from('fechaduras')
-          .update(dataToSave)
-          .eq('id', fechadura.id);
-        error = err;
+        await fechadurasService.update(fechadura.id, dataToSave);
       } else {
-        const { error: err } = await supabase
-          .from('fechaduras')
-          .insert([dataToSave]);
-        error = err;
-      }
-
-      if (error) {
-        if (error.code === '23505') {
-          throw new Error('Já existe uma fechadura com este identificador para sua conta.');
-        }
-        throw error;
+        await fechadurasService.create(dataToSave);
       }
 
       toast.success(fechadura ? 'Fechadura atualizada!' : 'Nova fechadura cadastrada!');

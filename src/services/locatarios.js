@@ -1,89 +1,46 @@
-import { supabase } from './supabase';
+import { api } from './api';
 
 export const locatariosService = {
-  list: async (userId) => {
-    const { data, error } = await supabase
-      .from('locatarios_safe')
-      .select('*')
-      .eq('id_usuario', userId)
-      .order('nome_completo');
-    if (error) throw error;
-    return data;
+  list: async (_userId) => {
+    const res = await api.get('/locatarios');
+    return res.data || [];
   },
 
-  listWithAgendamentos: async (userId) => {
-    const { data, error } = await supabase
-      .from('locatarios_safe')
-      .select('*, agendamentos_mensagens (id, ativo)')
-      .eq('id_usuario', userId)
-      .order('nome_completo');
-    if (error) throw error;
-    return data;
+  listWithAgendamentos: async (_userId) => {
+    const res = await api.get('/locatarios?include=agendamentos');
+    return res.data || [];
   },
 
-  listSimple: async (userId, ativo = true) => {
-    const { data, error } = await supabase
-      .from('locatarios_safe')
-      .select('id, nome_completo')
-      .eq('id_usuario', userId)
-      .eq('ativo', ativo)
-      .order('nome_completo', { ascending: true });
-    if (error) throw error;
-    return data;
+  listSimple: async (_userId, ativo = true) => {
+    const res = await api.get(`/locatarios?ativo=${ativo ? 'true' : 'false'}`);
+    return (res.data || []).map(({ id, nome_completo }) => ({ id, nome_completo }));
   },
 
-  listSimpleWithWhatsApp: async (userId) => {
-    const { data, error } = await supabase
-      .from('locatarios_safe')
-      .select('id, nome_completo, whatsapp')
-      .eq('id_usuario', userId)
-      .eq('ativo', true)
-      .order('nome_completo');
-    if (error) throw error;
-    return data;
+  listSimpleWithWhatsApp: async (_userId) => {
+    const res = await api.get('/locatarios?ativo=true');
+    return (res.data || []).map(({ id, nome_completo, whatsapp }) => ({ id, nome_completo, whatsapp }));
   },
 
   getById: async (id) => {
-    const { data, error } = await supabase
-      .from('locatarios_safe')
-      .select('*')
-      .eq('id', id)
-      .single();
-    if (error) throw error;
-    return data;
+    const res = await api.get(`/locatarios/${id}`);
+    return res.data;
   },
 
   create: async (data) => {
-    const { data: result, error } = await supabase
-      .from('locatarios')
-      .insert([data])
-      .select()
-      .single();
-    if (error) throw error;
-    return result;
+    const res = await api.post('/locatarios', data);
+    return res.data;
   },
 
   update: async (id, data) => {
-    const { error } = await supabase
-      .from('locatarios')
-      .update(data)
-      .eq('id', id);
-    if (error) throw error;
+    const res = await api.put(`/locatarios/${id}`, data);
+    return res.data;
   },
 
   toggleStatus: async (id, ativo) => {
-    const { error } = await supabase
-      .from('locatarios')
-      .update({ ativo: !ativo })
-      .eq('id', id);
-    if (error) throw error;
+    await api.patch(`/locatarios/${id}/status`, { ativo: !ativo });
   },
 
   remove: async (id) => {
-    const { error } = await supabase
-      .from('locatarios')
-      .delete()
-      .eq('id', id);
-    if (error) throw error;
+    await api.delete(`/locatarios/${id}`);
   },
 };

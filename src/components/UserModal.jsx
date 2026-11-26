@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { X, Loader2, User, Key, Shield, Smartphone } from 'lucide-react';
-import { supabase } from '../services/supabase';
+import { useAuth } from '../contexts/AuthContext';
+import { usuariosService } from '../services/usuarios';
 import { toast } from 'react-toastify';
 import { formatWhatsAppToAPI } from '../utils/formatters';
 
 const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
+  const { profile } = useAuth();
+  const isSelf = Boolean(userToEdit?.id && profile?.id && userToEdit.id === profile.id);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     nome_completo: '',
@@ -18,7 +21,11 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
   useEffect(() => {
     if (userToEdit) {
       setFormData({
-        ...userToEdit,
+        nome_completo: userToEdit.nome_completo || '',
+        email: userToEdit.email || '',
+        whatsapp: userToEdit.whatsapp || '',
+        role: userToEdit.role || 'locatario',
+        ativo: Boolean(userToEdit.ativo),
         password: ''
       });
     } else {
@@ -46,28 +53,19 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
     
     try {
       if (userToEdit?.id) {
-        const { error: err } = await supabase.rpc('admin_update_usuario', {
-          p_user_id: userToEdit.id,
-          p_nome_completo: formData.nome_completo,
-          p_whatsapp: cleanWhatsApp,
-          p_role: formData.role,
-          p_ativo: formData.ativo,
+        await usuariosService.adminUpdate(userToEdit.id, {
+          nome_completo: formData.nome_completo,
+          whatsapp: cleanWhatsApp,
+          role: formData.role,
+          ativo: Boolean(formData.ativo),
         });
-        
-        if (err) throw err;
         toast.success("Perfil atualizado!");
       } else {
         if (formData.password.length < 6) {
           throw new Error("A senha deve ter pelo menos 6 caracteres.");
         }
 
-        const { data, error: funcError } = await supabase.functions.invoke('admin-create-user', {
-          body: { ...formData, whatsapp: cleanWhatsApp }
-        });
-
-        if (funcError) throw funcError;
-        if (data?.error) throw new Error(data.error);
-
+        await usuariosService.createUserAdmin(formData, cleanWhatsApp);
         toast.success('Acesso criado com sucesso!');
       }
 
@@ -150,7 +148,8 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
           <div>
             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tipo de Usuário</label>
             <select
-              className="w-full bg-input border border-slate-600 rounded-lg px-4 py-2 text-white focus:border-accent outline-none"
+              disabled={isSelf}
+              className="w-full bg-input border border-slate-600 rounded-lg px-4 py-2 text-white focus:border-accent outline-none disabled:opacity-50 disabled:cursor-not-allowed"
               value={formData.role}
               onChange={e => setFormData({...formData, role: e.target.value})}
             >
@@ -158,17 +157,23 @@ const UserModal = ({ isOpen, onClose, onSuccess, userToEdit = null }) => {
               <option value="locador">Locador (Dono de Frota)</option>
               <option value="admin">Administrador do Sistema</option>
             </select>
+            {isSelf && (
+              <p className="mt-1 text-[11px] text-slate-500">Você não pode alterar o seu próprio tipo de usuário.</p>
+            )}
           </div>
 
           <div className="flex items-center gap-2 pt-2">
             <input
               type="checkbox"
               id="user-active"
-              className="w-4 h-4 rounded bg-input border-slate-600 text-accent focus:ring-accent cursor-pointer"
+              disabled={isSelf}
+              className="w-4 h-4 rounded bg-input border-slate-600 text-accent focus:ring-accent cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               checked={formData.ativo}
               onChange={e => setFormData({...formData, ativo: e.target.checked})}
             />
-            <label htmlFor="user-active" className="text-sm text-slate-300 font-medium cursor-pointer">Conta Ativa</label>
+            <label htmlFor="user-active" className={`text-sm text-slate-300 font-medium ${isSelf ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}>
+              Conta Ativa{isSelf ? ' (não é possível desativar a própria conta)' : ''}
+            </label>
           </div>
 
           <div className="flex justify-end gap-3 mt-8">

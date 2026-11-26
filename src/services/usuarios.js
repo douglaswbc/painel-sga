@@ -1,71 +1,33 @@
-import { supabase } from './supabase';
+import { api } from './api';
 
 export const usuariosService = {
   list: async () => {
-    const { data, error } = await supabase
-      .from('usuarios')
-      .select('id, nome_completo, whatsapp, email, role, empresa_nome, ativo, created_at, mp_notification_url')
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    return data;
+    const response = await api.get('/admin/usuarios');
+    return response?.data || [];
   },
 
-  getById: async (id) => {
-    const { data, error } = await supabase
-      .from('usuarios')
-      .select('id, nome_completo, whatsapp, email, role, empresa_nome, ativo, created_at, mp_notification_url')
-      .eq('id', id)
-      .single();
-    if (error) throw error;
-    return data;
+  update: async (_id, data) => {
+    return api.put('/account/profile', data);
   },
 
-  getStatus: async (id) => {
-    const { data, error } = await supabase
-      .from('usuarios')
-      .select('ativo')
-      .eq('id', id)
-      .single();
-    if (error) throw error;
-    return data;
-  },
-
-  update: async (id, data) => {
-    const { error } = await supabase
-      .from('usuarios')
-      .update(data)
-      .eq('id', id);
-    if (error) throw error;
+  adminUpdate: async (id, data) => {
+    return api.put(`/admin/usuarios/${id}`, data);
   },
 
   toggleStatus: async (id, currentStatus) => {
-    const { error } = await supabase.rpc('admin_set_usuario_status', {
-      p_user_id: id,
-      p_ativo: !currentStatus,
+    return api.patch(`/admin/usuarios/${id}/status`, {
+      ativo: !currentStatus,
     });
-    if (error) throw error;
   },
 
   deleteUser: async (userId) => {
-    const { data, error } = await supabase.functions.invoke('delete-user', {
-      body: { userId },
-    });
-    if (error) throw error;
-    return data;
+    return api.delete(`/admin/usuarios/${userId}`);
   },
 
   createUserAdmin: async (formData, whatsapp) => {
-    const { data, error } = await supabase.functions.invoke('admin-create-user', {
-      body: { ...formData, whatsapp },
+    return api.post('/admin/usuarios', {
+      ...formData,
+      whatsapp,
     });
-    if (error) throw error;
-    return data;
-  },
-
-  resetPassword: async (email, redirectTo) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo,
-    });
-    if (error) throw error;
   },
 };

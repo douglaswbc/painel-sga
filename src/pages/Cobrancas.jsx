@@ -11,7 +11,6 @@ import { useBilling } from '../hooks/useBilling';
 import { cobrancasService } from '../services/cobrancas';
 import { contratosService } from '../services/contratos';
 import { locatariosService } from '../services/locatarios';
-import { supabase } from '../services/supabase';
 import { Button } from '../components/ui/Button';
 import { KpiCard } from '../components/ui/KpiCard';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -84,13 +83,13 @@ const Cobrancas = () => {
       if (notificar) {
         // Envia a confirmacao de pagamento pelo canal ativo (Meta ou Zernio),
         // usando o template configurado em Templates Meta.
-        const { data, error } = await supabase.functions.invoke('zernio-whatsapp', {
-          body: { action: 'send_payment_confirmation', chargeId: alvo.id },
-        });
-        if (error) throw new Error(data?.error || error.message);
-        if (data?.error) {
-          if (data.needsTemplate) {
-            const locatarioId = alvo.contratos?.id_locatario;
+        try {
+          const data = await cobrancasService.enviarConfirmacaoPagamento(alvo.id);
+          const canal = data?.channel?.providerLabel || 'canal ativo';
+          toast.success(`Confirmação de pagamento enviada por ${data?.templateName || 'template'} (${canal}).`);
+        } catch (confirmErr) {
+          if (confirmErr?.data?.needsTemplate) {
+            const locatarioId = alvo.contratos?.id_locatario || alvo.id_locatario;
             if (locatarioId) {
               const locData = await locatariosService.getById(locatarioId);
               setSelectedLocatarioData(locData);
@@ -100,11 +99,8 @@ const Cobrancas = () => {
               toast.warning('Locatário não encontrado para notificação.');
             }
           } else {
-            throw new Error(data.error);
+            throw confirmErr;
           }
-        } else {
-          const canal = data?.channel?.providerLabel || 'canal ativo';
-          toast.success(`Confirmação de pagamento enviada por ${data?.templateName || 'template'} (${canal}).`);
         }
       }
       setBaixaTarget(null);

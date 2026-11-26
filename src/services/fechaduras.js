@@ -1,50 +1,27 @@
-import { supabase } from './supabase';
+import { api } from './api';
 
 export const fechadurasService = {
-  list: async (userId) => {
-    const { data, error } = await supabase
-      .from('fechaduras')
-      .select('*')
-      .eq('id_usuario', userId)
-      .order('created_at', { ascending: false });
-    if (error) throw error;
+  list: async () => {
+    const { data } = await api.get('/fechaduras');
+    return data || [];
+  },
+
+  create: async (payload) => {
+    const { data } = await api.post('/fechaduras', payload);
     return data;
   },
 
-  create: async (data) => {
-    const { data: result, error } = await supabase
-      .from('fechaduras')
-      .insert([data])
-      .select()
-      .single();
-    if (error) throw error;
-    return result;
-  },
-
-  update: async (id, data) => {
-    const { error } = await supabase
-      .from('fechaduras')
-      .update(data)
-      .eq('id', id);
-    if (error) throw error;
+  update: async (id, payload) => {
+    const { data } = await api.put(`/fechaduras/${encodeURIComponent(id)}`, payload);
+    return data;
   },
 
   remove: async (id) => {
-    const { error } = await supabase
-      .from('fechaduras')
-      .delete()
-      .eq('id', id);
-    if (error) throw error;
+    await api.del(`/fechaduras/${encodeURIComponent(id)}`);
   },
 
-  listLogs: async (userId) => {
-    const { data, error } = await supabase
-      .from('fechadura_logs')
-      .select('*, locatarios (nome_completo), fechaduras (nome)')
-      .eq('id_usuario', userId)
-      .order('timestamp', { ascending: false })
-      .limit(50);
-    if (error) throw error;
-    return data;
+  listLogs: async () => {
+    const { data } = await api.get('/fechaduras/logs');
+    return data || [];
   },
 };

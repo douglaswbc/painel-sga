@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { supabase } from '../services/supabase';
+import { veiculosService } from '../services/veiculos';
 import { useAuth } from '../contexts/AuthContext';
 import { Plus, Edit, Trash2, Search, Loader2, Car, AlertCircle, RefreshCw } from 'lucide-react';
 import { toast } from 'react-toastify';
@@ -27,13 +27,7 @@ const Veiculos = () => {
     if (!profile?.id) return;
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('veiculos')
-        .select('*, contratos(id, status)')
-        .eq('id_usuario', profile.id)
-        .order('modelo');
-
-      if (error) throw error;
+      const data = await veiculosService.list(profile.id);
       setVeiculos(data || []);
     } catch {
       toast.error('Erro ao carregar frota de veículos');
@@ -50,12 +44,11 @@ const Veiculos = () => {
     if (!window.confirm(`Remover veículo ${modelo} (${placa})? Certifique-se de que não haja contratos ativos.`)) return;
 
     try {
-      const { error } = await supabase.from('veiculos').delete().eq('id', id);
-      if (error) throw error;
+      await veiculosService.remove(id);
       toast.success('Veículo removido com sucesso!');
       fetchVeiculos();
-    } catch {
-      toast.error('Erro ao excluir: o veículo pode estar vinculado a contratos existentes.');
+    } catch (error) {
+      toast.error(error?.message || 'Erro ao excluir: o veículo pode estar vinculado a contratos existentes.');
     }
   };
 

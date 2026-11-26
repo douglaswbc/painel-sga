@@ -4,7 +4,8 @@ import {
   MessageSquare, Search, Send, Users, X
 } from 'lucide-react';
 import { toast } from 'react-toastify';
-import { supabase } from '../services/supabase';
+import { api } from '../services/api';
+import { locatariosService } from '../services/locatarios';
 
 const variablesIn = (value) => [...new Set([...String(value || '').matchAll(/\{\{(\d+)\}\}/g)].map((match) => Number(match[1])))].sort((a, b) => a - b);
 
@@ -46,9 +47,7 @@ export default function MessageSelectorModal({ isOpen, onClose, locatario, locat
 
     const loadData = async () => {
       try {
-        const { data: tmplData, error: tmplError } = await supabase.functions.invoke('zernio-whatsapp', { body: { action: 'list' } });
-        if (tmplError) throw new Error(tmplData?.error || tmplError.message);
-        if (tmplData?.error) throw new Error(tmplData.error);
+        const tmplData = await api.get('/whatsapp/templates');
         if (!active) return;
         setTemplates(tmplData?.templates || []);
         setChannel(tmplData?.channel || null);
@@ -63,22 +62,14 @@ export default function MessageSelectorModal({ isOpen, onClose, locatario, locat
             setSelectedTenantIds(valid.map((l) => l.id));
           }
         } else {
-          const { data: userRes } = await supabase.auth.getUser();
-          if (userRes?.user?.id) {
-            const { data: locData } = await supabase
-              .from('locatarios')
-              .select('id, nome_completo, whatsapp')
-              .eq('id_usuario', userRes.user.id)
-              .eq('ativo', true)
-              .order('nome_completo');
-            if (active && locData) {
-              const valid = locData.filter((l) => Boolean(l.whatsapp));
-              setAllLocatarios(valid);
-              if (locatario?.id) {
-                setSelectedTenantIds([locatario.id]);
-              } else {
-                setSelectedTenantIds(valid.map((l) => l.id));
-              }
+          const locData = await locatariosService.listSimpleWithWhatsApp();
+          if (active && locData) {
+            const valid = locData.filter((l) => Boolean(l.whatsapp));
+            setAllLocatarios(valid);
+            if (locatario?.id) {
+              setSelectedTenantIds([locatario.id]);
+            } else {
+              setSelectedTenantIds(valid.map((l) => l.id));
             }
           }
         }
@@ -157,24 +148,11 @@ export default function MessageSelectorModal({ isOpen, onClose, locatario, locat
 
     setSending(true);
     try {
-      const { data, error } = await supabase.functions.invoke('zernio-whatsapp', {
-        body: {
-          action: 'send_template',
-          templateId: selectedTemplate.id,
-          tenantIds: selectedTenantIds,
-          templateParams: params,
-        },
+      const data = await api.post('/whatsapp/send-template', {
+        templateId: selectedTemplate.id,
+        tenantIds: selectedTenantIds,
+        templateParams: params,
       });
-
-      if (error) {
-        let msg = error.message;
-        try {
-          const body = await error.context?.json();
-          if (body?.error) msg = body.error;
-        } catch {}
-        throw new Error(msg);
-      }
-      if (data?.error) throw new Error(data.error);
 
       const count = data?.sentCount ?? selectedTenantIds.length;
       toast.success(

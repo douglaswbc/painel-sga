@@ -5,7 +5,7 @@ import {
   Send, Smartphone, Trash2, X,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../services/supabase';
+import { api } from '../services/api';
 
 const statusStyles = {
   APPROVED: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20',
@@ -39,7 +39,7 @@ const orderedLanguages = [languages.find(([code]) => code === 'pt_BR'), ...langu
 
 // Link curto de pagamento usado como sugestao no botao de site. A Meta recebe
 // a variavel no fim e o SGA troca pelo codigo da cobranca em cada envio.
-const DEFAULT_PAYMENT_URL = 'https://sga.emoveentregas.com/pagar/{{1}}';
+const DEFAULT_PAYMENT_URL = `${typeof window !== 'undefined' ? window.location.origin : ''}/pagar/{{1}}`;
 const DEFAULT_PAYMENT_EXAMPLE = '00000000-0000-4000-8000-000000000000';
 
 const initialDraft = () => ({
@@ -602,17 +602,26 @@ const ZernioTemplatesCard = () => {
   }, [showForm, busy]);
 
   const invoke = useCallback(async (action, payload = {}) => {
-    const { data, error } = await supabase.functions.invoke('zernio-whatsapp', { body: { action, ...payload } });
-    if (error) {
-      let message = 'Não foi possível falar com o SGA. Tente novamente.';
-      try {
-        const body = await error.context?.json();
-        if (typeof body?.error === 'string') message = body.error;
-      } catch {}
-      throw new Error(message);
+    switch (action) {
+      case 'list':
+        return api.get('/whatsapp/templates');
+      case 'create_template':
+        return api.post('/whatsapp/templates', payload);
+      case 'update_template': {
+        const { templateId, ...rest } = payload;
+        return api.put(`/whatsapp/templates/${templateId}`, rest);
+      }
+      case 'delete_template':
+        return api.delete(`/whatsapp/templates/${payload.templateId}`);
+      case 'set_default':
+        return api.post('/whatsapp/templates/default', payload);
+      case 'remove_usage':
+        return api.delete(`/whatsapp/templates/${payload.templateId}/usage/${encodeURIComponent(payload.purpose)}`);
+      case 'save_charge_order':
+        return api.post('/whatsapp/templates/charge-order', payload);
+      default:
+        throw new Error(`Ação WhatsApp não suportada: ${action}`);
     }
-    if (data?.error) throw new Error(data.error);
-    return data;
   }, []);
 
   const refresh = useCallback(async (showNotice = false) => {

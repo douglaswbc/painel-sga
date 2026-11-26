@@ -1,0 +1,21 @@
+# Substitua `sga.seudominio.com` pelo domínio configurado em APP_PUBLIC_URL no `.env`.
+# O Caddy emite e renova o certificado TLS (Let's Encrypt) automaticamente.
+#
+# - Usando Caddy via Docker (`docker compose --profile proxy up -d`):
+#   aponte `reverse_proxy app:3001`
+# - Usando Caddy instalado diretamente no host da VPS:
+#   aponte `reverse_proxy 127.0.0.1:3001`
+
+sga.seudominio.com {
+	encode gzip zstd
+
+	# Limite confortável para upload de mídias e payloads de webhooks
+	request_body {
+		max_size 15MB
+	}
+
+	reverse_proxy app:3001 {
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Real-IP {remote_host}
+	}
+}

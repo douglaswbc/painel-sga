@@ -1,0 +1,45 @@
+services:
+  app:
+    build: .
+    container_name: painel-sga
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: ${PORT:-3001}
+      DATABASE_PATH: /app/data/sga.db
+      UPLOAD_DIR: /app/data/uploads
+    ports:
+      - "127.0.0.1:${PORT:-3001}:3001"
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3001/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # Opcional: suba junto com HTTPS automático via `docker compose --profile proxy up -d`
+  caddy:
+    image: caddy:2-alpine
+    container_name: painel-sga-caddy
+    restart: unless-stopped
+    profiles:
+      - proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  caddy_data:
+  caddy_config:

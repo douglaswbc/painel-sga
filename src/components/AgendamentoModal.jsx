@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { supabase } from '../services/supabase';
+import { api } from '../services/api';
+import { agendamentosService } from '../services/agendamentos';
+import { locatariosService } from '../services/locatarios';
 import { toast } from 'react-toastify';
 import {
   X, Search, Clock, CalendarClock, Loader2, Trash2, CheckCircle2,
@@ -118,22 +120,14 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
       setLoading(true);
 
       // 1. Carregar lista de locatários
-      const { data: locData, error: locError } = await supabase
-        .from('locatarios')
-        .select('id, nome_completo, whatsapp')
-        .eq('id_usuario', usuario.id)
-        .eq('ativo', true)
-        .order('nome_completo');
-      if (locError) throw locError;
+      const locData = await locatariosService.listSimpleWithWhatsApp(usuario.id);
       const valid = (locData || []).filter(l => Boolean(l.whatsapp));
       setLocatarios(valid);
 
-      // 2. Carregar templates Meta através da Edge Function do Zernio
+      // 2. Carregar templates Meta através do backend
       try {
-        const { data: tmplResult, error: tmplError } = await supabase.functions.invoke('zernio-whatsapp', {
-          body: { action: 'list' },
-        });
-        if (!tmplError && tmplResult?.templates) {
+        const tmplResult = await api.get('/whatsapp/templates');
+        if (tmplResult?.templates) {
           setAllTemplates(tmplResult.templates);
         }
       } catch (err) {
@@ -141,29 +135,18 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
       }
 
       // 3. Carregar agendamentos atuais
-      let query = supabase
-        .from('agendamentos_mensagens')
-        .select(`
-          id, id_template, zernio_template_id, frequencia, frequencia_dias, proximo_envio, horario_envio, ativo, ultimo_erro, template_params,
-          locatarios!agendamentos_locatario_mesmo_usuario_fkey (id, nome_completo, whatsapp),
-          mensagens_template!agendamentos_template_mesmo_usuario_fkey (titulo)
-        `)
-        .eq('id_usuario', usuario.id)
-        .order('proximo_envio');
-
+      const filters = {};
       if (mode === 'template' && template?.id) {
-        query = query.or(`id_template.eq.${template.id},zernio_template_id.eq.${template.id}`);
+        filters.template_id = template.id;
       } else if (isBatchMode && selectedTenantIds.length > 0) {
-        query = query.in('id_locatario', selectedTenantIds);
+        filters.tenant_ids = selectedTenantIds;
       } else if (selectedLocatario?.id || initialLocatario?.id) {
-        const locId = selectedLocatario?.id || initialLocatario?.id;
-        query = query.eq('id_locatario', locId);
+        filters.id_locatario = selectedLocatario?.id || initialLocatario?.id;
       } else {
-        query = query.limit(20);
+        filters.limit = 20;
       }
 
-      const { data: agData, error: agError } = await query;
-      if (agError) throw agError;
+      const agData = await agendamentosService.list(filters);
       setAgendamentos(agData || []);
     } catch (err) {
       console.error(err);
@@ -227,29 +210,15 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
       setSaving(true);
       const freqNum = frequencia === 'personalizado' ? parseInt(frequenciaDias, 10) : null;
 
-      const { data, error } = await supabase.functions.invoke('zernio-whatsapp', {
-        body: {
-          action: 'create_schedule',
-          templateId: selectedTemplate.id,
-          tenantIds: targetTenantIds,
-          frequency: frequencia,
-          frequencyDays: freqNum,
-          scheduledDate: proximoEnvio,
-          scheduledTime: horario,
-          templateParams: templateParams,
-        },
+      const data = await api.post('/whatsapp/schedules', {
+        templateId: selectedTemplate.id,
+        tenantIds: targetTenantIds,
+        frequency: frequencia,
+        frequencyDays: freqNum,
+        scheduledDate: proximoEnvio,
+        scheduledTime: horario,
+        templateParams: templateParams,
       });
-
-      if (error) {
-        let msg = error.message;
-        try {
-          const body = await error.context?.json();
-          if (body?.error) msg = body.error;
-        } catch {}
-        throw new Error(msg);
-      }
-
-      if (data?.error) throw new Error(data.error);
 
       const count = data?.count || targetTenantIds.length;
       toast.success(
@@ -271,12 +240,7 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
     setBusyScheduleId(schedule.id);
     try {
       const nextAtivo = !schedule.ativo;
-      const { error } = await supabase
-        .from('agendamentos_mensagens')
-        .update({ ativo: nextAtivo })
-        .eq('id', schedule.id)
-        .eq('id_usuario', usuario.id);
-      if (error) throw error;
+      await agendamentosService.update(schedule.id, { ativo: nextAtivo });
       toast.success(nextAtivo ? 'Agendamento reativado.' : 'Agendamento pausado.');
       fetchData();
     } catch (error) {
@@ -290,12 +254,7 @@ const AgendamentoModal = ({ isOpen, onClose, template, locatario: initialLocatar
     if (!window.confirm('Excluir este agendamento?')) return;
     setBusyScheduleId(id);
     try {
-      const { error } = await supabase
-        .from('agendamentos_mensagens')
-        .delete()
-        .eq('id', id)
-        .eq('id_usuario', usuario.id);
-      if (error) throw error;
+      await agendamentosService.remove(id);
       toast.success('Agendamento removido.');
       fetchData();
     } catch (error) {

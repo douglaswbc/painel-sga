@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { supabase } from '../services/supabase';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { api, setAuthToken } from '../services/api';
 
 const AuthContext = createContext({});
 
@@ -8,38 +8,59 @@ export const AuthProvider = ({ children }) => {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchProfile = async (userId) => {
-    const { data } = await supabase
-      .from('usuarios')
-      .select('id, nome_completo, whatsapp, email, role, empresa_nome, ativo, created_at, mp_notification_url, reminder_stagger_minutes, reminder_dispatch_delay_seconds')
-      .eq('id', userId)
-      .single();
-    setProfile(data);
-  };
-
-  useEffect(() => {
-    // Busca sessão inicial
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      if (session?.user) fetchProfile(session.user.id);
-      setLoading(false);
-    });
-
-    // Escuta mudanças (login/logout)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      if (session?.user) fetchProfile(session.user.id);
-      else setProfile(null);
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
+  const refreshProfile = useCallback(async () => {
+    try {
+      const data = await api.get('/auth/me', { skipAuthRedirect: true });
+      const currentUser = data?.user ?? null;
+      setUser(currentUser);
+      setProfile(currentUser);
+      return currentUser;
+    } catch {
+      setAuthToken(null);
+      setUser(null);
+      setProfile(null);
+      return null;
+    }
   }, []);
 
-  const signOut = () => supabase.auth.signOut();
+  useEffect(() => {
+    let active = true;
+    refreshProfile().finally(() => {
+      if (active) setLoading(false);
+    });
+
+    const handleUnauthorized = () => {
+      setUser(null);
+      setProfile(null);
+    };
+
+    window.addEventListener('sga:unauthorized', handleUnauthorized);
+    return () => {
+      active = false;
+      window.removeEventListener('sga:unauthorized', handleUnauthorized);
+    };
+  }, [refreshProfile]);
+
+  const setSession = useCallback((token, currentUser) => {
+    if (token) setAuthToken(token);
+    setUser(currentUser ?? null);
+    setProfile(currentUser ?? null);
+  }, []);
+
+  const signOut = useCallback(async () => {
+    try {
+      await api.post('/auth/logout', {}, { skipAuthRedirect: true });
+    } catch {
+      // Limpa sessão local mesmo se a chamada de logout falhar
+    } finally {
+      setAuthToken(null);
+      setUser(null);
+      setProfile(null);
+    }
+  }, []);
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signOut }}>
+    <AuthContext.Provider value={{ user, profile, loading, signOut, refreshProfile, setSession }}>
       {!loading && children}
     </AuthContext.Provider>
   );

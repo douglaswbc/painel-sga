@@ -51,6 +51,7 @@ const MENU_GROUPS = [
 
 const Sidebar = ({ isOpen, toggleSidebar, counts = {} }) => {
   const { profile, signOut } = useAuth();
+  const isAdmin = profile?.role === 'admin';
 
   const getBadge = (item) => {
     if (!item.badgeKey) return null;
@@ -111,7 +112,7 @@ const Sidebar = ({ isOpen, toggleSidebar, counts = {} }) => {
 
         {/* Navegação Agrupada */}
         <nav className="flex-1 overflow-y-auto py-3 px-3 space-y-4">
-          {MENU_GROUPS.map((group) => (
+          {!isAdmin && MENU_GROUPS.map((group) => (
             <div key={group.title}>
               <div className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                 {group.title}
@@ -142,8 +143,8 @@ const Sidebar = ({ isOpen, toggleSidebar, counts = {} }) => {
           ))}
 
           {/* Seção Exclusiva para Admin */}
-          {profile?.role === 'admin' && (
-            <div className="pt-2 border-t border-white/10">
+          {isAdmin && (
+            <div className="pt-2">
               <div className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-amber-400/80">
                 Administração Global
               </div>

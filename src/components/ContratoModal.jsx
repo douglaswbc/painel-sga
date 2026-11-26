@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { X, Loader2 } from 'lucide-react';
-import { supabase } from '../services/supabase';
+import { locatariosService } from '../services/locatarios';
+import { veiculosService } from '../services/veiculos';
+import { contratosService } from '../services/contratos';
 import { toast } from 'react-toastify';
 
 const saoPauloToday = () => {
@@ -45,11 +47,11 @@ const ContratoModal = ({ isOpen, onClose, onSuccess, contrato = null, userId }) 
   // Carrega opções de seleção ao abrir o modal
   useEffect(() => {
     const fetchOptions = async () => {
-      const [resLoc, resVei] = await Promise.all([
-        supabase.from('locatarios').select('id, nome_completo').eq('id_usuario', userId).eq('ativo', true),
-        supabase.from('veiculos').select('id, modelo, placa').eq('id_usuario', userId).eq('ativo', true)
+      const [locs, veics] = await Promise.all([
+        locatariosService.listSimple(userId, true),
+        veiculosService.listSimple(userId),
       ]);
-      setDataOptions({ locatarios: resLoc.data || [], veiculos: resVei.data || [] });
+      setDataOptions({ locatarios: locs || [], veiculos: veics || [] });
     };
 
     if (isOpen) {
@@ -99,16 +101,12 @@ const ContratoModal = ({ isOpen, onClose, onSuccess, contrato = null, userId }) 
           : dueDate.toISOString()
       };
       
-      let error;
       if (contrato?.id) {
-        const { error: err } = await supabase.from('contratos').update(payload).eq('id', contrato.id);
-        error = err;
+        await contratosService.update(contrato.id, payload);
       } else {
-        const { error: err } = await supabase.from('contratos').insert([payload]);
-        error = err;
+        await contratosService.create(payload);
       }
 
-      if (error) throw error;
       toast.success("Contrato salvo com sucesso!");
       onSuccess();
       onClose();

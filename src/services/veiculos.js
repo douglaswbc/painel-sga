@@ -1,50 +1,27 @@
-import { supabase } from './supabase';
+import { api } from './api';
 
 export const veiculosService = {
-  list: async (userId) => {
-    const { data, error } = await supabase
-      .from('veiculos')
-      .select('*, contratos(id, status)')
-      .eq('id_usuario', userId)
-      .order('modelo');
-    if (error) throw error;
-    return data;
+  list: async (_userId) => {
+    const res = await api.get('/veiculos');
+    return res.data || [];
   },
 
-  listSimple: async (userId) => {
-    const { data, error } = await supabase
-      .from('veiculos')
-      .select('id, placa, modelo')
-      .eq('id_usuario', userId)
-      .eq('ativo', true)
-      .order('modelo', { ascending: true });
-    if (error) throw error;
-    return data;
+  listSimple: async (_userId) => {
+    const res = await api.get('/veiculos?ativo=true');
+    return (res.data || []).map(({ id, placa, modelo }) => ({ id, placa, modelo }));
   },
 
   create: async (data) => {
-    const { data: result, error } = await supabase
-      .from('veiculos')
-      .insert([data])
-      .select()
-      .single();
-    if (error) throw error;
-    return result;
+    const res = await api.post('/veiculos', data);
+    return res.data;
   },
 
   update: async (id, data) => {
-    const { error } = await supabase
-      .from('veiculos')
-      .update(data)
-      .eq('id', id);
-    if (error) throw error;
+    const res = await api.put(`/veiculos/${id}`, data);
+    return res.data;
   },
 
   remove: async (id) => {
-    const { error } = await supabase
-      .from('veiculos')
-      .delete()
-      .eq('id', id);
-    if (error) throw error;
+    await api.delete(`/veiculos/${id}`);
   },
 };

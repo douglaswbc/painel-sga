@@ -16,7 +16,7 @@ import {
   ArrowRight,
   Loader2,
 } from 'lucide-react';
-import { supabase } from '../services/supabase';
+import { api } from '../services/api';
 
 const SYSTEM_PAGES = [
   { path: '/dashboard', label: 'Dashboard — Visão Geral', icon: LayoutDashboard, category: 'Páginas' },
@@ -67,25 +67,9 @@ export default function QuickSearchModal({ isOpen, onClose, userId }) {
     setLoading(true);
     const cleanTerm = term.trim();
     try {
-      const [tenantsRes, vehiclesRes] = await Promise.all([
-        supabase
-          .from('locatarios_safe')
-          .select('id, nome_completo, whatsapp, cpf')
-          .eq('id_usuario', userId)
-          .ilike('nome_completo', `%${cleanTerm}%`)
-          .limit(5),
-        supabase
-          .from('veiculos')
-          .select('id, placa, modelo, marca, ativo')
-          .eq('id_usuario', userId)
-          .or(`placa.ilike.%${cleanTerm}%,modelo.ilike.%${cleanTerm}%`)
-          .limit(5),
-      ]);
-
-      const sortedTenants = (tenantsRes.data || []).sort((a, b) => (a.nome_completo || '').localeCompare(b.nome_completo || '', 'pt-BR'));
-      const sortedVehicles = (vehiclesRes.data || []).sort((a, b) => (a.modelo || '').localeCompare(b.modelo || '', 'pt-BR'));
-      setTenants(sortedTenants);
-      setVehicles(sortedVehicles);
+      const data = await api.get(`/search?q=${encodeURIComponent(cleanTerm)}`);
+      setTenants(Array.isArray(data?.tenants) ? data.tenants : []);
+      setVehicles(Array.isArray(data?.vehicles) ? data.vehicles : []);
     } catch (err) {
       console.warn('Erro na busca rápida:', err);
     } finally {

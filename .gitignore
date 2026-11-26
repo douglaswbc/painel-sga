@@ -1,12 +1,19 @@
 # Dependências
 node_modules/
 .pnpm-store/
-.deno/
 
 # Build e Saída
 dist/
+dist-server/
 dist-ssr/
 *.tsbuildinfo
+
+# Dados persistentes locais (SQLite + Uploads)
+data/
+backups/
+*.db
+*.db-wal
+*.db-shm
 
 # Variáveis de Ambiente (CRÍTICO: Nunca subir arquivos .env)
 .env
@@ -15,15 +22,10 @@ dist-ssr/
 .env.test.local
 .env.production.local
 .env*.local
+!.env.example
 
-#MCP's
+# MCPs locais
 opencode.json
-
-# Supabase e Local Development
-.supabase/
-# Se você usa Edge Functions localmente, evite subir chaves de teste
-supabase/.temp/
-supabase/functions/.env
 
 # Logs e Debugging
 logs
@@ -51,5 +53,3 @@ Thumbs.db
 
 # Testes
 coverage/
-# Deno lock gerado pelos testes das Edge Functions
-deno.lock

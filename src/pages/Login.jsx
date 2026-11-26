@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { supabase } from '../services/supabase';
 import { toast } from 'react-toastify';
 import { Mail, Lock, Loader2 } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { api } from '../services/api';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -10,49 +11,30 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const redirectTo = searchParams.get('redirectTo');
-  const destination = redirectTo?.startsWith('/') && !redirectTo.startsWith('//')
-    ? redirectTo
-    : '/dashboard';
+  const { user, setSession } = useAuth();
 
-  // Verifica se o usuário já está logado ao carregar a página
+  const redirectTo = searchParams.get('redirectTo');
+  const safeRedirectTo = redirectTo?.startsWith('/') && !redirectTo.startsWith('//')
+    ? redirectTo
+    : null;
+
   useEffect(() => {
-    const checkUser = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) navigate(destination, { replace: true });
-    };
-    checkUser();
-  }, [destination, navigate]);
+    if (user) {
+      navigate(safeRedirectTo || (user.role === 'admin' ? '/admin' : '/dashboard'), { replace: true });
+    }
+  }, [user, safeRedirectTo, navigate]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      // 1. Autenticação no Supabase Auth
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) throw new Error("E-mail ou senha inválidos.");
-
-      // 2. Verificação de status na tabela 'usuarios'
-      const { data: profile, error: profileError } = await supabase
-        .from('usuarios')
-        .select('ativo')
-        .eq('id', data.user.id)
-        .single();
-
-      if (profileError || !profile.ativo) {
-        await supabase.auth.signOut();
-        throw new Error("Usuário inativo. Entre em contato com o suporte.");
-      }
-
-      toast.success("Login realizado com sucesso!");
-      navigate(destination, { replace: true });
+      const data = await api.post('/auth/login', { email, password }, { skipAuthRedirect: true });
+      setSession(data?.token, data?.user);
+      toast.success('Login realizado com sucesso!');
+      navigate(safeRedirectTo || (data?.user?.role === 'admin' ? '/admin' : '/dashboard'), { replace: true });
     } catch (error) {
-      toast.error(error.message);
+      toast.error(error.message || 'E-mail ou senha inválidos.');
     } finally {
       setLoading(false);
     }

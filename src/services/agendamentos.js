@@ -1,34 +1,31 @@
-import { supabase } from './supabase';
+import { api } from './api';
 
 export const agendamentosService = {
   list: async (filters = {}) => {
-    let query = supabase
-      .from('agendamentos_mensagens')
-      .select('id, frequencia, proximo_envio, ativo, horario_envio, locatarios (nome_completo, whatsapp), mensagens_template (titulo)')
-      .order('proximo_envio');
+    const params = new URLSearchParams();
+    if (filters.id_template) params.set('id_template', filters.id_template);
+    if (filters.template_id) params.set('template_id', filters.template_id);
+    if (filters.id_locatario) params.set('id_locatario', filters.id_locatario);
+    if (Array.isArray(filters.tenant_ids) && filters.tenant_ids.length) {
+      params.set('tenant_ids', filters.tenant_ids.join(','));
+    }
+    if (filters.limit) params.set('limit', String(filters.limit));
 
-    if (filters.id_template) query = query.eq('id_template', filters.id_template);
-    if (filters.id_locatario) query = query.eq('id_locatario', filters.id_locatario);
-
-    const { data, error } = await query;
-    if (error) throw error;
-    return data;
+    const query = params.toString();
+    const res = await api.get(`/agendamentos${query ? `?${query}` : ''}`);
+    return res.data || [];
   },
 
   create: async (payloads) => {
-    const { data, error } = await supabase
-      .from('agendamentos_mensagens')
-      .insert(payloads)
-      .select();
-    if (error) throw error;
-    return data;
+    const res = await api.post('/agendamentos', payloads);
+    return res.data || [];
+  },
+
+  update: async (id, patch) => {
+    await api.patch(`/agendamentos/${id}`, patch);
   },
 
   remove: async (id) => {
-    const { error } = await supabase
-      .from('agendamentos_mensagens')
-      .delete()
-      .eq('id', id);
-    if (error) throw error;
+    await api.delete(`/agendamentos/${id}`);
   },
 };
